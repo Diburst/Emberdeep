@@ -1,0 +1,4 @@
+*.love
+dist/
+*.zip
+crash.log
