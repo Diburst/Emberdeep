@@ -65,6 +65,12 @@ function Player:init(idx, x, y)
   self.repairCd = 0
   self.hoverT = 0
 
+  -- pinned: something has hold of you (the Aerie Sentinel's talons).
+  -- No control until it lets go, a partner hurts it, or you struggle free.
+  self.pinnedT = 0
+  self.pinnedBy = nil
+  self.pinnedMash = 0
+
   -- co-op state
   self.downed = false
   self.bleedout = 0
@@ -150,6 +156,39 @@ function Player:partner()
   end
 end
 
+-- ==================================================================
+-- Being pinned
+-- ==================================================================
+-- Presses needed to tear free. The partner hurting the holder is the
+-- fast way out; this is the one that works when you are on your own.
+Player.PIN_MASH = 8
+
+function Player:pin(by, dur)
+  if self.dead or self.downed or self.idle then return false end
+  self.pinnedBy = by
+  self.pinnedT = dur
+  self.pinnedMash = 0
+  self.domeActive = false
+  self.charging = false
+  self.grappling = nil
+  self.dashT = 0
+  return true
+end
+
+-- Called by the player struggling out, by the holder letting go, and as
+-- a safety net if the holder dies mid-grab.
+function Player:freeFromPin(struggled)
+  local by = self.pinnedBy
+  self.pinnedT = 0
+  self.pinnedMash = 0
+  self.pinnedBy = nil
+  if by and by.onPinReleased then by:onPinReleased(self, struggled) end
+  if struggled then
+    self.invuln = math.max(self.invuln, 0.6)   -- brief mercy on the break
+    if G.Audio then G.Audio.sfx("dash") end
+  end
+end
+
 -- Lu's dome soaks a hit: costs energy instead of health.
 function Player:domeAbsorb(dmg)
   local tier = (Weapons.forge() and Weapons.forge().dome) or 1
@@ -183,6 +222,27 @@ function Player:update(dt)
   if self.idle then
     -- solo uncontrolled bot: stands still, invulnerable, keeps dome if set
     self:updateIdle(dt, World)
+    return
+  end
+
+  -- ---- pinned: no movement, no weapons, only struggling
+  if self.pinnedT > 0 then
+    self.pinnedT = self.pinnedT - dt
+    self.vx, self.vy = 0, 0
+    self.anim = "idle"
+    -- MASH FREE: any action button counts, PIN_MASH presses breaks the grip
+    if slot then
+      for _, a in ipairs({ "jump", "fire", "special", "util", "dash" }) do
+        if G.Input.pressed(slot, a) then
+          self.pinnedMash = self.pinnedMash + 1
+          World:fx("spark", self.x + self.w / 2, self.y + 2,
+            { color = "gold", n = 3 })
+        end
+      end
+    end
+    if self.pinnedMash >= Player.PIN_MASH or self.pinnedT <= 0 then
+      self:freeFromPin(self.pinnedMash >= Player.PIN_MASH)
+    end
     return
   end
 
@@ -578,7 +638,7 @@ function Player:checkSpikes(World)
   for ty = ty0, ty1 do
     for tx = tx0, tx1 do
       if World:spikeAt(tx, ty) then
-        self:takeDamage(3, tx * T + 8, { pierceDash = true })
+        self:takeDamage(14, tx * T + 8, { pierceDash = true })
         return
       end
     end
@@ -841,6 +901,18 @@ function Player:draw()
     g.circle("line", cx, cy, r + pulse)
     g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.3)
     g.circle("line", cx, cy, r - 2 + pulse)
+    g.setColor(1, 1, 1, 1)
+  end
+
+  -- pinned: a struggle meter, so you know mashing is doing something
+  if self.pinnedT > 0 then
+    local cx = self.x + self.w / 2
+    local by = self.y - 10
+    local frac = math.min(1, self.pinnedMash / Player.PIN_MASH)
+    g.setColor(P.black[1], P.black[2], P.black[3], 0.7)
+    g.rectangle("fill", cx - 11, by, 22, 4)
+    g.setColor(P.gold[1], P.gold[2], P.gold[3], 0.5 + math.sin(G.time * 20) * 0.3)
+    g.rectangle("fill", cx - 10, by + 1, 20 * frac, 2)
     g.setColor(1, 1, 1, 1)
   end
 

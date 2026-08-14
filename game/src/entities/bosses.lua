@@ -1545,33 +1545,156 @@ Bosses.prismtyrant = Prismtyrant
 -- ==================================================================
 -- 7. AERIE SENTINEL (Skyroot boss)
 -- ==================================================================
+-- She never teleports. Every position change is a flight, including the way
+-- back onto the figure-8, which is what the old version got wrong: it wrote
+-- self.x straight from a sine of self.t, so leaving and re-entering the
+-- pattern snapped her across the room. The pattern now runs on its own phase
+-- clock (self.gp) and she flies onto it.
+--
+-- The loop: figure-8 -> fly to a corner perch -> 1s charge (her one open
+-- window) -> either a 2s directional gale or a dive. The dive either latches
+-- onto a player and eats them, bounces off Lu's dome and stuns her, or
+-- whiffs into the floor.
+local AERIE_CHARGE_T = 1.0       -- telegraph at the perch: the punish window
+-- MINIMUM seconds of fight time before the next gale. She will not abandon a
+-- stoop in flight or a victim in her talons, and she still has to reach a
+-- perch and charge, so at this value the gale actually LANDS every ~13-15s.
+-- Raising it does not stretch the gap smoothly: it jumps in ~6.5s steps,
+-- because a late gale has to wait for a gap in the dive cycle.
+local AERIE_GUST_EVERY = 10
+local AERIE_GUST_T = 2.0         -- how long a gale blows
+local AERIE_GUST_FORCE = 1250    -- px/sec^2 of shove in the open
+local AERIE_GUST_SHELTER = 0.12  -- fraction of that you feel behind cover
+local AERIE_SHELTER_TILES = 3    -- how far windward cover still counts
+local AERIE_DIVE_EVERY = 6.5     -- seconds between dives
+local AERIE_DIVE_SPEED = 620     -- px/sec of the stoop
+local AERIE_LATCH_T = 4.0        -- how long she eats for
+local AERIE_MUNCH_GAP = 0.5      -- seconds between bites
+local AERIE_MUNCH_DMG = 3        -- damage per bite (24 over a full latch)
+local AERIE_MISS_T = 1.0         -- floor time after a whiffed dive
+local AERIE_DOME_STUN = 4.0      -- stun for hitting Lu's shield
+local AERIE_FLY = 340            -- px/sec when repositioning
+
 local Aerie = Boss.extend()
 function Aerie:init(x, y)
   Boss.init(self, x, y, { id = "aeriesentinel", name = "AERIE SENTINEL",
     hp = 145, touchDmg = 4, w = 34, h = 20, reward = "module:corekey3" })
   self.homeY = y
-  self.diveCount = 0
+  self.gp = 0              -- figure-8 phase, advances in every state
+  self.gustClock = 0
+  self.diveClock = 0
+  self.perchSide = 1       -- flips each attack so she alternates corners
 end
+
+-- Where the figure-8 is right now.
+function Aerie:glidePoint(World)
+  local cx = World.w * T / 2
+  return cx + math.sin(self.gp * 1.1) * (World.w * T / 2 - 80) - self.w / 2,
+         self.homeY + math.sin(self.gp * 2.2) * 22
+end
+
+-- The two fixed corner perches, above every platform in the arena.
+function Aerie:perchPoint(World, side)
+  local margin = 5 * T
+  local x = side < 0 and margin or (World.w * T - margin - self.w)
+  return x, self.homeY - 16
+end
+
+-- Fly toward a point at AERIE_FLY. Returns true on arrival. The arrival
+-- snap is capped at one frame of travel, so it can never read as a jump.
+function Aerie:flyTo(tx, ty, dt)
+  local dx, dy = tx - self.x, ty - self.y
+  local d = math.sqrt(dx * dx + dy * dy)
+  local step = AERIE_FLY * dt
+  if d <= step then
+    self.x, self.y = tx, ty
+    return true
+  end
+  self.x = self.x + dx / d * step
+  self.y = self.y + dy / d * step
+  if math.abs(dx) > 2 then self.facing = dx > 0 and 1 or -1 end
+  return false
+end
+
+-- Is this player behind something, on the windward side?
+function Aerie:sheltered(World, p, dir)
+  local ty = math.floor((p.y + p.h / 2) / T)
+  local tx = math.floor((p.x + p.w / 2) / T)
+  for i = 1, AERIE_SHELTER_TILES do
+    local cx = tx - dir * i          -- windward = back along the wind
+    if World:isSolid(cx, ty) then return true end
+  end
+  -- or tucked under a platform
+  return World:isSolid(tx, ty - 1) or World:isOneway(tx, ty - 1)
+end
+-- Let go of whoever she is holding and climb back to the pattern.
+function Aerie:releaseLatch(World)
+  local p = self.latched
+  self.latched = nil
+  self.munchGap = nil
+  if p and p.pinnedT and p.pinnedT > 0 then p:freeFromPin(false) end
+  self:setState("climb", 6)
+end
+
+-- Called by Player:freeFromPin when the victim tears loose on their own.
+function Aerie:onPinReleased(p, struggled)
+  if self.latched == p then
+    self.latched = nil
+    self.munchGap = nil
+    if struggled then
+      Cam.shake(3, 0.3)
+      if G.game then G.game:announce("Torn free!", 1.2) end
+    end
+    if self.state == "latch" then self:setState("climb", 6) end
+  end
+end
+
 function Aerie:update(dt)
   local World = require "src.world"
   self.t = self.t + dt
   self.stateT = self.stateT - dt
+  -- The pattern keeps running while she is away, EXCEPT during the climb
+  -- home: the figure-8's peak speed is higher than her flight speed, so a
+  -- moving target would be uncatchable and she would end up snapping onto
+  -- it. Freezing it during the climb is what keeps the return a real flight.
+  if self.state ~= "climb" then self.gp = self.gp + dt end
 
   if self.state == "intro" then
-    if self.stateT <= 0 then self:setState("glide", 5) end
+    -- fly onto the pattern from the spawn point rather than appearing on it
+    if self.stateT <= 0 then self:setState("climb", 6) end
     return
   end
 
+  -- Attack timers run on fight time, not glide time, so "a gale every 15
+  -- seconds" means what it says regardless of what else she is busy with.
+  if self.state ~= "gust" then self.gustClock = self.gustClock + dt end
+  if self.state ~= "dive" and self.state ~= "latch" then
+    self.diveClock = self.diveClock + dt
+  end
+
+  -- The gale keeps its own schedule and interrupts anything not already
+  -- committed. It will not abandon a stoop in flight or a victim in hand.
+  if self.gustClock >= AERIE_GUST_EVERY and self.nextAttack ~= "gust"
+    and (self.state == "glide" or self.state == "climb"
+         or self.state == "toperch") then
+    self.nextAttack = "gust"
+    -- perch on the side the players are ON, so the gale drives them the
+    -- full width of the arena into the far spikes
+    local sum, n = 0, 0
+    for _, p in ipairs(World.players) do
+      if not p.dead and not p.downed then sum = sum + p.x + p.w / 2 n = n + 1 end
+    end
+    local avg = n > 0 and sum / n or World.w * T / 2
+    self.perchSide = avg < World.w * T / 2 and -1 or 1
+    self:setState("toperch", 4)
+  end
+
   if self.state == "glide" then
-    -- figure-8 above arena
-    local cx = World.w * T / 2
-    self.x = cx + math.sin(self.t * 1.1) * (World.w * T / 2 - 80) - self.w / 2
-    self.y = self.homeY + math.sin(self.t * 2.2) * 22
-    self.facing = math.cos(self.t * 1.1) >= 0 and 1 or -1
+    self.x, self.y = self:glidePoint(World)
+    self.facing = math.cos(self.gp * 1.1) >= 0 and 1 or -1
     self.gap = (self.gap or 0) - dt
     if self.gap <= 0 then
       self.gap = 1.3
-      -- feather darts downward fan
       local bx, by = self:center()
       for i = -2, 2 do
         Proj.spawn(World, bx, by + 6, {
@@ -1581,79 +1704,291 @@ function Aerie:update(dt)
       end
       if G.Audio then G.Audio.sfx("shoot1") end
     end
-    if self.stateT <= 0 then
-      self:setState(U.chance(0.45) and "gust" or "dive", U.chance(0.45) and 4 or 1)
+    -- dives are chosen here; the gale schedules itself above
+    if self.diveClock >= AERIE_DIVE_EVERY then
+      self.nextAttack = "dive"
+      self.perchSide = -self.perchSide     -- alternate corners
+      self:setState("toperch", 4)
     end
-  elseif self.state == "gust" then
-    if not self.gustDir then
-      self.gustDir = U.chance(0.5) and 1 or -1
-      G.game:announce("WIND GUST! Take Cover!", 1.5)
-      if G.Audio then G.Audio.sfx("bosswarn") end
-    end
-    -- push players toward one wall
-    for _, p in ipairs(World.players) do
-      if not p.dead and not p.downed and not p.idle then
-        p.vx = p.vx + self.gustDir * 920 * dt
+
+  elseif self.state == "toperch" then
+    local px, py = self:perchPoint(World, self.perchSide)
+    if self:flyTo(px, py, dt) or self.stateT <= 0 then
+      self.x, self.y = px, py
+      self.facing = self.perchSide < 0 and 1 or -1   -- turn to face the arena
+      self:setState("charge", AERIE_CHARGE_T)
+      if G.Audio then G.Audio.sfx("linkcharge") end
+      if G.game then
+        G.game:announce(self.nextAttack == "gust"
+          and "IT SETS ITS WINGS -- GET BEHIND SOMETHING!"
+          or "IT FIXES ON YOU -- MOVE!", 1.4)
       end
     end
-    -- ambient streaks
-    if U.chance(0.5) then
-      World:fx("trail", Cam.x + U.rand(0, G.VW), Cam.y + U.rand(0, G.VH),
-        { color = "ice", r = 1.5, t = 0.2 })
-    end
+
+  elseif self.state == "charge" then
+    -- perched, wings spread, wide open to fire. This is the trade.
+    local px, py = self:perchPoint(World, self.perchSide)
+    self.x, self.y = px, py + math.sin(self.t * 22) * 1.5
     if self.stateT <= 0 then
-      self.gustDir = nil
-      self:setState("glide", 4)
-    end
-  elseif self.state == "dive" then
-    if not self.diveTarget then
-      local p = World:nearestPlayer(self:center())
-      if p then
-        self.diveTarget = { x = p.x + p.w / 2, y = p.y + p.h / 2 }
-        self.diveFrom = { x = self.x, y = self.y }
-        self.diveT = 0
+      if self.nextAttack == "gust" then
+        self.gustClock = 0
+        self.gustDir = -self.perchSide     -- she blows away from her corner
+        self:setState("gust", AERIE_GUST_T)
+        Cam.shake(3, AERIE_GUST_T)
+        if G.Audio then G.Audio.sfx("roar") end
       else
-        self:setState("glide", 3)
-      end
-    else
-      self.diveT = self.diveT + dt * 1.6
-      local t2 = math.min(1, self.diveT)
-      self.x = U.lerp(self.diveFrom.x, self.diveTarget.x - self.w / 2, t2)
-      self.y = U.lerp(self.diveFrom.y, self.diveTarget.y - self.h / 2, t2 * t2)
-      if t2 >= 1 then
-        self.diveTarget = nil
-        self.diveCount = self.diveCount + 1
-        Cam.shake(3, 0.25)
-        if G.Audio then G.Audio.sfx("quake") end
-        if self.diveCount >= 3 then
-          self.diveCount = 0
-          self:setState("stunned", 4)
-          G.game:announce("It crashed! NOW!", 1.5)
+        self.diveClock = 0
+        local p = World:nearestPlayer(self:center())
+        if p then
+          self.diveTo = { x = p.x + p.w / 2 - self.w / 2, y = p.y + p.h - self.h }
+          self:setState("dive", 3)
+          if G.Audio then G.Audio.sfx("dash") end
         else
-          self:setState("glide", 3)
+          self:setState("climb", 6)
         end
       end
     end
-  elseif self.state == "stunned" then
-    -- sits on ground, takes double damage
+
+  elseif self.state == "gust" then
+    local dir = self.gustDir or 1
+    self.x, self.y = self:perchPoint(World, self.perchSide)
+    self.y = self.y + math.sin(self.t * 30) * 2
+    for _, p in ipairs(World.players) do
+      if not p.dead and not p.downed and not p.idle and p.pinnedT <= 0 then
+        local f = self:sheltered(World, p, dir) and AERIE_GUST_SHELTER or 1
+        p.vx = p.vx + dir * AERIE_GUST_FORCE * f * dt
+      end
+    end
+    if self.stateT <= 0 then
+      self.gustDir = nil
+      self:setState("climb", 6)
+    end
+
+  elseif self.state == "dive" then
+    local tgt = self.diveTo
+    if not tgt then
+      self:setState("climb", 6)
+    else
+      local dx, dy = tgt.x - self.x, tgt.y - self.y
+      local d = math.sqrt(dx * dx + dy * dy)
+      local step = AERIE_DIVE_SPEED * dt
+      if d > step then
+        self.x = self.x + dx / d * step
+        self.y = self.y + dy / d * step
+        if math.abs(dx) > 2 then self.facing = dx > 0 and 1 or -1 end
+      else
+        self.x, self.y = tgt.x, tgt.y
+        self.diveTo = nil
+        self:resolveDive(World)
+      end
+      if self.stateT <= 0 and self.diveTo then
+        self.diveTo = nil
+        self:resolveDive(World)
+      end
+    end
+
+  elseif self.state == "latch" then
+    local p = self.latched
+    if not p or p.dead or p.downed or p.pinnedT <= 0 then
+      self:releaseLatch(World)
+    else
+      -- ride the victim, keep the grip alive, bite on a timer
+      self.x = p.x + p.w / 2 - self.w / 2
+      self.y = p.y - self.h + 8
+      p.pinnedT = math.max(p.pinnedT, math.min(self.stateT, AERIE_LATCH_T))
+      self.munchGap = (self.munchGap or 0) - dt
+      if self.munchGap <= 0 then
+        self.munchGap = AERIE_MUNCH_GAP
+        p:takeDamage(AERIE_MUNCH_DMG, self.x + self.w / 2, { pierceDash = true })
+        World:fx("burst", p.x + p.w / 2, p.y + 4,
+          { color = "blood", n = 8, speed = 90 })
+        Cam.shake(2, 0.15)
+        if G.Audio then G.Audio.sfx("hitenemy") end
+      end
+      if self.stateT <= 0 then self:releaseLatch(World) end
+    end
+
+  elseif self.state == "missed" then
     self.vy = math.min((self.vy or 0) + 700 * dt, 260)
     PH.move(self, 0, self.vy * dt)
-    if self.stateT <= 0 then
-      self.y = self.homeY
-      self:setState("glide", 5)
+    if self.stateT <= 0 then self.vy = 0 self:setState("climb", 6) end
+
+  elseif self.state == "stunned" then
+    self.vy = math.min((self.vy or 0) + 700 * dt, 260)
+    PH.move(self, 0, self.vy * dt)
+    if self.stateT <= 0 then self.vy = 0 self:setState("climb", 6) end
+
+  elseif self.state == "climb" then
+    -- fly back onto the pattern instead of snapping to it
+    local gx, gy = self:glidePoint(World)
+    if self:flyTo(gx, gy, dt) or self.stateT <= 0 then
+      self:setState("glide", 3)
     end
   end
 end
-function Aerie:hurt(dmg, srcx, srcy, opts)
-  if self.state == "stunned" then dmg = dmg * 2 end
-  return Entity.hurt(self, dmg, srcx, srcy, opts)
+
+-- What the stoop actually hit: a shield, a body, or the floor.
+function Aerie:resolveDive(World)
+  local cx, cy = self:center()
+  Cam.shake(4, 0.3)
+  -- Lu's dome first: bouncing off it is the hard counter
+  for _, q in ipairs(World.players) do
+    if q.domeActive and not q.dead and not q.downed then
+      local dx = cx - (q.x + q.w / 2)
+      local dy = cy - (q.y + q.h / 2 - 4)
+      if dx * dx + dy * dy < (q.domeRadius + self.w / 2) ^ 2 then
+        q:domeAbsorb(6)
+        World:fx("spark", cx, cy, { color = "cyan", n = 16 })
+        if G.Audio then G.Audio.sfx("domehit") end
+        if G.game then G.game:announce("The dome turns it! NOW!", 1.8) end
+        self:setState("stunned", AERIE_DOME_STUN)
+        return
+      end
+    end
+  end
+  -- a body to grab
+  for _, p in ipairs(World.players) do
+    if not p.dead and not p.downed and not p.idle and p.pinnedT <= 0
+      and U.aabb(self.x, self.y, self.w, self.h + 10, p.x, p.y, p.w, p.h) then
+      if p:pin(self, AERIE_LATCH_T) then
+        self.latched = p
+        self.munchGap = 0.25
+        self:setState("latch", AERIE_LATCH_T)
+        if G.Audio then G.Audio.sfx("roar") end
+        if G.game then G.game:announce("CAUGHT -- shoot it off, or mash free!", 2) end
+        return
+      end
+    end
+  end
+  -- nothing but floor
+  if G.Audio then G.Audio.sfx("quake") end
+  World:fx("puff", cx, cy + 8, { color = "silver", n = 12 })
+  self:setState("missed", AERIE_MISS_T)
 end
+
+function Aerie:hurt(dmg, srcx, srcy, opts)
+  -- commented out the dmg scaler below because it's too generous
+  -- if self.state == "stunned" then dmg = dmg * 2 end
+  local hit = Entity.hurt(self, dmg, srcx, srcy, opts)
+  -- being shot is what makes her let go
+  if hit ~= false and self.state == "latch" then
+    local World = require "src.world"
+    World:fx("spark", self.x + self.w / 2, self.y + self.h / 2,
+      { color = "gold", n = 10 })
+    self:releaseLatch(World)
+  end
+  return hit
+end
+
+function Aerie:onDeath()
+  -- never leave a player frozen because the thing holding them died
+  if self.latched and self.latched.pinnedT and self.latched.pinnedT > 0 then
+    self.latched:freeFromPin(false)
+  end
+  self.latched = nil
+  Boss.onDeath(self)
+end
+
+-- ------------------------------------------------------------------
+-- The gale: streaks and chevrons the whole width of the arena, so the
+-- direction is never in doubt. Drawn during the charge (building) and
+-- the gust itself (full force).
+-- ------------------------------------------------------------------
+function Aerie:drawWind(World, strength, dir)
+  local g = love.graphics
+  local roomW, roomH = World.w * T, World.h * T
+  for i = 0, 55 do
+    local yy = 14 + ((i * 137) % (roomH - 40))
+    local speed = 300 + (i % 6) * 130
+    local len = (16 + (i % 5) * 12) * strength
+    local phase = (G.time * speed + i * 197) % (roomW + 160)
+    local xx = -80 + phase
+    if dir < 0 then xx = roomW - xx end
+    g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.16 + 0.5 * strength)
+    g.rectangle("fill", math.min(xx, xx + len * dir), yy, len, 1.5)
+  end
+  -- marching chevrons: the unambiguous direction cue
+  for row = 0, 4 do
+    local yy = roomH * (row + 0.5) / 5.5
+    for k = 0, 7 do
+      local phase = (G.time * 420 + k * 150 + row * 60) % (roomW + 100)
+      local xx = -50 + phase
+      if dir < 0 then xx = roomW - xx end
+      g.setColor(P.spark[1], P.spark[2], P.spark[3], (0.2 + 0.55 * strength))
+      g.polygon("fill", xx, yy - 5 * strength, xx + 9 * dir, yy, xx, yy + 5 * strength)
+    end
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
 function Aerie:draw()
-  G.drawSprite("boss_aeriesentinel", math.floor(self.t * 8) % 2 + 1,
+  local g = love.graphics
+  local World = require "src.world"
+  local st = self.state
+
+  -- wind, behind her
+  if st == "gust" then
+    self:drawWind(World, 1, self.gustDir or 1)
+  elseif st == "charge" and self.nextAttack == "gust" then
+    local k = 1 - math.max(0, self.stateT) / AERIE_CHARGE_T
+    self:drawWind(World, 0.15 + k * 0.45, -self.perchSide)
+  end
+
+  -- which pose
+  local frame
+  if st == "stunned" then
+    frame = 8
+  elseif st == "latch" then
+    frame = math.floor(self.t * 12) % 2 + 6      -- 6/7 munch cycle
+  elseif st == "dive" or st == "missed" then
+    frame = 5
+  elseif st == "gust" then
+    frame = 4
+  elseif st == "charge" then
+    frame = 3
+  else
+    frame = math.floor(self.t * 8) % 2 + 1       -- 1/2 flight cycle
+  end
+
+  local tint
+  if st == "stunned" then tint = { 1, 0.8, 0.8, 1 }
+  elseif st == "charge" then
+    local k = 1 - math.max(0, self.stateT) / AERIE_CHARGE_T
+    tint = { 1, 1 - k * 0.35, 1 - k * 0.55, 1 }  -- heats up as it winds up
+  end
+
+  G.drawSprite("boss_aeriesentinel", frame,
     self.x + self.w / 2, self.y + self.h + 0.5,
-    { sx = 1.0, sy = 1.4, flip = self.facing < 0,
-      tint = self.state == "stunned" and { 1, 0.8, 0.8, 1 } or nil,
+    { sx = 1.0, sy = 1.4, flip = self.facing < 0, tint = tint,
       white = math.max(0, (self.white or 0) * 6) })
+
+  -- charge telegraph: a ring cinching in on the perch
+  if st == "charge" then
+    local cx, cy = self:center()
+    local k = 1 - math.max(0, self.stateT) / AERIE_CHARGE_T
+    g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.35 + k * 0.45)
+    g.circle("line", cx, cy, 46 * (1 - k) + 12)
+    if self.nextAttack == "dive" then
+      -- and a line to the mark it has chosen
+      local p = World:nearestPlayer(cx, cy)
+      if p then
+        g.setColor(P.gold[1], P.gold[2], P.gold[3], 0.2 + k * 0.5)
+        g.line(cx, cy, p.x + p.w / 2, p.y + p.h / 2)
+      end
+    end
+    g.setColor(1, 1, 1, 1)
+  end
+
+  -- stunned: dazed sparks over the head
+  if st == "stunned" then
+    local cx = self.x + self.w / 2
+    for i = 0, 2 do
+      local a = G.time * 5 + i * (math.pi * 2 / 3)
+      g.setColor(P.gold[1], P.gold[2], P.gold[3], 0.8)
+      g.circle("fill", cx + math.cos(a) * 13, self.y - 6 + math.sin(a) * 4, 1.8)
+    end
+    g.setColor(1, 1, 1, 1)
+  end
 end
 Bosses.aeriesentinel = Aerie
 
