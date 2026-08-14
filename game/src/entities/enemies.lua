@@ -748,6 +748,231 @@ reg("skylancer", { hp = 5, touchDmg = 3, sprite = "en_skylancer", w = 14, h = 8,
     PH.move(self, self.vx * dt, self.vy * dt)
   end)
 
+
+-- The SKYSPIRE pair, added with the ion weapon.
+--
+-- STORMVANE: a wall-mounted charging coil that answers Lu's dome. It
+-- fires anti-shield darts (Proj.energyDart) and it deliberately PREFERS
+-- a shielded target -- standing behind the dome is what draws its fire.
+-- This is the overworld lesson for the Aerie Sentinel's energy lance.
+local VANE_RANGE = 210
+local VANE_CYCLE = 2.8      -- seconds between shots
+local VANE_CHARGE = 0.7     -- telegraph before each shot
+local VANE_DRAIN = 18       -- flat energy torn out of a dome
+local VANE_DMG = 3          -- damage if it reaches an unshielded body
+reg("stormvane", { hp = 6, touchDmg = 2, sprite = "en_stormvane", w = 12, h = 14,
+  drops = { shards = 3, heart = 0.14 }, deathColor = "ice", animRate = 5 },
+  function(self, dt)
+    local World = require "src.world"
+    -- station-keeping drift; it never chases
+    if not self.homeX then self.homeX, self.homeY = self.x, self.y end
+    self.x = self.homeX + math.sin(self.t * 0.7) * 5
+    self.y = self.homeY + math.sin(self.t * 1.1) * 4
+
+    -- pick a mark: a raised dome first, then the nearest body
+    local function visible(p)
+      local cx, cy = self:center()
+      local px, py = p:center()
+      return U.dist(cx, cy, px, py) < VANE_RANGE and PH.lineOfSight(cx, cy, px, py)
+    end
+    local mark
+    for _, p in ipairs(World:alivePlayers()) do
+      if not p.idle and p.domeActive and visible(p) then mark = p break end
+    end
+    if not mark then
+      for _, p in ipairs(World:alivePlayers()) do
+        if not p.idle and visible(p) and not mark then mark = p end
+      end
+    end
+
+    self.cycle = (self.cycle or U.rand(0, VANE_CYCLE)) - dt
+    if self.charging then
+      self.charging = self.charging - dt
+      self.mark = (self.mark and not self.mark.dead) and self.mark or mark
+      if self.charging <= 0 then
+        self.charging = nil
+        local tgt = self.mark
+        if tgt then
+          local cx, cy = self:center()
+          local px, py = tgt:center()
+          Proj.energyDart(World, cx, cy, px, py,
+            { speed = 420, drain = VANE_DRAIN, dmg = VANE_DMG })
+          World:fx("spark", cx, cy, { color = "cyan", n = 8 })
+          if G.Audio then G.Audio.sfx("shoot4") end
+        end
+        self.mark = nil
+      end
+    elseif self.cycle <= 0 and mark then
+      self.cycle = VANE_CYCLE / self:speedMult()
+      self.charging = VANE_CHARGE
+      self.mark = mark
+      if G.Audio then G.Audio.sfx("switch") end
+    end
+  end,
+  function(self)
+    local g = love.graphics
+    self:drawSprite()
+    local cx, cy = self:center()
+    if self.charging then
+      local k = 1 - self.charging / VANE_CHARGE
+      g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.3 + k * 0.5)
+      g.circle("line", cx, cy, 16 * (1 - k) + 4)
+      if self.mark then
+        local px, py = self.mark:center()
+        g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.15 + k * 0.35)
+        g.line(cx, cy, px, py)
+      end
+      g.setColor(1, 1, 1, 1)
+    end
+  end)
+
+-- ROOSTFANG: the Skyspire's bat. Hangs still until you come close, then
+-- swoops, and on contact it LATCHES and eats -- the Aerie Sentinel's
+-- mechanic in miniature (Player:pin). Far weaker than the boss: a short
+-- grip, small bites, and only 4 presses to shake off. A raised dome
+-- turns it away entirely, which is the counter it teaches.
+local FANG_WAKE = 130       -- how close you must get to wake it
+local FANG_DIVE = 190       -- px/sec of the swoop
+local FANG_LATCH = 1.6      -- seconds of grip
+local FANG_GAP = 0.5        -- seconds between bites
+local FANG_DMG = 2          -- damage per bite (6 over a full latch)
+local Roostfang = reg("roostfang", { hp = 4, touchDmg = 2, sprite = "en_roostfang",
+  w = 12, h = 10, drops = { shards = 2, heart = 0.15 }, deathColor = "sky",
+  animRate = 12,
+  init = function(self)
+    self.pinMash = 4          -- Player:pin reads this: easier than a boss
+    self.roost = true
+  end,
+  onDeathExtra = function(self)
+    -- never leave a victim frozen because the thing holding them died
+    if self.victim and self.victim.pinnedT and self.victim.pinnedT > 0 then
+      self.victim:freeFromPin(false)
+    end
+    self.victim = nil
+  end },
+  function(self, dt)
+    local World = require "src.world"
+    if self.victim then
+      local v = self.victim
+      if v.dead or v.downed or v.pinnedT <= 0 then
+        self.victim = nil
+        self.roost = false
+        self.recover = 0.8
+        return
+      end
+      -- ride the victim and keep the grip alive
+      self.x = v.x + v.w / 2 - self.w / 2
+      self.y = v.y - self.h + 4
+      self.latchT = (self.latchT or FANG_LATCH) - dt
+      v.pinnedT = math.max(v.pinnedT, math.min(self.latchT, FANG_LATCH))
+      self.munch = (self.munch or 0) - dt
+      if self.munch <= 0 then
+        self.munch = FANG_GAP
+        v.invuln = 0        -- see the Aerie's munch: otherwise 1.2s i-frames
+        v:takeDamage(FANG_DMG, self.x + self.w / 2, { pierceDash = true })
+        World:fx("burst", v.x + v.w / 2, v.y + 4, { color = "blood", n = 5 })
+        if G.Audio then G.Audio.sfx("hitenemy") end
+      end
+      if self.latchT <= 0 then
+        v:freeFromPin(false)
+        self.victim = nil
+        self.roost = false
+        self.recover = 0.8
+      end
+      return
+    end
+
+    if self.recover and self.recover > 0 then
+      self.recover = self.recover - dt
+      self.vx = self.facing * -40
+      self.vy = -30
+      PH.move(self, self.vx * dt, self.vy * dt)
+      return
+    end
+
+    if self.roost then
+      self.vx, self.vy = 0, math.sin(self.t * 3) * 6
+      PH.move(self, 0, self.vy * dt)
+      local p = playerNear(self, FANG_WAKE)
+      if p then
+        self.roost = false
+        local px = p.x + p.w / 2
+        local s = U.sign(px - (self.x + self.w / 2))
+        if s ~= 0 then self.facing = s end
+        if G.Audio then G.Audio.sfx("shoot4") end
+      end
+      return
+    end
+
+    -- awake: swoop at the nearest body
+    local p = playerNear(self, 260)
+    if p then
+      local cx, cy = self:center()
+      local px, py = p:center()
+      local ang = math.atan2(py - cy, px - cx)
+      local sp = FANG_DIVE * self:speedMult()
+      self.vx = math.cos(ang) * sp
+      self.vy = math.sin(ang) * sp
+      self.facing = self.vx > 0 and 1 or -1
+    else
+      self.vx = self.facing * 60
+      self.vy = math.sin(self.t * 3) * 30
+    end
+    PH.move(self, self.vx * dt, self.vy * dt)
+    if self.hitWall then self.facing = -self.hitWall end
+
+    -- contact: a dome turns it away, bare skin gets bitten
+    for _, q in ipairs(World:alivePlayers()) do
+      if q.domeActive and not q.idle then
+        local cx, cy = self:center()
+        local dx, dy = cx - (q.x + q.w / 2), cy - (q.y + q.h / 2 - 4)
+        if dx * dx + dy * dy < (q.domeRadius + self.w / 2) ^ 2 then
+          q:domeAbsorb(2)
+          self.recover = 0.8
+          self.vx, self.vy = -self.vx, -math.abs(self.vy) - 40
+          World:fx("spark", cx, cy, { color = "cyan", n = 8 })
+          if G.Audio then G.Audio.sfx("domehit") end
+          return
+        end
+      end
+    end
+    for _, q in ipairs(World:alivePlayers()) do
+      if not q.idle and q.pinnedT <= 0 and q.invuln <= 0
+        and U.aabb(self.x, self.y, self.w, self.h, q.x, q.y, q.w, q.h) then
+        if q:pin(self, FANG_LATCH) then
+          self.victim = q
+          self.latchT = FANG_LATCH
+          self.munch = 0.2
+          if G.Audio then G.Audio.sfx("roar") end
+        end
+        return
+      end
+    end
+  end,
+  function(self)
+    -- frames 1-2 fly, frame 3 is the bite
+    local f = self.victim and 3 or (math.floor(self.t * 12) % 2 + 1)
+    G.drawSprite(self.sprite, f, self.x + self.w / 2, self.y + self.h + 0.5,
+      { flip = self.facing < 0, white = math.max(0, (self.white or 0) * 6) })
+  end)
+
+-- shot off its victim: being hurt makes it let go
+Roostfang.onHurt = function(self, dmg, srcx)
+  Enemy.onHurt(self, dmg, srcx)
+  if self.victim and self.victim.pinnedT and self.victim.pinnedT > 0 then
+    self.victim:freeFromPin(false)
+  end
+end
+
+-- Player:freeFromPin calls this when the victim tears loose on their own.
+Roostfang.onPinReleased = function(self, p, struggled)
+  if self.victim == p then
+    self.victim = nil
+    self.roost = false
+    self.recover = 0.8
+  end
+end
+
 -- ==================================================================
 -- CORE
 -- ==================================================================

@@ -48,6 +48,7 @@ local function settleSpot(World, x, y, w, h)
 end
 Bosses.settleSpot = settleSpot
 
+
 local Boss = Entity.extend()
 
 function Boss:init(x, y, def)
@@ -1563,9 +1564,16 @@ local AERIE_CHARGE_T = 1.0       -- telegraph at the perch: the punish window
 -- because a late gale has to wait for a gap in the dive cycle.
 local AERIE_GUST_EVERY = 10
 local AERIE_GUST_T = 2.0         -- how long a gale blows
-local AERIE_GUST_FORCE = 1250    -- px/sec^2 of shove in the open
-local AERIE_GUST_SHELTER = 0.12  -- fraction of that you feel behind cover
-local AERIE_SHELTER_TILES = 3    -- how far windward cover still counts
+-- Calibrated against the real player physics on the sky_boss mesa, whose top
+-- surface is 320px wide. A grounded player pushes back at 950 px/sec^2, so
+-- only the excess over that actually moves them: at 1040, someone holding
+-- into the wind drifts ~182px over the full 2s. Far enough to be shoved off
+-- a downwind edge, never far enough to cross the mesa -- so the answer is to
+-- stand on the upwind half. Letting go of the stick is NOT an answer: with
+-- no input the only resistance is friction (800) and you are gone from
+-- anywhere on the surface. There is no cover on this map any more; the wind
+-- is uniform and position is the whole game.
+local AERIE_GUST_FORCE = 1040
 local AERIE_DIVE_EVERY = 6.5     -- seconds between dives
 local AERIE_DIVE_SPEED = 620     -- px/sec of the stoop
 local AERIE_LATCH_T = 4.0        -- how long she eats for
@@ -1574,6 +1582,15 @@ local AERIE_MUNCH_DMG = 3        -- damage per bite (24 over a full latch)
 local AERIE_MISS_T = 1.0         -- floor time after a whiffed dive
 local AERIE_DOME_STUN = 4.0      -- stun for hitting Lu's shield
 local AERIE_FLY = 340            -- px/sec when repositioning
+-- ENERGY LANCE: her answer to both players hiding inside the dome. Five
+-- flat-drain darts against a 100-energy reserve means the shield fails on
+-- roughly the fourth, and the rest arrive at an unprotected body. Turtling
+-- no longer denies her a target; it just picks a different one.
+local AERIE_LANCE_COUNT = 5      -- darts per burst
+local AERIE_LANCE_GAP = 0.13     -- seconds between darts
+local AERIE_LANCE_SPEED = 470    -- very fast: this is not a dodge check
+local AERIE_LANCE_DRAIN = 26     -- flat energy torn out of the dome per hit
+local AERIE_LANCE_DMG = 3        -- damage if it reaches a body instead
 
 local Aerie = Boss.extend()
 function Aerie:init(x, y)
@@ -1616,16 +1633,38 @@ function Aerie:flyTo(tx, ty, dt)
   return false
 end
 
--- Is this player behind something, on the windward side?
-function Aerie:sheltered(World, p, dir)
-  local ty = math.floor((p.y + p.h / 2) / T)
-  local tx = math.floor((p.x + p.w / 2) / T)
-  for i = 1, AERIE_SHELTER_TILES do
-    local cx = tx - dir * i          -- windward = back along the wind
-    if World:isSolid(cx, ty) then return true end
+-- The nearest player who is NOT standing inside anybody's dome. She always
+-- prefers an open body: the stoop is for flesh, not for shields.
+function Aerie:openTarget(World)
+  local cx, cy = self:center()
+  local best, bd
+  for _, p in ipairs(World.players) do
+    if not p.dead and not p.downed and not p.idle and p.pinnedT <= 0 then
+      local covered = false
+      for _, q in ipairs(World.players) do
+        if q.domeActive and not q.dead and not q.downed then
+          local dx = p.x + p.w / 2 - (q.x + q.w / 2)
+          local dy = p.y + p.h / 2 - (q.y + q.h / 2 - 4)
+          if dx * dx + dy * dy < q.domeRadius * q.domeRadius then
+            covered = true
+            break
+          end
+        end
+      end
+      if not covered then
+        local d = U.dist2(cx, cy, p.x + p.w / 2, p.y + p.h / 2)
+        if not bd or d < bd then best, bd = p, d end
+      end
+    end
   end
-  -- or tucked under a platform
-  return World:isSolid(tx, ty - 1) or World:isOneway(tx, ty - 1)
+  return best
+end
+
+-- Whoever is holding the shield up. The energy lance goes at her.
+function Aerie:domeOwner(World)
+  for _, p in ipairs(World.players) do
+    if p.domeActive and not p.dead and not p.downed then return p end
+  end
 end
 -- Let go of whoever she is holding and climb back to the pattern.
 function Aerie:releaseLatch(World)
@@ -1738,13 +1777,29 @@ function Aerie:update(dt)
         if G.Audio then G.Audio.sfx("roar") end
       else
         self.diveClock = 0
-        local p = World:nearestPlayer(self:center())
-        if p then
-          self.diveTo = { x = p.x + p.w / 2 - self.w / 2, y = p.y + p.h - self.h }
+        -- She will only stoop on an OPEN body. If every body is tucked
+        -- inside the dome there is nothing worth diving at, so she shoots
+        -- the dome instead and waits for the formation to break.
+        local open = self:openTarget(World)
+        if open then
+          self.diveTo = { x = open.x + open.w / 2 - self.w / 2,
+                          y = open.y + open.h - self.h }
           self:setState("dive", 3)
           if G.Audio then G.Audio.sfx("dash") end
         else
-          self:setState("climb", 6)
+          local holder = self:domeOwner(World)
+          if holder then
+            self.lanceTarget = holder
+            self.lanceLeft = AERIE_LANCE_COUNT
+            self.lanceGap = 0.1
+            self:setState("lance", AERIE_LANCE_COUNT * AERIE_LANCE_GAP + 0.8)
+            if G.Audio then G.Audio.sfx("linkcharge") end
+            if G.game then
+              G.game:announce("IT ANSWERS THE SHIELD -- BREAK FORMATION!", 2)
+            end
+          else
+            self:setState("climb", 6)
+          end
         end
       end
     end
@@ -1753,14 +1808,42 @@ function Aerie:update(dt)
     local dir = self.gustDir or 1
     self.x, self.y = self:perchPoint(World, self.perchSide)
     self.y = self.y + math.sin(self.t * 30) * 2
+    -- uniform across the whole arena: there is nowhere to hide from it
     for _, p in ipairs(World.players) do
       if not p.dead and not p.downed and not p.idle and p.pinnedT <= 0 then
-        local f = self:sheltered(World, p, dir) and AERIE_GUST_SHELTER or 1
-        p.vx = p.vx + dir * AERIE_GUST_FORCE * f * dt
+        p.vx = p.vx + dir * AERIE_GUST_FORCE * dt
       end
     end
     if self.stateT <= 0 then
       self.gustDir = nil
+      self:setState("climb", 6)
+    end
+
+  elseif self.state == "lance" then
+    -- perched, firing anti-shield darts at whoever is holding the dome
+    local px, py = self:perchPoint(World, self.perchSide)
+    self.x, self.y = px, py + math.sin(self.t * 26) * 2
+    local tgt = self.lanceTarget
+    if tgt and (tgt.dead or tgt.downed) then tgt = nil self.lanceTarget = nil end
+    if tgt then
+      self.facing = (tgt.x + tgt.w / 2) > (self.x + self.w / 2) and 1 or -1
+    end
+    self.lanceGap = (self.lanceGap or 0) - dt
+    if self.lanceGap <= 0 and (self.lanceLeft or 0) > 0 and tgt then
+      self.lanceGap = AERIE_LANCE_GAP
+      self.lanceLeft = self.lanceLeft - 1
+      local bx, by = self:center()
+      Proj.energyDart(World, bx, by + 4,
+        tgt.x + tgt.w / 2, tgt.y + tgt.h / 2,
+        { speed = AERIE_LANCE_SPEED, drain = AERIE_LANCE_DRAIN,
+          dmg = AERIE_LANCE_DMG })
+      World:fx("spark", bx, by + 4, { color = "cyan", n = 7 })
+      if G.Audio then G.Audio.sfx("shoot4") end
+    end
+    if not tgt or self.stateT <= 0
+      or ((self.lanceLeft or 0) <= 0 and self.lanceGap <= 0) then
+      self.lanceTarget = nil
+      self.lanceLeft = nil
       self:setState("climb", 6)
     end
 
@@ -1799,6 +1882,10 @@ function Aerie:update(dt)
       self.munchGap = (self.munchGap or 0) - dt
       if self.munchGap <= 0 then
         self.munchGap = AERIE_MUNCH_GAP
+        -- Clear the hit-invulnerability first. takeDamage grants 1.2s of it,
+        -- which would otherwise swallow every bite after the first and make
+        -- the munch gap meaningless. The lava code does the same thing.
+        p.invuln = 0
         p:takeDamage(AERIE_MUNCH_DMG, self.x + self.w / 2, { pierceDash = true })
         World:fx("burst", p.x + p.w / 2, p.y + 4,
           { color = "blood", n = 8, speed = 90 })
@@ -1837,10 +1924,10 @@ function Aerie:resolveDive(World)
       local dx = cx - (q.x + q.w / 2)
       local dy = cy - (q.y + q.h / 2 - 4)
       if dx * dx + dy * dy < (q.domeRadius + self.w / 2) ^ 2 then
-        q:domeAbsorb(6)
+        q:domeAbsorb(50)
         World:fx("spark", cx, cy, { color = "cyan", n = 16 })
         if G.Audio then G.Audio.sfx("domehit") end
-        if G.game then G.game:announce("The dome turns it! NOW!", 1.8) end
+        if G.game then G.game:announce("The Aerie Sentinel is stunned!", AERIE_DOME_STUN) end
         self:setState("stunned", AERIE_DOME_STUN)
         return
       end
@@ -1944,7 +2031,7 @@ function Aerie:draw()
     frame = 5
   elseif st == "gust" then
     frame = 4
-  elseif st == "charge" then
+  elseif st == "charge" or st == "lance" then
     frame = 3
   else
     frame = math.floor(self.t * 8) % 2 + 1       -- 1/2 flight cycle
@@ -1976,6 +2063,18 @@ function Aerie:draw()
         g.line(cx, cy, p.x + p.w / 2, p.y + p.h / 2)
       end
     end
+    g.setColor(1, 1, 1, 1)
+  end
+
+  -- energy lance: a hard blue line onto the shield she is breaking
+  if st == "lance" and self.lanceTarget then
+    local cx, cy = self:center()
+    local tx, ty = self.lanceTarget.x + self.lanceTarget.w / 2,
+                   self.lanceTarget.y + self.lanceTarget.h / 2
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.25 + math.sin(G.time * 26) * 0.2)
+    g.line(cx, cy + 4, tx, ty)
+    g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.7)
+    g.circle("line", tx, ty, 9 + math.sin(G.time * 18) * 3)
     g.setColor(1, 1, 1, 1)
   end
 

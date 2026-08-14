@@ -325,6 +325,89 @@ out.en_skylancer = {
   },
 }
 
+-- SKYSPIRE: the ion pair.
+-- Stormvane -- a charging coil on a vane; the core lights as it winds up.
+out.en_stormvane = {
+  pal = { k = "black", s = "slate", i = "ice", b = "sky", c = "cyan", w = "white" },
+  frames = {
+    {
+      m("...kkk"),
+      m("..kssk"),
+      m(".ksiik"),
+      m("ksibbk"),
+      m("ksibck"),
+      m("ksibck"),
+      m(".ksibk"),
+      m("..ksik"),
+      m("...kkk"),
+      m("....kk"),
+      m("....ks"),
+      m("....ks"),
+      m("....kk"),
+      m("......"),
+    },
+    {
+      m("...kkk"),
+      m("..kssk"),
+      m(".ksiik"),
+      m("ksibck"),
+      m("ksicwk"),
+      m("ksicwk"),
+      m(".ksibk"),
+      m("..ksik"),
+      m("...kkk"),
+      m("....kk"),
+      m("....ks"),
+      m("....ks"),
+      m("....kk"),
+      m("......"),
+    },
+  },
+}
+
+-- Roostfang -- the Skyspire bat. 1-2 fly, 3 is the bite.
+out.en_roostfang = {
+  pal = { k = "black", b = "slate", i = "sky", e = "cyan", w = "ice" },
+  frames = {
+    {
+      m("k....."),
+      m("kk...."),
+      m("kbk.kk"),
+      m("kbbkbe"),
+      m(".kbbbi"),
+      m("..kbbb"),
+      m("...kkk"),
+      m("......"),
+      m("......"),
+      m("......"),
+    },
+    {
+      m("......"),
+      m("......"),
+      m("..k.kk"),
+      m(".kbkbe"),
+      m("kbbbbi"),
+      m("kkkbbb"),
+      m("...kkk"),
+      m("......"),
+      m("......"),
+      m("......"),
+    },
+    {
+      m("......"),
+      m("..kk.."),
+      m(".kbbkk"),
+      m("kbbbbe"),
+      m("kbbbbi"),
+      m(".kbwwb"),
+      m("..kwkw"),
+      m("...kwk"),
+      m("......"),
+      m("......"),
+    },
+  },
+}
+
 out.en_sentinel = {
   pal = { k = "black", s = "slate", c = "cyan", w = "spark", d = "dark", e = "blood" },
   frames = {

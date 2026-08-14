@@ -70,6 +70,7 @@ function Player:init(idx, x, y)
   self.pinnedT = 0
   self.pinnedBy = nil
   self.pinnedMash = 0
+  self.pinNeeded = nil
 
   -- co-op state
   self.downed = false
@@ -163,11 +164,15 @@ end
 -- fast way out; this is the one that works when you are on your own.
 Player.PIN_MASH = 8
 
+-- A holder may set `pinMash` on itself to make its grip easier or harder
+-- to break than the default. A boss's talons should cost more to shake
+-- off than a bat's.
 function Player:pin(by, dur)
   if self.dead or self.downed or self.idle then return false end
   self.pinnedBy = by
   self.pinnedT = dur
   self.pinnedMash = 0
+  self.pinNeeded = (by and by.pinMash) or Player.PIN_MASH
   self.domeActive = false
   self.charging = false
   self.grappling = nil
@@ -182,10 +187,24 @@ function Player:freeFromPin(struggled)
   self.pinnedT = 0
   self.pinnedMash = 0
   self.pinnedBy = nil
+  self.pinNeeded = nil
   if by and by.onPinReleased then by:onPinReleased(self, struggled) end
   if struggled then
     self.invuln = math.max(self.invuln, 0.6)   -- brief mercy on the break
     if G.Audio then G.Audio.sfx("dash") end
+  end
+end
+
+-- ANTI-SHIELD weapons bite a FLAT chunk out of the reserve. Unlike
+-- domeAbsorb below there is no tier discount and no scaling with the
+-- incoming damage, which is what lets a boss actually threaten a dome
+-- that is being held up permanently. See Bosses.energyDart.
+function Player:domeDrain(amount)
+  self.energy = math.max(0, self.energy - amount)
+  self.energyDelay = 1
+  if self.energy <= 0 then
+    self.domeActive = false
+    if G.Audio then G.Audio.sfx("domeoff") end
   end
 end
 
@@ -240,8 +259,9 @@ function Player:update(dt)
         end
       end
     end
-    if self.pinnedMash >= Player.PIN_MASH or self.pinnedT <= 0 then
-      self:freeFromPin(self.pinnedMash >= Player.PIN_MASH)
+    local need = self.pinNeeded or Player.PIN_MASH
+    if self.pinnedMash >= need or self.pinnedT <= 0 then
+      self:freeFromPin(self.pinnedMash >= need)
     end
     return
   end
@@ -908,7 +928,7 @@ function Player:draw()
   if self.pinnedT > 0 then
     local cx = self.x + self.w / 2
     local by = self.y - 10
-    local frac = math.min(1, self.pinnedMash / Player.PIN_MASH)
+    local frac = math.min(1, self.pinnedMash / (self.pinNeeded or Player.PIN_MASH))
     g.setColor(P.black[1], P.black[2], P.black[3], 0.7)
     g.rectangle("fill", cx - 11, by, 22, 4)
     g.setColor(P.gold[1], P.gold[2], P.gold[3], 0.5 + math.sin(G.time * 20) * 0.3)

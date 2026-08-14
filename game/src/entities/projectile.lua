@@ -15,6 +15,30 @@ function Proj.spawn(world, x, y, cfg)
   return p
 end
 
+-- ==================================================================
+-- ENERGY WEAPON (shared by bosses and enemies)
+-- ==================================================================
+-- Anti-shield ordnance. A normal shot that meets Lu's dome is politely
+-- absorbed at the dome's forge-tier discount (Player:domeAbsorb), which
+-- is what makes holding the dome up so cheap. An energy dart instead
+-- bites a FLAT chunk out of her reserve via Player:domeDrain -- no
+-- discount, no scaling with tier. Enough of them collapse the dome
+-- outright and the rest arrive at a body with nothing in front of it.
+--
+-- Proj.energyDart(world, x, y, targetX, targetY, { speed, drain, dmg })
+function Proj.energyDart(world, x, y, tx, ty, cfg)
+  cfg = cfg or {}
+  local ang = math.atan2(ty - y, tx - x)
+  local sp = cfg.speed or 460
+  return Proj.spawn(world, x, y, {
+    side = "enemy", kind = "ionbolt", size = cfg.size or 5,
+    dmg = cfg.dmg or 3,
+    drain = cfg.drain or 26,        -- flat energy bitten out of a dome
+    vx = math.cos(ang) * sp, vy = math.sin(ang) * sp,
+    life = cfg.life or 2.5,
+  })
+end
+
 function Proj:init(x, y, cfg)
   Entity.init(self, x, y)
   self.kind = "proj"
@@ -35,6 +59,9 @@ function Proj:init(x, y, cfg)
   self.hitList = {}
   self.link = cfg.link  -- fired by the LINK blast (breaks link-cores)
   self.chill = cfg.chill  -- freezing shot: briefly slows the target's fire rate
+  -- anti-shield round: a flat energy bite out of a dome instead of the
+  -- usual tier-discounted absorb (see Proj.energyDart above)
+  self.drain = cfg.drain
   self.layer = 5
   self.trailT = 0
   self.bounces = cfg.bounces or 0
@@ -104,6 +131,7 @@ function Proj:update(dt)
     self.trailT = 0.03
     local col = self.visual == "spark" and "spark"
       or self.visual == "lance" and "orchid"
+      or self.visual == "ionbolt" and "sky"
       or self.side == "enemy" and "blood" or "ember"
     if self.visual ~= "pellet" then
       World:fx("trail", cx, cy, { color = col, r = self.size >= 6 and 2 or 1.5, t = 0.12 })
@@ -145,8 +173,14 @@ function Proj:update(dt)
         local dx = cx - (p.x + p.w / 2)
         local dy = cy - (p.y + p.h / 2 - 4)
         if dx * dx + dy * dy < p.domeRadius * p.domeRadius then
-          p:domeAbsorb(self.dmg)
-          World:fx("spark", cx, cy, { color = "cyan", angle = math.atan2(-self.vy, -self.vx), n = 7 })
+          if self.drain then
+            p:domeDrain(self.drain)
+            World:fx("burst", cx, cy, { color = "ice", n = 12, speed = 130 })
+          else
+            p:domeAbsorb(self.dmg)
+            World:fx("spark", cx, cy,
+              { color = "cyan", angle = math.atan2(-self.vy, -self.vx), n = 7 })
+          end
           if G.Audio then G.Audio.sfx("domehit") end
           self.dead = true
           return
@@ -198,6 +232,19 @@ function Proj:draw()
     g.circle("fill", cx, cy, self.size / 2 + 1)
     g.setColor(P.hotcore)
     g.circle("fill", cx, cy, self.size / 2 - 1)
+  elseif v == "ionbolt" then
+    -- anti-shield lance: cold blue, white-hot core, unmistakably not a bullet
+    local ang = math.atan2(self.vy, self.vx)
+    g.push() g.translate(cx, cy) g.rotate(ang)
+    g.setColor(P.water[1], P.water[2], P.water[3], 0.55)
+    g.rectangle("fill", -11, -3, 22, 6)
+    g.setColor(P.cyan)
+    g.rectangle("fill", -8, -1.5, 17, 3)
+    g.setColor(P.ice)
+    g.rectangle("fill", -3, -1, 11, 2)
+    g.setColor(P.white)
+    g.rectangle("fill", 3, -0.5, 6, 1)
+    g.pop()
   elseif v == "shard" then
     g.setColor(P.orchid)
     local ang = math.atan2(self.vy, self.vx)
