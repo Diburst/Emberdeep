@@ -698,7 +698,7 @@ function Valve:init(x, y, boss)
   self.heavy = true
   self.boss = boss
   self.w, self.h = 14, 18
-  self.maxhp = 20
+  self.maxhp = 12
   self.hp = self.maxhp
   self.touchDmg = 0
   self.noKnockback = true
@@ -731,8 +731,8 @@ function Valve:die()
     for _, v in ipairs(b.valves or {}) do if v ~= self then other = v end end
     if other and other.regenT and other.brokenAt
       and (b.t - other.brokenAt) <= 0.5 then
-      self.regenT, self.regenMax = 13, 13
-      other.regenT, other.regenMax = 13, 13
+      self.regenT, self.regenMax = 15, 15
+      other.regenT, other.regenMax = 15, 15
       other.brokenAt = nil
       if G.game then G.game:announce("BOTH VALVES BLOWN -- the engine is exposed!", 2.5) end
     else
@@ -740,11 +740,11 @@ function Valve:die()
       self.regenT, self.regenMax = 1.0, 1.0
       if G.game and not b.taughtSync then
         b.taughtSync = true
-        G.game:announce("A lone valve re-knits in a second. Blow BOTH together!", 3)
+        G.game:announce("A lone valve re-seals in a second. Blow BOTH together!", 3)
       end
     end
   else
-    self.regenT, self.regenMax = 13, 13
+    self.regenT, self.regenMax = 15, 15
   end
 end
 function Valve:hurt(dmg, srcx, srcy, opts)

@@ -27,6 +27,7 @@ import roommodel as RM
 
 BOSS_REWARDS = {
     "rustwarden": ["hydroseals"],
+    "tideengine": ["resonator"],
     "archivist": ["weapon_magnetmortar"],
     "crucible": ["corekey1"],
     "prismtyrant": ["corekey2"],
@@ -37,6 +38,9 @@ BOSS_REWARDS = {
 
 # flags granted through NPC dialogue rather than a world entity
 NPC_GIVES = {
+    # Maro switches the LINK blast on the first time you speak to him.
+    # Nothing that needs the blast is reachable before that.
+    "elder": [{"gives": ["linkblast", "met_elder"], "req": []}],
     "jun": [{"gives": ["telenet"], "req": ["boss_tideengine"]}],
     "ferro": [
         {"gives": ["ferro_rescued"], "req": []},
@@ -78,8 +82,8 @@ def target_gives(spec):
     if kind == "machine":
         return [parts[1]], []
     if kind == "linkcore":
-        # shattered by the LINK blast, which is always available
-        return [parts[1]], []
+        # shattered ONLY by the LINK blast, which Maro grants in camp
+        return [parts[1]], ["linkblast"]
     if kind == "boss":
         return ["boss_" + parts[1]] + BOSS_REWARDS.get(parts[1], []), []
     if kind == "thawplate":

@@ -284,7 +284,7 @@ do
   end
 end
 
-reg("depthmine", { hp = 4, touchDmg = 0, sprite = "en_depthmine", w = 12, h = 12,
+reg("depthmine", { hp = 3, touchDmg = 0, sprite = "en_depthmine", w = 12, h = 12,
   drops = { shards = 2 }, deathColor = "magma", animRate = 2,
   onDeathExtra = function(self)
     -- explode: damage everything nearby
@@ -296,7 +296,7 @@ reg("depthmine", { hp = 4, touchDmg = 0, sprite = "en_depthmine", w = 12, h = 12
     World:fx("burst", cx, cy, { color = "magma", n = 18, speed = 150 })
     for _, p in ipairs(World.players) do
       if not p.dead and not p.downed and U.dist(cx, cy, p.x + p.w / 2, p.y + p.h / 2) < 34 then
-        p:takeDamage(4, cx)
+        p:takeDamage(3, cx)
       end
     end
     -- for _, e in ipairs(World.entities) do
