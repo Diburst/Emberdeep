@@ -96,17 +96,19 @@ function Hud.draw(game)
   drawPlayerPanel(game, game.players[1], 8, 8)
   drawPlayerPanel(game, game.players[2], G.VW - 125, 8)
 
-  -- link meter (center top)
-  local lm = game.linkMeter
-  local x, w = G.VW / 2 - 30, 60
-  g.setColor(0, 0, 0, 0.45)
-  g.rectangle("fill", x - 2, 6, w + 4, 10, 2, 2)
-  drawBar(x, 8, w, 6, lm, lm >= 1 and P.spark or P.teal)
-  g.setFont(G.fonts.main)
-  if lm >= 1 then
-    if math.floor(G.time * 2) % 2 == 0 then
-      g.setColor(P.spark)
-      g.print("LINK READY", x + 6, 16)
+  -- link meter (center top) -- hidden until Maro switches the LINK on
+  if G.run.flags.linkblast then
+    local lm = game.linkMeter
+    local x, w = G.VW / 2 - 30, 60
+    g.setColor(0, 0, 0, 0.45)
+    g.rectangle("fill", x - 2, 6, w + 4, 10, 2, 2)
+    drawBar(x, 8, w, 6, lm, lm >= 1 and P.spark or P.teal)
+    g.setFont(G.fonts.main)
+    if lm >= 1 then
+      if math.floor(G.time * 2) % 2 == 0 then
+        g.setColor(P.spark)
+        g.print("LINK READY", x + 6, 16)
+      end
     end
   end
 

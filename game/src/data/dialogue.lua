@@ -37,16 +37,6 @@ end
 -- ==================================================================
 -- Signs & world text
 -- ==================================================================
-D.vault_wake = { { script = {
-  { who = "sys", text = "MAINTENANCE SHOP. Units: VESSEL-9, LUMEN-3." },
-} } }
-D.vault_move = { { script = {
-  { who = "sys", text = "A note, taped to the wall: 'MOVE: [MOVE]. JUMP: [JUMP]. FIRE: [FIRE]. Vess DASHES with [SPECIAL]; Lu toggles her SHIELD DOME with [SPECIAL2] and holds [JUMP2] to hover. Sorry about the wait. -- J'" },
-} } }
-D.vault_fight = { { script = {
-  { who = "sys", text = "Another note: 'I got you WALKING -- nothing more. Scrap and old equipment go to Brassa's forge. Keep rebuilding yourselves. -- J'" },
-  { who = "sys", text = "'P.S. [INTERACT] interacts. Good luck, caretakers.'" },
-} } }
 D.sign_camp_east = { { script = {
   { who = "sys", text = "EAST: Mosswood Caverns. The city's green lung, once. Mind the spores. -- Ember Camp Watch" },
 } } }
@@ -198,7 +188,20 @@ D.elder = {
   { script = {
     { who = "elder", text = "So the old vault finally spat out its caretakers. Two little bots, waking a hundred years too late." },
     { who = "elder", text = "I am Maro. What's left of the deep-folk shelter here, in Ember Camp -- while Emberdeep rots beneath us." },
-    { who = "elder", text = "We keep the lantern lit. That is all you need to know about us. You were built to maintain this place -- so maintain it. Start with the Mosswood, east of here. Something has taken root in it. Something hungry." },
+    { who = "elder", text = "That is the Ember. It has burned a hundred years without wavering. It gives us heat, and light, and water that isn't ice." },
+    { who = "elder", text = "It gives us everything except a reason. We have been kept alive down here so long that staying alive is the only thing any of us still knows how to do." },
+    { who = "elder", text = "You were built to maintain this place. So go and maintain it. Start with the Mosswood, east of here -- something has taken root in it. Something hungry." },
+    { who = "elder", text = "One thing first. You two were made to work as a pair, and nobody's ever switched that part of you back on. Stand close together." },
+    { fn = function()
+      G.run.flags.linkblast = true
+      if G.game then
+        G.game.linkMeter = 1
+        G.game:announce("LINK BLAST ONLINE", 2.2)
+      end
+      if G.Audio then G.Audio.sfx("levelup") end
+    end },
+    { who = "elder", text = "There. Get within arm's reach of each other and press [WARP] -- the two of you together throw something a great deal louder than either of you alone. It needs a moment to build back up each time." },
+    { who = "elder", text = "You'll want it immediately. We barricaded the east mouth of the camp when the Dark came up, and nothing short of that blast will open it. Go and knock it down." },
     { set = "met_elder" },
   } },
 }
@@ -259,11 +262,24 @@ D.jun = {
     { give = "module:telenet" },
     { who = "jun", text = "The pad west of camp is the hub. Go wake it up. ...Huh. Your left knee's stopped squeaking. Good. That one bothered me for years." },
   } },
+  { need = { "met_elder" }, script = {
+    { who = "jun", text = "Still in one piece. Good. Half of what you were is still out there in the deep -- modules, plating, old equipment. Scrap too; Brassa's forge can work it into you." },
+    { who = "jun", text = "And when you're ready: the grid needs the Flooded Works pumps silenced before it can carry power again." },
+  } },
+  { notflag = { "jun_taught" }, script = {
+    { who = "jun", text = "Oh. Oh, you're UP. Hold still, hold still -- a hundred years of me poking at you and you pick THIS morning." },
+    { who = "jun", text = "Jun. Teleporter tech, unemployed, on account of the teleporters being dead. Found your vault years back and I've been sneaking down to tinker ever since. Getting you two on your feet is the only work I've finished in a century." },
+    { who = "jun", text = "Right. Legs first. [MOVE] to walk, [JUMP] to jump. Go on -- the floor's clear, mostly." },
+    { who = "jun", text = "Now the arm. [FIRE] shoots. Vess, that's you -- you're the one with the gun in your wrist. Try not to point it at the lathe." },
+    { who = "jun", text = "Lu, you've got the other half of the job. [SPECIAL] throws your shield dome up. Hold [JUMP] and you'll hover instead of falling like a dropped spanner." },
+    { who = "jun", text = "[INTERACT] is for talking, reading, and anything that looks like it wants pressing. That's the whole manual. I did say I only got you WALKING." },
+    { who = "jun", text = "Go out and up the ramp -- the Elder's by the Ember. Maro. Talk to him before you do anything clever." },
+    { who = "jun", text = "...And listen. I put you back together for a reason I've never once said out loud. Whatever's wrong down here, it was wrong long before you two shut your eyes." },
+    { who = "jun", text = "I'm hoping the pair of you can make it right. That's all. Go on." },
+    { set = "jun_taught" },
+  } },
   { script = {
-    { who = "jun", text = "Jun. Teleporter tech, unemployed, on account of the teleporters being dead. You got my notes, then. The ones in the vault." },
-    { who = "jun", text = "That was me. Found your vault years back -- been sneaking down to tinker ever since. Getting you two on your feet is the only work I've finished in a century." },
-    { who = "jun", text = "So hear me: I got you WALKING. That's all. Half of what you were is still out there in the deep -- modules, plating, old equipment. Scrap too; Brassa's forge can work it into you. Keep rebuilding yourselves. Please." },
-    { who = "jun", text = "As for me -- the grid needs the Flooded Works pumps silenced before it can carry power again. When you're ready." },
+    { who = "jun", text = "Legs, arm, shield, [INTERACT]. That's the manual. The Elder's outside by the Ember -- go and see Maro." },
   } },
 }
 

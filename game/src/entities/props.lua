@@ -771,16 +771,21 @@ Entity.register("pod", function(x, y, parts) return Pod.new(x, y, parts) end)
 -- Interactable from early on. Taking it has exactly the consequences
 -- the fiction promises.
 -- ------------------------------------------------------------------
+-- THE EMBER: the heart of the camp and the largest light in the game.
+-- Everything else down here is a lantern; this is a bonfire in a cage,
+-- and it is meant to pull the eye the moment you walk in.
+local EMBER_W, EMBER_H = 28, 64
 local Emberlantern = Entity.extend()
 function Emberlantern:init(x, y)
-  Entity.init(self, x, y - 16)
+  -- anchored so its base still rests on the tile it was placed on
+  Entity.init(self, x - (EMBER_W - 14) / 2, y + 16 - EMBER_H)
   self.kind = "prop"
-  self.w, self.h = 14, 32
+  self.w, self.h = EMBER_W, EMBER_H
   self.interactable = true
-  self.hint = "lantern"
-  self.interactRange = 22
+  self.hint = "the Ember"
+  self.interactRange = 30
   self.layer = 1
-  self.lightR = 96
+  self.lightR = 190
 end
 function Emberlantern:update(dt)
   if G.run.flags.ember_taken or G.run.flags.camp_frozen then
@@ -887,27 +892,56 @@ function Emberlantern:interact(p)
 end
 function Emberlantern:draw()
   local g = love.graphics
-  local x, y = self.x, self.y
+  local x, y, w, h = self.x, self.y, self.w, self.h
+  local cx = x + w / 2
   local out = G.run.flags.ember_taken or G.run.flags.camp_frozen
-  -- post
+  local beat = 0.78 + math.sin(G.time * 1.5) * 0.14
+       + math.sin(G.time * 4.3) * 0.05
+
+  -- stone plinth it has stood on for a century
   g.setColor(P.shadow)
-  g.rectangle("fill", x + 5, y + 8, 4, 24)
+  g.rectangle("fill", x + 1, y + h - 12, w - 2, 12, 2, 2)
   g.setColor(P.gray)
-  g.rectangle("fill", x + 2, y + 30, 10, 2)
-  -- cage
+  g.rectangle("fill", x + 3, y + h - 12, w - 6, 3)
   g.setColor(P.slate)
-  g.rectangle("line", x + 1, y, 12, 12, 2, 2)
+  for i = 0, 3 do
+    g.rectangle("fill", x + 4 + i * 6, y + h - 8, 3, 6)
+  end
+  -- iron column and the ribs of the cage
+  g.setColor(P.shadow)
+  g.rectangle("fill", cx - 4, y + 20, 8, h - 30)
+  g.setColor(P.slate)
+  g.rectangle("line", x + 2, y + 2, w - 4, 34, 4, 4)
+  g.rectangle("line", x + 5, y + 5, w - 10, 28, 3, 3)
+  for i = 0, 2 do
+    g.line(x + 2, y + 10 + i * 9, x + w - 2, y + 10 + i * 9)
+  end
+
   if out then
-    g.setColor(P.navy[1], P.navy[2], P.navy[3], 0.8)
-    g.rectangle("fill", x + 3, y + 2, 8, 8)
+    g.setColor(P.navy[1], P.navy[2], P.navy[3], 0.85)
+    g.rectangle("fill", x + 7, y + 8, w - 14, 22, 3, 3)
+    g.setColor(P.gray[1], P.gray[2], P.gray[3], 0.5)
+    g.rectangle("fill", x + 10, y + 14, w - 20, 10, 2, 2)
   else
-    local beat = 0.75 + math.sin(G.time * 1.6) * 0.2
+    -- the fire itself: three nested bodies of light
+    local World = require "src.world"
+    World.glow(cx, y + 19, 120 * beat, P.ember, 0.20)
+    World.glow(cx, y + 19, 62 * beat, P.gold, 0.26)
+    g.setColor(P.rust[1], P.rust[2], P.rust[3], 0.85)
+    g.ellipse("fill", cx, y + 20, 11 * beat, 14 * beat)
     g.setColor(P.ember[1], P.ember[2], P.ember[3], beat)
-    g.rectangle("fill", x + 3, y + 2, 8, 8)
+    g.ellipse("fill", cx, y + 20, 8 * beat, 11 * beat)
     g.setColor(P.gold[1], P.gold[2], P.gold[3], beat)
-    g.rectangle("fill", x + 5, y + 4, 4, 4)
-    g.setColor(P.cream[1], P.cream[2], P.cream[3], beat * 0.9)
-    g.rectangle("fill", x + 6, y + 5, 2, 2)
+    g.ellipse("fill", cx, y + 20, 5 * beat, 7.5 * beat)
+    g.setColor(P.cream[1], P.cream[2], P.cream[3], math.min(1, beat * 1.1))
+    g.ellipse("fill", cx, y + 19, 2.4 * beat, 4 * beat)
+    -- heat coming off the top, forever
+    for i = 0, 5 do
+      local t = (G.time * 0.55 + i * 0.17) % 1
+      local sway = math.sin(G.time * 1.7 + i * 2.1) * (3 + t * 7)
+      g.setColor(P.ember[1], P.ember[2], P.ember[3], (1 - t) * 0.35)
+      g.circle("fill", cx + sway, y + 6 - t * 34, (1 - t) * 2.2 + 0.4)
+    end
   end
   g.setColor(1, 1, 1, 1)
 end

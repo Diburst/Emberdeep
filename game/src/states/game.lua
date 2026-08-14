@@ -385,6 +385,12 @@ end
 
 function S:tryLinkShot()
   if self.linkState then return end
+  -- Maro switches this on in Ember Camp. Before that the pair simply do
+  -- not know they can do it, so there is nothing to charge or explain.
+  if not G.run.flags.linkblast then
+    if G.Audio then G.Audio.sfx("deny") end
+    return
+  end
   if self.linkMeter < 1 then
     if G.Audio then G.Audio.sfx("deny") end
     self:announce("LINK charging... " .. math.floor(self.linkMeter * 100) .. "%", 1)

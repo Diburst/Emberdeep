@@ -1,6 +1,9 @@
--- The maintenance vault where Vess and Lu boot up. Tutorial signage.
+-- Jun's maintenance shop: where Vess and Lu boot up. Cluttered with
+-- benches, tools and cable runs (see drawArenaBackdrop 'campshop').
+-- Jun teaches the basics here in person -- there is no signage any more.
 return {
   zone = "camp", music = "camp",
+  arena = "campshop",
   mapPos = { x = 0, y = 1, w = 2, h = 1 },
   map = [[
 ########################################
@@ -12,19 +15,18 @@ return {
 ##....................................##
 ##...................====.............##
 ##....................................##
-##.........1.............2............##
+##.......======.......................##
 ##......A.....................====....##
 ##......A.........................BB..##
-##...........................3....BB.z##
+##..........j..W..................BB.z##
 ########################################
 ##....................................##
 ##....................................##
 ########################################
 ]],
   key = {
-    ["1"] = "sign:vault_wake",
-    ["2"] = "sign:vault_move",
-    ["3"] = "sign:vault_fight",
+    ["j"] = "npc:jun:until:camp_frozen",
+    ["W"] = "frozenkeeper:jun",
     ["z"] = "checkpoint",
   },
   links = {

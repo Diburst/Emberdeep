@@ -1233,6 +1233,196 @@ function World:drawArenaBackdrop(g, arena, ox, oy)
         0.2 + math.sin(G.time * 1.4 + i * 2) * 0.1)
       g.circle("fill", X(cx2 + 2 + sway), Y(floorY - 18 - (i % 3) * 30), 2.5)
     end
+
+  -- ================================================================
+  -- EMBER CAMP
+  -- ================================================================
+  elseif arena == "campshop" then
+    -- JUN'S MAINTENANCE SHOP: a century of half-finished work. Pegboards,
+    -- benches, cable runs, and a lathe he has not switched off in years.
+    local base = H - 4 * T
+    -- cable runs sagging along the back wall
+    for i = 0, 3 do
+      local yy = 40 + i * 22
+      g.setColor(P.shadow[1], P.shadow[2], P.shadow[3], 0.7)
+      for seg = 0, 11 do
+        local sx = 30 + seg * 50
+        local sag = math.sin(seg * 0.9 + i) * 5 + 6
+        g.line(X(sx), Y(yy), X(sx + 25), Y(yy + sag))
+        g.line(X(sx + 25), Y(yy + sag), X(sx + 50), Y(yy))
+      end
+    end
+    -- pegboards with tools hung in rows
+    for b = 0, 2 do
+      local bx = 70 + b * 190
+      g.setColor(P.umber[1], P.umber[2], P.umber[3], 0.55)
+      g.rectangle("fill", X(bx), Y(52), 84, 54)
+      g.setColor(P.soil[1], P.soil[2], P.soil[3], 0.6)
+      g.rectangle("line", X(bx), Y(52), 84, 54)
+      for t = 0, 5 do
+        local tx = bx + 8 + t * 13
+        local hang = 10 + (t % 3) * 9
+        g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.75)
+        g.rectangle("fill", X(tx), Y(58), 2, hang)
+        g.setColor(P.silver[1], P.silver[2], P.silver[3], 0.7)
+        if t % 3 == 0 then
+          g.rectangle("fill", X(tx - 3), Y(58 + hang), 8, 4)     -- hammer head
+        elseif t % 3 == 1 then
+          g.circle("line", X(tx + 1), Y(58 + hang + 3), 4)       -- wrench eye
+        else
+          g.polygon("fill", X(tx - 2), Y(58 + hang), X(tx + 4), Y(58 + hang),
+            X(tx + 1), Y(58 + hang + 6))                          -- pliers
+        end
+      end
+    end
+    -- benches, crates and a parts bin along the floor
+    for b = 0, 4 do
+      local bx = 40 + b * 130
+      g.setColor(P.umber[1], P.umber[2], P.umber[3], 0.8)
+      g.rectangle("fill", X(bx), Y(base - 26), 96, 8)
+      g.setColor(P.soil[1], P.soil[2], P.soil[3], 0.85)
+      g.rectangle("fill", X(bx + 6), Y(base - 18), 7, 18)
+      g.rectangle("fill", X(bx + 83), Y(base - 18), 7, 18)
+      -- clutter on top: jars, coils, a stub of pipe
+      g.setColor(P.teal[1], P.teal[2], P.teal[3], 0.6)
+      g.rectangle("fill", X(bx + 20), Y(base - 34), 8, 8)
+      g.setColor(P.rust[1], P.rust[2], P.rust[3], 0.7)
+      g.circle("line", X(bx + 46), Y(base - 31), 6)
+      g.circle("line", X(bx + 46), Y(base - 31), 3)
+      g.setColor(P.gray[1], P.gray[2], P.gray[3], 0.7)
+      g.rectangle("fill", X(bx + 62), Y(base - 32), 18, 5)
+    end
+    -- the lathe, still turning
+    local lx = 300
+    g.setColor(P.shadow[1], P.shadow[2], P.shadow[3], 0.9)
+    g.rectangle("fill", X(lx), Y(base - 44), 70, 44)
+    g.setColor(P.gray[1], P.gray[2], P.gray[3], 0.8)
+    g.rectangle("fill", X(lx + 6), Y(base - 38), 58, 10)
+    local spin = G.time * 3
+    g.setColor(P.silver[1], P.silver[2], P.silver[3], 0.75)
+    g.circle("line", X(lx + 14), Y(base - 33), 7)
+    g.line(X(lx + 14 - math.cos(spin) * 6), Y(base - 33 - math.sin(spin) * 6),
+      X(lx + 14 + math.cos(spin) * 6), Y(base - 33 + math.sin(spin) * 6))
+    -- a work lamp over the bench, the only warm thing in here
+    g.setColor(P.gold[1], P.gold[2], P.gold[3], 0.5 + math.sin(G.time * 2) * 0.06)
+    g.circle("fill", X(230), Y(70), 5)
+    World.glow(X(230), Y(70), 54, P.gold, 0.16)
+
+  elseif arena == "embercamp" then
+    -- EMBER CAMP: a settlement, not a cave. Huts, crates, hammocks,
+    -- drying lines and small lanterns -- all of it deliberately dimmer
+    -- and smaller than the Ember burning at the middle of the room.
+    local base = H - 5 * T
+    local emberX = 37 * T
+    -- back wall of the cavern, warmed unevenly by the great fire
+    for i = 0, 9 do
+      local px = 20 + i * 96
+      local d = math.abs(px - emberX) / (W * 0.6)
+      g.setColor(P.umber[1], P.umber[2], P.umber[3], 0.30 - d * 0.16)
+      g.rectangle("fill", X(px), Y(30), 70, base - 30)
+    end
+    -- huts: a big one on the left (the one you can enter), then smaller
+    local huts = { { 150, 120, 78 }, { 330, 78, 52 }, { 620, 92, 58 },
+                   { 760, 70, 46 }, { 890, 84, 54 } }
+    for i, hut in ipairs(huts) do
+      local hx, hw, hh = hut[1], hut[2], hut[3]
+      local hy = base - hh
+      g.setColor(P.soil[1], P.soil[2], P.soil[3], 0.9)
+      g.rectangle("fill", X(hx), Y(hy), hw, hh)
+      g.setColor(P.umber[1], P.umber[2], P.umber[3], 0.95)
+      g.polygon("fill", X(hx - 8), Y(hy), X(hx + hw + 8), Y(hy),
+        X(hx + hw / 2), Y(hy - 22))
+      g.setColor(P.shadow[1], P.shadow[2], P.shadow[3], 0.8)
+      for pl = 0, 3 do
+        g.line(X(hx + 6 + pl * (hw / 4)), Y(hy), X(hx + 6 + pl * (hw / 4)), Y(hy + hh))
+      end
+      -- a lit window each, small and yellow
+      g.setColor(P.gold[1], P.gold[2], P.gold[3],
+        0.35 + math.sin(G.time * 1.3 + i * 2) * 0.07)
+      g.rectangle("fill", X(hx + hw - 22), Y(hy + 14), 12, 10)
+    end
+    -- hammocks slung between the huts
+    for i = 0, 2 do
+      local ax = 250 + i * 230
+      local sag = math.sin(G.time * 0.7 + i) * 2
+      g.setColor(P.cream[1], P.cream[2], P.cream[3], 0.35)
+      for seg = 0, 8 do
+        local t1, t2 = seg / 8, (seg + 1) / 8
+        local function hy(t) return base - 54 + math.sin(t * math.pi) * (14 + sag) end
+        g.line(X(ax + t1 * 90), Y(hy(t1)), X(ax + t2 * 90), Y(hy(t2)))
+      end
+    end
+    -- drying lines with cloth
+    for i = 0, 1 do
+      local ax = 420 + i * 300
+      g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.5)
+      g.line(X(ax), Y(base - 96), X(ax + 140), Y(base - 92))
+      for c = 0, 4 do
+        local cxx = ax + 14 + c * 26
+        local flap = math.sin(G.time * 1.6 + c) * 2
+        g.setColor(c % 2 == 0 and P.fern or P.maroon)
+        g.rectangle("fill", X(cxx + flap), Y(base - 94 + c), 10, 16)
+      end
+    end
+    -- crates, barrels and stacked equipment
+    for i = 0, 11 do
+      local bx = 60 + i * 78 + (i % 3) * 11
+      local bh = 12 + (i % 3) * 7
+      g.setColor(P.umber[1], P.umber[2], P.umber[3], 0.85)
+      g.rectangle("fill", X(bx), Y(base - bh), 20, bh)
+      g.setColor(P.soil[1], P.soil[2], P.soil[3], 0.9)
+      g.rectangle("line", X(bx), Y(base - bh), 20, bh)
+      if i % 4 == 0 then
+        g.setColor(P.rust[1], P.rust[2], P.rust[3], 0.8)
+        g.rectangle("fill", X(bx + 24), Y(base - 16), 12, 16, 3, 3)
+      end
+    end
+    -- the small lanterns: deliberately modest next to the Ember
+    for i = 0, 6 do
+      local lx = 90 + i * 128
+      if math.abs(lx - emberX) > 90 then
+        local flick = 0.30 + math.sin(G.time * 2.4 + i * 1.7) * 0.06
+        g.setColor(P.shadow)
+        g.rectangle("fill", X(lx), Y(base - 60), 2, 26)
+        g.setColor(P.ember[1], P.ember[2], P.ember[3], flick)
+        g.circle("fill", X(lx + 1), Y(base - 62), 3)
+        World.glow(X(lx + 1), Y(base - 62), 30, P.ember, 0.10)
+      end
+    end
+
+  elseif arena == "camphut" then
+    -- INSIDE THE LONG HUT: bunks, a stove, and everything the camp
+    -- could not fit outdoors.
+    local base = H - 5 * T
+    g.setColor(P.soil[1], P.soil[2], P.soil[3], 0.55)
+    g.rectangle("fill", X(0), Y(0), W, base)
+    g.setColor(P.umber[1], P.umber[2], P.umber[3], 0.8)
+    for i = 0, 14 do
+      g.rectangle("fill", X(i * 34), Y(0), 5, base)     -- wall timbers
+    end
+    -- bunks along the back
+    for i = 0, 3 do
+      local bx = 40 + i * 100
+      for tier = 0, 1 do
+        local by = base - 34 - tier * 30
+        g.setColor(P.umber[1], P.umber[2], P.umber[3], 0.95)
+        g.rectangle("fill", X(bx), Y(by), 74, 6)
+        g.setColor(P.cream[1], P.cream[2], P.cream[3], 0.30)
+        g.rectangle("fill", X(bx + 6), Y(by - 7), 62, 7)
+        g.setColor(P.maroon[1], P.maroon[2], P.maroon[3], 0.55)
+        g.rectangle("fill", X(bx + 44), Y(by - 9), 22, 9)
+      end
+    end
+    -- the stove, small and warm
+    local sx = W / 2 - 14
+    g.setColor(P.shadow)
+    g.rectangle("fill", X(sx), Y(base - 40), 28, 40, 3, 3)
+    g.setColor(P.gray[1], P.gray[2], P.gray[3], 0.9)
+    g.rectangle("fill", X(sx + 11), Y(base - 76), 6, 36)
+    local flick = 0.5 + math.sin(G.time * 3.1) * 0.14
+    g.setColor(P.ember[1], P.ember[2], P.ember[3], flick)
+    g.rectangle("fill", X(sx + 7), Y(base - 26), 14, 10, 2, 2)
+    World.glow(X(sx + 14), Y(base - 21), 52, P.ember, 0.16)
   end
   g.setColor(1, 1, 1, 1)
 end
