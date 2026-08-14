@@ -43,7 +43,7 @@ AA.......G..................##
     ["1"] = "sign:sign_furnace",
   },
   links = {
-    A = { "flood_boss", "B" },
+    A = { "deep_stair_1", "C" },
     B = { "furn_2", "A" },
   },
 }

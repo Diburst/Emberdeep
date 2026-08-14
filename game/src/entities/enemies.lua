@@ -212,15 +212,18 @@ reg("finfish", { hp = 3, touchDmg = 2, sprite = "en_finfish", w = 14, h = 8,
       self.vx = (self.vx and math.abs(self.vx) > 5) and self.vx or (self.facing * 40)
       self.vy = math.sin(self.t * 2.5) * 18
     end
-    self.facing = (self.vx or 1) >= 0 and 1 or -1
-    local ox, oy = self.x, self.y
-    PH.move(self, self.vx * dt, self.vy * dt)
-    if self.hitWall then self.vx = -self.vx self.facing = -self.facing end
-    -- don't leave water
+    -- The surface is a ceiling, not a cage. The old code reverted the
+    -- WHOLE move whenever the destination was not water and flipped vx
+    -- every single frame, so any finfish that was not fully submerged
+    -- vibrated on the spot forever. Steer it back down instead.
     if not self.inWater then
-      self.x, self.y = ox, oy
-      self.vy = math.abs(self.vy or 20)
-      self.vx = -(self.vx or 40)
+      self.vy = math.max(self.vy or 0, 34)
+    end
+    self.facing = (self.vx or 1) >= 0 and 1 or -1
+    PH.move(self, self.vx * dt, self.vy * dt)
+    if self.hitWall then
+      self.vx = -math.abs(self.vx or 40) * self.hitWall   -- turn off the wall
+      self.facing = self.vx >= 0 and 1 or -1
     end
   end)
 
@@ -281,7 +284,7 @@ do
   end
 end
 
-reg("depthmine", { hp = 6, touchDmg = 0, sprite = "en_depthmine", w = 12, h = 12,
+reg("depthmine", { hp = 4, touchDmg = 0, sprite = "en_depthmine", w = 12, h = 12,
   drops = { shards = 2 }, deathColor = "magma", animRate = 2,
   onDeathExtra = function(self)
     -- explode: damage everything nearby

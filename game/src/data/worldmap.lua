@@ -3,6 +3,7 @@ local WM = {}
 
 WM.ROOMS = {
   "camp_awake", "camp_main", "camp_tele", "camp_hut",
+  "deep_stair_1", "deep_stair_2",
   "moss_1", "moss_2", "moss_3", "moss_4", "moss_5", "moss_well",
   "moss_boss", "moss_secret", "moss_grotto",
   "ug_1", "ug_2", "ug_3", "ug_rescue", "ug_4", "ug_5", "ug_6",

@@ -153,6 +153,13 @@ end
 -- ==================================================================
 -- 1. BRAMBLE MAW (Mosswood)
 -- ==================================================================
+-- It was never planted. The Maw drags itself after you, roots and all --
+-- slowly, but it does not stop coming.
+local MAW_CREEP = 34     -- px/sec while stalking
+local MAW_LUNGE = 165    -- px/sec during the sweep
+local MAW_SWAY = 12      -- px/sec of vine-strain wobble on top of that
+local MAW_REACH = 26     -- how close it closes before it stops shoving
+
 local Bramblemaw = Boss.extend()
 function Bramblemaw:init(x, y)
   Boss.init(self, x, y, { id = "bramblemaw", name = "BRAMBLE MAW",
@@ -166,20 +173,32 @@ function Bramblemaw:update(dt)
   self.stateT = self.stateT - dt
   local cx, cy = self:center()
 
-  -- rooted, not planted: the maw strains against its own vines
-  -- (collision-guarded: a sway must never press it into the arena wall)
-  if not self.rootX then self.rootX, self.rootY = self.x, self.y end
-  local reach = 0
-  if self.state == "sweep" then
-    reach = math.min(1, self.phaseT / 0.45) * 26   -- lunge with the sweep
-  elseif self.state == "open" then
-    reach = math.max(0, 1 - self.phaseT / 0.5) * 26
+  -- Movement goes through PH.move, which resolves each axis separately.
+  -- The old code wrote an ABSOLUTE pose every frame and skipped the write
+  -- entirely whenever that pose was blocked -- so anywhere near a wall or
+  -- the floor it advanced only on the frames the sine happened to land
+  -- free, which read as the boss juddering in place. Never veto a whole
+  -- step; let the physics slide it.
+  local target = World:nearestPlayer(cx, cy)
+  local want = 0
+  if target then
+    local dx = (target.x + target.w / 2) - cx
+    local adx = math.abs(dx)
+    -- Deadband. Without it the boss sits exactly on MAW_REACH and toggles
+    -- between closing and idling every frame, which is its own kind of
+    -- judder: it stops closing at MAW_REACH but will not start again until
+    -- you are clearly outside it.
+    if self.closing == nil then self.closing = true end
+    if self.closing and adx <= MAW_REACH then self.closing = false
+    elseif not self.closing and adx > MAW_REACH * 1.9 then self.closing = true end
+    if self.closing then want = U.sign(dx) end
+    if want ~= 0 then self.facing = want end
   end
-  local nx = self.rootX - reach + math.min(0, math.sin(self.t * 1.1) * 9)
-  local ny = self.rootY + math.sin(self.t * 2.3) * 4
-  if not PH.boxBlocked(nx, ny, self.w, self.h) then
-    self.x, self.y = nx, ny
-  end
+  local speed = (self.state == "sweep") and MAW_LUNGE or MAW_CREEP
+  self.vx = want * speed + math.sin(self.t * 1.1) * MAW_SWAY
+  self.vy = math.min((self.vy or 0) + 700 * dt, 260)
+  PH.move(self, self.vx * dt, self.vy * dt)
+  cx, cy = self:center()
 
   if self.state == "intro" then
     if self.stateT <= 0 then self:setState("volley", 2.2) end
@@ -193,14 +212,19 @@ function Bramblemaw:update(dt)
     if self.volleyGap <= 0 and self.volleyN > 0 then
       self.volleyGap = 0.38
       self.volleyN = self.volleyN - 1
-      local px = cx - 40 - self.volleyN * 32 + U.rand(-10, 10)
-      self:fireAt(cx - 10, self.y + 6, px, self.y - 120, 150,
+      local px = cx + self.facing * (40 + self.volleyN * 32) + U.rand(-10, 10)
+      self:fireAt(cx + self.facing * 10, self.y + 6, px, self.y - 120, 150,
         { kind = "orb", dmg = 2, gravity = 260, life = 3.5, size = 6 })
       if G.Audio then G.Audio.sfx("shoot2") end
     end
     if self.stateT <= 0 then
       self.volleyN = nil
-      self:setState(U.chance(0.5) and "sweep" or "open", U.chance(0.5) and 1.8 or 3)
+      -- one roll, not two: these were separate U.chance calls, so the
+      -- state and its duration were decided independently and a sweep
+      -- could run for 3s. Now that a sweep is a LUNGE, that was the
+      -- difference between closing 300px and closing 500px.
+      local lunge = U.chance(0.5)
+      self:setState(lunge and "sweep" or "open", lunge and 1.8 or 3)
     end
   elseif self.state == "sweep" then
     self.mouthOpen = false
@@ -208,15 +232,16 @@ function Bramblemaw:update(dt)
       self.swept = true
       local World2 = require "src.world"
       for i = 0, 2 do
-        Proj.spawn(World2, self.x - 4, self.y + self.h - 8, {
+        Proj.spawn(World2, cx + self.facing * (self.w / 2 + 4),
+          self.y + self.h - 8, {
           side = "enemy", dmg = 3, kind = "shard", size = 6,
-          vx = -(110 + i * 45), vy = 0, life = 3,
+          vx = self.facing * (110 + i * 45), vy = 0, life = 3,
         })
       end
       if G.Audio then G.Audio.sfx("shoot1") end
       -- spawn a gnat harasser sometimes
       if U.chance(0.5) then
-        local g = Entity.make("gnat", self.x - 60, self.y - 20)
+        local g = Entity.make("gnat", cx + self.facing * 60, self.y - 20)
         World:add(g)
       end
     end
@@ -757,7 +782,8 @@ local SURGE_DOME_COST = 5             -- energy bite for sheltering one body
 local Tideengine = Boss.extend()
 function Tideengine:init(x, y)
   Boss.init(self, x, y, { id = "tideengine", name = "TIDE ENGINE",
-    hp = 125, touchDmg = 3, w = 44, h = 36 })
+    hp = 125, touchDmg = 3, w = 44, h = 36,
+    reward = "module:resonator" })
   self.surgeIdx = 1     -- which SURGE_AT threshold we are waiting on
   self.surgeDir = -1    -- flipped on every surge, so sides alternate
 end
@@ -920,7 +946,7 @@ function Tideengine:update(dt)
   elseif self.state == "mines" then
     if not self.minesDropped then
       self.minesDropped = true
-      for i = 1, 8 do
+      for i = 1, 4 do
         local mx = self.x + U.rand(-70, self.w + 70)
         local mine = Entity.make("depthmine", mx, self.y + 30)
         World:add(mine)
