@@ -1,7 +1,7 @@
 -- A collapsed pocket. Ferro is stranded; Mote will not leave her glowmites.
 return {
   zone = "undergrove", music = "undergrove",
-  mapPos = { x = 4, y = 3, w = 1, h = 1 },
+  mapPos = { x = 3, y = 1, w = 1, h = 1 },
   dark = 0.55,
   gates = { I = "mote_done" },
   map = [[

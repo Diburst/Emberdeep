@@ -1430,6 +1430,35 @@ return function(Test, scenarios)
         .. " (need 4.15-4.99: real margin over 4-tile ledges)")
       fails = fails + 1
     end
+    -- 3b) DRIFT VANES hover gap vs roommodel's GAP_W_HOVER = 10.
+    -- Measured headless at 12.25 tiles (tools/vanes_test.lua); the model
+    -- carries two tiles of margin. If airAccel or the hover clamp is ever
+    -- retuned, this fails before a player falls in a hole.
+    G.run.flags.driftvanes = true
+    place(P2, 16, 13) wait(10)
+    hold(2, "right")
+    wait(30)
+    local hx
+    hold(2, "jump")
+    for _ = 1, 20 do wait(1) if not P2.onGround then hx = P2.x break end end
+    local lipY = P2.y
+    local hoverBest = 0
+    for _ = 1, 160 do
+      wait(1)
+      if P2.y <= lipY + 1 then hoverBest = P2.x - (hx or P2.x) end
+      if P2.onGround then break end
+    end
+    release(2, "jump") release(2, "right")
+    Test.log(string.format("lu hover gap: %.2f tiles (model GAP_W_HOVER=10)",
+      hoverBest / 16))
+    if hoverBest / 16 < 10 or hoverBest / 16 >= 14 then
+      Test.log("FAIL GAP_W_HOVER drift: engine " .. (hoverBest / 16)
+        .. " (need 10-13.99)")
+      fails = fails + 1
+    end
+    G.run.flags.driftvanes = nil
+    wait(5)
+
     -- 3) running jump distance vs GAP_W = 4 (open-sky runway: cols 16+)
     place(P1, 16, 13) wait(10)
     hold(1, "right")
@@ -2242,6 +2271,7 @@ return function(Test, scenarios)
       { "crucible", "furn_boss" }, { "prismtyrant", "crys_boss" },
       { "aeriesentinel", "sky_boss" }, { "mycelchoir", "ug_boss" },
       { "archivist", "cold_boss" }, { "motherengine", "core_boss" },
+      { "vessel8", "scrap_boss" },
     }
     local fails = 0
     for _, e in ipairs(LIST) do
@@ -2792,6 +2822,263 @@ return function(Test, scenarios)
       Test.log("FAIL panel did not open")
     end
     Test.log("OK progress")
+  end
+
+
+  -- ----------------------------------------------------------------
+  -- THE BULWARK LINE. The headless harnesses in tools/ prove the maths;
+  -- this proves it in the real engine, with real rooms and real bodies.
+  -- ----------------------------------------------------------------
+  scenarios.bulwark = function()
+    local World = require "src.world"
+    local Entity = require "src.entities.entity"
+    local fails = 0
+    local function fail(m) Test.log("FAIL " .. m) fails = fails + 1 end
+
+    startRun { coop = true, room = "scrap_boss", door = "A",
+      flags = { sparkjump = true, grapple = true, heatplating = true,
+                hydroseals = true, bulwark = true } }
+    wait(20)
+    local v = G.game.players[1]
+
+    -- 1. ZERO PASS-THROUGH. Park a body ahead of Vess and charge it.
+    local e = Entity.make("plateframe", v.x + 46, v.y - 2)
+    World:add(e)
+    wait(4)
+    v.facing = 1
+    v.dashT = 0.2 v.dashCd = 0 v.dashHits = {} v.bulwarkT = 0.32
+    local crossed = false
+    for i = 1, 30 do
+      wait(1)
+      if v.x > e.x + e.w then crossed = true end
+    end
+    if crossed then fail("bulwark: a charge carried Vess THROUGH a body") end
+    if v.dashT > 0 then fail("bulwark: the charge did not end on contact") end
+    Test.log("bulwark: contact stopped the charge, no pass-through")
+    e.dead = true
+
+    -- 2. CONCUSSION on something light, and none on a boss-mass body
+    local h = Entity.make("scraphusk", v.x + 44, v.y)
+    World:add(h)
+    wait(4)
+    v.facing = 1
+    v.dashT = 0.2 v.dashCd = 0 v.dashHits = {} v.bulwarkT = 0.32
+    wait(24)
+    if (h.stunT or 0) <= 0 then fail("bulwark: a light body was not concussed") end
+    Test.log("bulwark: husk concussed for " .. string.format("%.2f", h.stunT or 0) .. "s")
+    h.dead = true
+
+    -- 3. the front/back rule, through the real takeDamage
+    v.invuln = 0 v.dashT = 0.2 v.bulwarkT = 0.32
+    local hp0 = v.hp
+    v:takeDamage(3, v.x + v.w / 2 + 24, { pierceDash = true })
+    if v.hp ~= hp0 then fail("bulwark: a FRONTAL pierceDash hit got through") end
+    v.invuln = 0 v.dashT = 0.2 v.bulwarkT = 0.32
+    v:takeDamage(3, v.x + v.w / 2 - 24, { pierceDash = true })
+    if v.hp >= hp0 then fail("bulwark: a hit in the BACK was wrongly blocked") end
+    Test.log("bulwark: front blocked, back open")
+
+    -- 4. the CINDER RAM shatters a raised guard rather than damaging it
+    G.run.flags.cinderram = true
+    local pf = Entity.make("plateframe", v.x + 46, v.y - 2)
+    World:add(pf)
+    wait(4)
+    pf.facing = -1              -- plate pointed AT Vess
+    local phc = pf.hp
+    v.facing = 1
+    v.dashT = 0.2 v.dashCd = 0 v.dashHits = {} v.bulwarkT = 0.32
+    wait(24)
+    if (pf.guardT or 0) <= 0 then fail("cinderram: the guard did not shatter") end
+    if pf.hp ~= phc then fail("cinderram: a guard-break should not also damage") end
+    Test.log("cinderram: guard shattered for " .. string.format("%.1f", pf.guardT or 0) .. "s")
+    pf.dead = true
+
+    -- 5. EIGHT never leaves its room
+    World:load("scrap_boss", "A", true)
+    G.game.fade = 0 G.game.fadeDir = 0
+    wait(10)
+    local Bosses = require "src.entities.bosses"
+    local b = Bosses.start("vessel8", World)
+    local lo = 2 * 16
+    local hi = World.w * 16 - 2 * 16 - b.w
+    local escaped = 0
+    for i = 1, 900 do
+      wait(1)
+      if b.dead then break end
+      if b.x < lo - 1 or b.x > hi + 1 then escaped = escaped + 1 end
+      if i % 30 == 0 and b.hp > 1 then b.hp = b.hp - 2 end
+    end
+    if escaped > 0 then fail("EIGHT left the room on " .. escaped .. " frames") end
+    Test.log("EIGHT held its post (" .. escaped .. " frames out of bounds)")
+
+    Test.log((fails == 0 and "OK" or "FAILED ") .. " bulwark")
+  end
+
+
+  -- ----------------------------------------------------------------
+  -- THE DRIFT VANES. tools/vanes_test.lua proves the physics; this proves
+  -- the gate, the column and the co-op camera in the real engine.
+  -- ----------------------------------------------------------------
+  scenarios.vanes = function()
+    local World = require "src.world"
+    local Cam = require "src.camera"
+    local fails = 0
+    local function fail(m) Test.log("FAIL " .. m) fails = fails + 1 end
+
+    -- 1. THE GATE. sky_2's pocket is sealed until she has the vanes.
+    startRun { coop = true, room = "sky_2", door = "A",
+      flags = { sparkjump = true, grapple = true } }
+    wait(20)
+    local lu = G.game.players[2]
+    if G.run.flags.driftvanes then fail("vanes: a new run starts with them") end
+    lu.onGround = false lu.y = lu.y - 40 lu.vy = 120
+    wait(4)
+    Test.log("no vanes: hovering=" .. tostring(lu.hovering))
+    if lu.hovering then fail("vanes: Lu hovered without the module") end
+
+    G.run.flags.driftvanes = true
+    wait(20)
+    local p = G.game.players[2]
+    p.x, p.y = 300, 60 p.vy = 120 p.onGround = false
+    wait(4)
+    if not p.hovering then fail("vanes: Lu will not hover WITH the module") end
+    Test.log("with vanes: hovering=" .. tostring(p.hovering)
+      .. " vy=" .. string.format("%.0f", p.vy))
+
+    -- 2. THE NEST holds the module, and the chest is real
+    World:load("sky_nest", "A", true)
+    G.game.fade = 0 G.game.fadeDir = 0
+    wait(12)
+    local found = false
+    for _, e in ipairs(World.entities) do
+      if e.kind == "chest" then found = true end
+    end
+    if not found then fail("sky_nest: no chest -- the vanes never spawned") end
+    Test.log("sky_nest chest present: " .. tostring(found))
+
+    -- 3. THE COLUMN lifts her, and only her
+    World:load("gal_2", "A", true)
+    G.game.fade = 0 G.game.fadeDir = 0
+    wait(12)
+    local col
+    for _, e in ipairs(World.entities) do
+      if e.kind == "updraft" then col = col or e end
+    end
+    if not col then
+      fail("gal_2: no updraft entity spawned")
+    else
+      Test.log("gal_2 column: " .. col.tiles .. " tiles at y=" .. math.floor(col.y))
+      local v, l = G.game.players[1], G.game.players[2]
+      for _, who in ipairs({ v, l }) do
+        who.x = col.x + 3
+        who.y = col.y + col.h - who.h - 2
+        who.vx, who.vy = 0, 0
+        who.onGround = true
+      end
+      local ly0, vy0 = l.y, v.y
+      hold(2, "jump")
+      hold(1, "jump")
+      wait(90)
+      release(2, "jump")
+      release(1, "jump")
+      local lrise, vrise = ly0 - l.y, vy0 - v.y
+      Test.log(string.format("column: Lu rose %.0f px, Vess rose %.0f px", lrise, vrise))
+      if lrise < 8 * 16 then fail("column did not lift Lu") end
+      if vrise > 5 * 16 then fail("column lifted VESS -- it must be scenery to him") end
+
+      -- 4. THE CO-OP CAMERA: with Lu at the top and Vess at the bottom,
+      -- both must still be on screen.
+      Cam.update(1, { v, l })
+      for _ = 1, 30 do Cam.update(1 / 60, { v, l }) end
+      local sep = math.abs(l.y - v.y)
+      local lOn = Cam.onScreen(l.x, l.y, 0)
+      local vOn = Cam.onScreen(v.x, v.y, 0)
+      Test.log(string.format("separation %.0f px (budget %.0f), Lu on=%s Vess on=%s",
+        sep, 0.75 * G.VH, tostring(lOn), tostring(vOn)))
+      if not (lOn and vOn) then
+        fail("co-op: a bot left the frame at " .. math.floor(sep) .. " px of separation")
+      end
+    end
+
+    Test.log((fails == 0 and "OK" or "FAILED ") .. " vanes")
+  end
+
+
+  -- ----------------------------------------------------------------
+  -- SEALED BOSS SHORTCUTS. The Deep Stair shortcut in each arena must be
+  -- unusable until that boss is dead -- otherwise you can brush it on the
+  -- way in and walk straight past the fight.
+  -- ----------------------------------------------------------------
+  scenarios.sealed = function()
+    local World = require "src.world"
+    local fails = 0
+    local function fail(m) Test.log("FAIL " .. m) fails = fails + 1 end
+
+    startRun { coop = true, flags = {
+      sparkjump = true, grapple = true, hydroseals = true,
+      heatplating = true, cryocoils = true, driftvanes = true,
+    } }
+    wait(12)
+
+    local LIST = {
+      { "furn_boss", "B", "boss_crucible" },
+      { "crys_boss", "B", "boss_prismtyrant" },
+      { "flood_boss", "F", "boss_tideengine" },
+      { "cold_boss", "C", "boss_archivist" },
+    }
+    for _, e in ipairs(LIST) do
+      local room, ch, flag = e[1], e[2], e[3]
+      G.run.flags[flag] = nil
+      World:load(room, "A", true)
+      G.game.fade = 0 G.game.fadeDir = 0
+      wait(8)
+      local d = World.doors[ch]
+      if not d then
+        fail(room .. ": no door " .. ch)
+      else
+        if not World:doorSealed(d) then
+          fail(room .. ":" .. ch .. " is NOT sealed before the boss dies")
+        end
+        -- stand in the doorway and try to leave
+        World.pendingTransition = nil
+        for _, pl in ipairs(World.players) do
+          pl.x = d.x0 * 16 + 1
+          pl.y = d.y0 * 16
+          pl.vx, pl.vy = 0, 0
+        end
+        World:requestTransition(ch)
+        if World.pendingTransition then
+          fail(room .. ":" .. ch .. " LET US THROUGH before the boss was dead")
+          World.pendingTransition = nil
+        end
+        Test.log(room .. ":" .. ch .. " sealed, transition refused")
+
+        -- now kill the boss and try again
+        G.run.flags[flag] = true
+        if World:doorSealed(d) then
+          fail(room .. ":" .. ch .. " still sealed AFTER the boss died")
+        end
+        World:requestTransition(ch)
+        if not World.pendingTransition then
+          fail(room .. ":" .. ch .. " will not open after the boss died")
+        end
+        Test.log(room .. ":" .. ch .. " opens once " .. flag .. " is held")
+        World.pendingTransition = nil
+      end
+    end
+
+    -- and an ordinary door is untouched
+    World:load("moss_2", "A", true)
+    G.game.fade = 0 G.game.fadeDir = 0
+    wait(8)
+    for ch2, d2 in pairs(World.doors) do
+      if d2.link and World:doorSealed(d2) then
+        fail("moss_2:" .. ch2 .. " is sealed and should not be")
+      end
+    end
+    Test.log("ordinary doors unaffected")
+
+    Test.log((fails == 0 and "OK" or "FAILED ") .. " sealed")
   end
 
   scenarios.solo = function()

@@ -28,6 +28,11 @@ function S:enter()
       G.State.push(require "src.states.progress")
     end,
       hint = "Also on F1. What can you reach right now? Is the run completable?" }
+    items[#items + 1] = { label = "WARP (TEST)", onConfirm = function()
+      G.State.pop()
+      G.State.push(require "src.states.warp")
+    end,
+      hint = "Jump to any room. For when a gate is somewhere awkward and you do not fancy the walk." }
   end
   local more = {
     { label = function()

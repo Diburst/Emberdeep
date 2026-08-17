@@ -2,7 +2,7 @@
 return {
   zone = "furnace", music = "furnace",
   arena = "slaggolem",
-  mapPos = { x = 6, y = 1, w = 2, h = 1 },
+  mapPos = { x = 6, y = 2, w = 2, h = 1 },
   map = [[
 ########################################
 ########################################

@@ -13,14 +13,17 @@ return {
         B = { "camp_main", "D" },
       },
       gives = {
+        ["ent:9"] = { flags = { "ch_shelf" }, req = {  }, kind = "chest" },
         ["ent:j"] = { flags = { "telenet" }, req = { "boss_tideengine" }, kind = "npc" },
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "door:B", reqs = { {  } } },
+        { from = "door:A", to = "ent:9", reqs = { { "driftvanes" } } },
         { from = "door:A", to = "ent:j", reqs = { {  } } },
         { from = "door:B", to = "door:A", reqs = { {  } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "ent:9", reqs = { { "driftvanes" } } },
         { from = "door:B", to = "ent:j", reqs = { {  } } },
       },
     },
@@ -109,12 +112,15 @@ return {
         B = { "cold_2", "A" },
       },
       gives = {
+        ["ent:9"] = { flags = { "ch_cold_high" }, req = {  }, kind = "chest" },
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "door:B", reqs = { { "cryocoils" } } },
+        { from = "door:A", to = "ent:9", reqs = { { "cryocoils", "driftvanes" }, { "cryocoils", "sparkjump" } } },
         { from = "door:B", to = "door:A", reqs = { { "cryocoils" } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "ent:9", reqs = { { "sparkjump" }, { "cryocoils", "driftvanes" } } },
       },
     },
     ["cold_2"] = {
@@ -129,11 +135,11 @@ return {
       edges = {
         { from = "door:A", to = "door:A", reqs = { { "cryocoils" } } },
         { from = "door:A", to = "door:B", reqs = { { "cryocoils" } } },
-        { from = "door:A", to = "door:E", reqs = { { "cryocoils", "sparkjump" } } },
+        { from = "door:A", to = "door:E", reqs = { { "cryocoils", "driftvanes" }, { "cryocoils", "sparkjump" } } },
         { from = "door:A", to = "ent:t", reqs = { { "cryocoils" } } },
         { from = "door:B", to = "door:A", reqs = { { "cryocoils" } } },
         { from = "door:B", to = "door:B", reqs = { { "cryocoils" } } },
-        { from = "door:B", to = "door:E", reqs = { { "cryocoils", "sparkjump" } } },
+        { from = "door:B", to = "door:E", reqs = { { "cryocoils", "driftvanes" }, { "cryocoils", "sparkjump" } } },
         { from = "door:B", to = "ent:t", reqs = { { "cryocoils" } } },
         { from = "door:E", to = "door:A", reqs = { { "cryocoils" } } },
         { from = "door:E", to = "door:B", reqs = { { "cryocoils" } } },
@@ -154,11 +160,11 @@ return {
         { from = "door:A", to = "door:A", reqs = { { "cryocoils" } } },
         { from = "door:A", to = "door:B", reqs = { { "cryocoils", "thaw_cold3" } } },
         { from = "door:A", to = "ent:5", reqs = { { "cryocoils", "thaw_cold3" } } },
-        { from = "door:A", to = "ent:w", reqs = { { "cryocoils", "sparkjump" } } },
+        { from = "door:A", to = "ent:w", reqs = { { "cryocoils", "sparkjump" }, { "cryocoils", "driftvanes", "thaw_cold3" } } },
         { from = "door:B", to = "door:A", reqs = { { "cryocoils", "thaw_cold3" } } },
         { from = "door:B", to = "door:B", reqs = { { "cryocoils" } } },
         { from = "door:B", to = "ent:5", reqs = { { "cryocoils" } } },
-        { from = "door:B", to = "ent:w", reqs = { { "cryocoils", "sparkjump", "thaw_cold3" } } },
+        { from = "door:B", to = "ent:w", reqs = { { "cryocoils", "driftvanes", "thaw_cold3" }, { "cryocoils", "sparkjump", "thaw_cold3" } } },
       },
     },
     ["cold_4"] = {
@@ -210,7 +216,7 @@ return {
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "door:B", reqs = { { "boss_archivist" } } },
-        { from = "door:A", to = "door:C", reqs = { {  } } },
+        { from = "door:A", to = "door:C", reqs = { { "boss_archivist" } } },
         { from = "door:A", to = "ent:a", reqs = { {  } } },
         { from = "door:B", to = "door:A", reqs = { { "boss_archivist" } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
@@ -218,7 +224,7 @@ return {
         { from = "door:B", to = "ent:a", reqs = { { "boss_archivist" } } },
         { from = "door:C", to = "door:A", reqs = { {  } } },
         { from = "door:C", to = "door:B", reqs = { { "boss_archivist" } } },
-        { from = "door:C", to = "door:C", reqs = { {  } } },
+        { from = "door:C", to = "door:C", reqs = { { "boss_archivist" } } },
         { from = "door:C", to = "ent:a", reqs = { {  } } },
       },
     },
@@ -453,10 +459,10 @@ return {
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
-        { from = "door:A", to = "door:B", reqs = { {  } } },
+        { from = "door:A", to = "door:B", reqs = { { "boss_prismtyrant" } } },
         { from = "door:A", to = "ent:t", reqs = { {  } } },
         { from = "door:B", to = "door:A", reqs = { {  } } },
-        { from = "door:B", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "door:B", reqs = { { "boss_prismtyrant" } } },
         { from = "door:B", to = "ent:t", reqs = { {  } } },
       },
     },
@@ -585,6 +591,7 @@ return {
       gives = {
         ["ent:8"] = { flags = { "chest_flood2b" }, req = {  }, kind = "chest" },
         ["ent:9"] = { flags = { "chest_scatter", "weapon_scatterhex" }, req = {  }, kind = "chest" },
+        ["ent:T"] = { flags = { "tank_flood" }, req = {  }, kind = "tank" },
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
@@ -592,16 +599,19 @@ return {
         { from = "door:A", to = "door:D", reqs = { { "hydroseals" } } },
         { from = "door:A", to = "ent:8", reqs = { {  } } },
         { from = "door:A", to = "ent:9", reqs = { {  } } },
+        { from = "door:A", to = "ent:T", reqs = { { "driftvanes" } } },
         { from = "door:B", to = "door:A", reqs = { {  } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
         { from = "door:B", to = "door:D", reqs = { { "hydroseals" } } },
         { from = "door:B", to = "ent:8", reqs = { {  } } },
         { from = "door:B", to = "ent:9", reqs = { {  } } },
+        { from = "door:B", to = "ent:T", reqs = { { "driftvanes" } } },
         { from = "door:D", to = "door:A", reqs = { { "hydroseals" } } },
         { from = "door:D", to = "door:B", reqs = { { "hydroseals" } } },
         { from = "door:D", to = "door:D", reqs = { {  } } },
         { from = "door:D", to = "ent:8", reqs = { { "hydroseals" } } },
         { from = "door:D", to = "ent:9", reqs = { { "hydroseals" } } },
+        { from = "door:D", to = "ent:T", reqs = { { "driftvanes", "hydroseals" } } },
       },
     },
     ["flood_3"] = {
@@ -683,10 +693,10 @@ return {
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
-        { from = "door:A", to = "door:F", reqs = { {  } } },
+        { from = "door:A", to = "door:F", reqs = { { "boss_tideengine" } } },
         { from = "door:A", to = "ent:t", reqs = { {  } } },
         { from = "door:F", to = "door:A", reqs = { {  } } },
-        { from = "door:F", to = "door:F", reqs = { {  } } },
+        { from = "door:F", to = "door:F", reqs = { { "boss_tideengine" } } },
         { from = "door:F", to = "ent:t", reqs = { {  } } },
       },
     },
@@ -752,6 +762,8 @@ return {
         A = { "furn_1", "B" },
         B = { "furn_3", "A" },
         C = { "furn_cache", "A" },
+        D = { "scrap_1", "A" },
+        E = { "scrap_boss", "E" },
       },
       gives = {
         ["ent:4"] = { flags = { "arcplate3", "ch_ap3" }, req = {  }, kind = "chest" },
@@ -760,15 +772,33 @@ return {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "door:B", reqs = { {  } } },
         { from = "door:A", to = "door:C", reqs = { {  } } },
+        { from = "door:A", to = "door:D", reqs = { {  } } },
+        { from = "door:A", to = "door:E", reqs = { { "boss_vessel8" } } },
         { from = "door:A", to = "ent:4", reqs = { {  } } },
         { from = "door:B", to = "door:A", reqs = { {  } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
         { from = "door:B", to = "door:C", reqs = { {  } } },
+        { from = "door:B", to = "door:D", reqs = { {  } } },
+        { from = "door:B", to = "door:E", reqs = { { "boss_vessel8" } } },
         { from = "door:B", to = "ent:4", reqs = { {  } } },
         { from = "door:C", to = "door:A", reqs = { {  } } },
         { from = "door:C", to = "door:B", reqs = { {  } } },
         { from = "door:C", to = "door:C", reqs = { {  } } },
+        { from = "door:C", to = "door:D", reqs = { {  } } },
+        { from = "door:C", to = "door:E", reqs = { { "boss_vessel8" } } },
         { from = "door:C", to = "ent:4", reqs = { {  } } },
+        { from = "door:D", to = "door:A", reqs = { {  } } },
+        { from = "door:D", to = "door:B", reqs = { {  } } },
+        { from = "door:D", to = "door:C", reqs = { {  } } },
+        { from = "door:D", to = "door:D", reqs = { {  } } },
+        { from = "door:D", to = "door:E", reqs = { { "boss_vessel8" } } },
+        { from = "door:D", to = "ent:4", reqs = { {  } } },
+        { from = "door:E", to = "door:A", reqs = { { "boss_vessel8" } } },
+        { from = "door:E", to = "door:B", reqs = { { "boss_vessel8" } } },
+        { from = "door:E", to = "door:C", reqs = { { "boss_vessel8" } } },
+        { from = "door:E", to = "door:D", reqs = { { "boss_vessel8" } } },
+        { from = "door:E", to = "door:E", reqs = { {  } } },
+        { from = "door:E", to = "ent:4", reqs = { { "boss_vessel8" } } },
       },
     },
     ["furn_3"] = {
@@ -798,17 +828,20 @@ return {
       },
       gives = {
         ["ent:3"] = { flags = { "chest_heatplate", "heatplating" }, req = {  }, kind = "chest" },
+        ["ent:9"] = { flags = { "ch_furn_high" }, req = {  }, kind = "chest" },
         ["ent:M"] = { flags = { "furnvault" }, req = {  }, kind = "machine" },
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "door:B", reqs = { { "furnvault", "heatplating" } } },
         { from = "door:A", to = "ent:3", reqs = { { "furnvault" } } },
+        { from = "door:A", to = "ent:9", reqs = { { "furnvault", "sparkjump" }, { "driftvanes", "furnvault", "heatplating" } } },
         { from = "door:A", to = "ent:M", reqs = { {  } } },
-        { from = "door:B", to = "door:A", reqs = { { "furnvault", "heatplating" } } },
+        { from = "door:B", to = "door:A", reqs = { { "driftvanes", "heatplating" }, { "furnvault", "heatplating" } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
         { from = "door:B", to = "ent:3", reqs = { { "heatplating" } } },
-        { from = "door:B", to = "ent:M", reqs = { { "furnvault", "heatplating" } } },
+        { from = "door:B", to = "ent:9", reqs = { { "driftvanes", "heatplating" }, { "heatplating", "sparkjump" } } },
+        { from = "door:B", to = "ent:M", reqs = { { "driftvanes", "heatplating" }, { "furnvault", "heatplating" } } },
       },
     },
     ["furn_5"] = {
@@ -825,12 +858,12 @@ return {
         { from = "door:A", to = "door:A", reqs = { { "heatplating" } } },
         { from = "door:A", to = "door:B", reqs = { { "heatplating" } } },
         { from = "door:A", to = "ent:5", reqs = { { "heatplating", "plate_furn5" } } },
-        { from = "door:A", to = "ent:q", reqs = { { "heatplating", "sparkjump" } } },
+        { from = "door:A", to = "ent:q", reqs = { { "driftvanes", "heatplating" }, { "heatplating", "sparkjump" } } },
         { from = "door:A", to = "ent:x", reqs = { { "heatplating" } } },
         { from = "door:B", to = "door:A", reqs = { { "heatplating" } } },
         { from = "door:B", to = "door:B", reqs = { { "heatplating" } } },
         { from = "door:B", to = "ent:5", reqs = { { "heatplating", "plate_furn5" } } },
-        { from = "door:B", to = "ent:q", reqs = { { "heatplating", "sparkjump" } } },
+        { from = "door:B", to = "ent:q", reqs = { { "driftvanes", "heatplating" }, { "heatplating", "sparkjump" } } },
         { from = "door:B", to = "ent:x", reqs = { { "heatplating" } } },
       },
     },
@@ -864,10 +897,10 @@ return {
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
-        { from = "door:A", to = "door:B", reqs = { {  } } },
+        { from = "door:A", to = "door:B", reqs = { { "boss_crucible" } } },
         { from = "door:A", to = "ent:t", reqs = { {  } } },
         { from = "door:B", to = "door:A", reqs = { {  } } },
-        { from = "door:B", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "door:B", reqs = { { "boss_crucible" } } },
         { from = "door:B", to = "ent:t", reqs = { {  } } },
       },
     },
@@ -902,6 +935,46 @@ return {
         { from = "door:B", to = "door:A", reqs = { {  } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
         { from = "door:B", to = "ent:t", reqs = { {  } } },
+      },
+    },
+    ["gal_1"] = {
+      doors = {
+        A = { "sky_2", "C" },
+        B = { "gal_2", "A" },
+      },
+      gives = {
+      },
+      edges = {
+        { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "door:B", reqs = { { "driftvanes" }, { "sparkjump" } } },
+        { from = "door:B", to = "door:A", reqs = { {  } } },
+        { from = "door:B", to = "door:B", reqs = { {  } } },
+      },
+    },
+    ["gal_2"] = {
+      doors = {
+        A = { "gal_1", "B" },
+        B = { "gal_3", "A" },
+      },
+      gives = {
+      },
+      edges = {
+        { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "door:B", reqs = { { "driftvanes" } } },
+        { from = "door:B", to = "door:A", reqs = { {  } } },
+        { from = "door:B", to = "door:B", reqs = { {  } } },
+      },
+    },
+    ["gal_3"] = {
+      doors = {
+        A = { "gal_2", "B" },
+      },
+      gives = {
+        ["ent:4"] = { flags = { "tank_gallery" }, req = {  }, kind = "tank" },
+      },
+      edges = {
+        { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "ent:4", reqs = { {  } } },
       },
     },
     ["moss_1"] = {
@@ -1004,6 +1077,7 @@ return {
       },
       gives = {
         ["ent:1"] = { flags = { "chest_moss5" }, req = {  }, kind = "chest" },
+        ["ent:9"] = { flags = { "ch_moss_high" }, req = {  }, kind = "chest" },
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
@@ -1011,21 +1085,25 @@ return {
         { from = "door:A", to = "door:C", reqs = { {  } } },
         { from = "door:A", to = "door:E", reqs = { {  } } },
         { from = "door:A", to = "ent:1", reqs = { { "sparkjump" } } },
+        { from = "door:A", to = "ent:9", reqs = { { "sparkjump" } } },
         { from = "door:B", to = "door:A", reqs = { {  } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
         { from = "door:B", to = "door:C", reqs = { {  } } },
         { from = "door:B", to = "door:E", reqs = { {  } } },
         { from = "door:B", to = "ent:1", reqs = { { "sparkjump" } } },
+        { from = "door:B", to = "ent:9", reqs = { { "sparkjump" } } },
         { from = "door:C", to = "door:A", reqs = { {  } } },
         { from = "door:C", to = "door:B", reqs = { {  } } },
         { from = "door:C", to = "door:C", reqs = { {  } } },
         { from = "door:C", to = "door:E", reqs = { {  } } },
         { from = "door:C", to = "ent:1", reqs = { { "sparkjump" } } },
+        { from = "door:C", to = "ent:9", reqs = { { "sparkjump" } } },
         { from = "door:E", to = "door:A", reqs = { {  } } },
         { from = "door:E", to = "door:B", reqs = { {  } } },
         { from = "door:E", to = "door:C", reqs = { {  } } },
         { from = "door:E", to = "door:E", reqs = { {  } } },
         { from = "door:E", to = "ent:1", reqs = { { "sparkjump" } } },
+        { from = "door:E", to = "ent:9", reqs = { { "sparkjump" } } },
       },
     },
     ["moss_boss"] = {
@@ -1068,7 +1146,7 @@ return {
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
-        { from = "door:A", to = "ent:1", reqs = { { "sparkjump" } } },
+        { from = "door:A", to = "ent:1", reqs = { { "driftvanes" }, { "sparkjump" } } },
       },
     },
     ["moss_well"] = {
@@ -1077,15 +1155,150 @@ return {
         D = { "ug_1", "A" },
       },
       gives = {
-        ["ent:1"] = { flags = { "musicbox", "musicbox_chest" }, req = {  }, kind = "chest" },
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "door:D", reqs = { {  } } },
-        { from = "door:A", to = "ent:1", reqs = { {  } } },
         { from = "door:D", to = "door:A", reqs = { {  } } },
         { from = "door:D", to = "door:D", reqs = { {  } } },
-        { from = "door:D", to = "ent:1", reqs = { {  } } },
+      },
+    },
+    ["scrap_1"] = {
+      doors = {
+        A = { "furn_2", "D" },
+        B = { "scrap_2", "C" },
+      },
+      gives = {
+      },
+      edges = {
+        { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "door:A", reqs = { {  } } },
+        { from = "door:B", to = "door:B", reqs = { {  } } },
+      },
+    },
+    ["scrap_2"] = {
+      doors = {
+        C = { "scrap_1", "B" },
+        D = { "scrap_3", "D" },
+      },
+      gives = {
+      },
+      edges = {
+        { from = "door:C", to = "door:C", reqs = { {  } } },
+        { from = "door:C", to = "door:D", reqs = { {  } } },
+        { from = "door:D", to = "door:C", reqs = { {  } } },
+        { from = "door:D", to = "door:D", reqs = { {  } } },
+      },
+    },
+    ["scrap_3"] = {
+      doors = {
+        B = { "scrap_4", "A" },
+        D = { "scrap_2", "D" },
+      },
+      gives = {
+      },
+      edges = {
+        { from = "door:B", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "door:D", reqs = { {  } } },
+        { from = "door:D", to = "door:B", reqs = { {  } } },
+        { from = "door:D", to = "door:D", reqs = { {  } } },
+      },
+    },
+    ["scrap_4"] = {
+      doors = {
+        A = { "scrap_3", "B" },
+        C = { "scrap_secret", "A" },
+        D = { "scrap_bay", "D" },
+      },
+      gives = {
+      },
+      edges = {
+        { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "door:C", reqs = { {  } } },
+        { from = "door:A", to = "door:D", reqs = { {  } } },
+        { from = "door:C", to = "door:A", reqs = { {  } } },
+        { from = "door:C", to = "door:C", reqs = { {  } } },
+        { from = "door:C", to = "door:D", reqs = { {  } } },
+        { from = "door:D", to = "door:A", reqs = { {  } } },
+        { from = "door:D", to = "door:C", reqs = { {  } } },
+        { from = "door:D", to = "door:D", reqs = { {  } } },
+      },
+    },
+    ["scrap_5"] = {
+      doors = {
+        C = { "scrap_bay", "B" },
+        D = { "scrap_6", "D" },
+      },
+      gives = {
+      },
+      edges = {
+        { from = "door:C", to = "door:C", reqs = { {  } } },
+        { from = "door:C", to = "door:D", reqs = { {  } } },
+        { from = "door:D", to = "door:C", reqs = { {  } } },
+        { from = "door:D", to = "door:D", reqs = { {  } } },
+      },
+    },
+    ["scrap_6"] = {
+      doors = {
+        B = { "scrap_boss", "A" },
+        D = { "scrap_5", "D" },
+      },
+      gives = {
+      },
+      edges = {
+        { from = "door:B", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "door:D", reqs = { { "bulwark" } } },
+        { from = "door:D", to = "door:B", reqs = { { "bulwark" } } },
+        { from = "door:D", to = "door:D", reqs = { {  } } },
+      },
+    },
+    ["scrap_bay"] = {
+      doors = {
+        B = { "scrap_5", "C" },
+        D = { "scrap_4", "D" },
+      },
+      gives = {
+        ["ent:b"] = { flags = { "bulwark", "ch_bulwark" }, req = {  }, kind = "chest" },
+      },
+      edges = {
+        { from = "door:B", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "door:D", reqs = { {  } } },
+        { from = "door:B", to = "ent:b", reqs = { {  } } },
+        { from = "door:D", to = "door:B", reqs = { {  } } },
+        { from = "door:D", to = "door:D", reqs = { {  } } },
+        { from = "door:D", to = "ent:b", reqs = { {  } } },
+      },
+    },
+    ["scrap_boss"] = {
+      doors = {
+        A = { "scrap_6", "B" },
+        E = { "furn_2", "E" },
+      },
+      gives = {
+        ["ent:t"] = { flags = { "boss_vessel8", "cinderram" }, req = {  }, kind = "boss" },
+      },
+      edges = {
+        { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "door:E", reqs = { { "boss_vessel8" } } },
+        { from = "door:A", to = "ent:t", reqs = { {  } } },
+        { from = "door:E", to = "door:A", reqs = { { "boss_vessel8" } } },
+        { from = "door:E", to = "door:E", reqs = { {  } } },
+        { from = "door:E", to = "ent:t", reqs = { { "boss_vessel8" } } },
+      },
+    },
+    ["scrap_secret"] = {
+      doors = {
+        A = { "scrap_4", "C" },
+      },
+      gives = {
+        ["ent:9"] = { flags = { "ch_scrap1" }, req = {  }, kind = "chest" },
+        ["ent:k"] = { flags = { "cap_scrap" }, req = {  }, kind = "capsule" },
+      },
+      edges = {
+        { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "ent:9", reqs = { {  } } },
+        { from = "door:A", to = "ent:k", reqs = { {  } } },
       },
     },
     ["sky_1"] = {
@@ -1106,6 +1319,7 @@ return {
       doors = {
         A = { "sky_1", "B" },
         B = { "sky_3", "A" },
+        C = { "gal_1", "A" },
         E = { "sky_secret", "A" },
       },
       gives = {
@@ -1114,14 +1328,22 @@ return {
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "door:B", reqs = { {  } } },
+        { from = "door:A", to = "door:C", reqs = { { "driftvanes" } } },
         { from = "door:A", to = "door:E", reqs = { {  } } },
         { from = "door:A", to = "ent:t", reqs = { {  } } },
         { from = "door:B", to = "door:A", reqs = { {  } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "door:C", reqs = { { "driftvanes" } } },
         { from = "door:B", to = "door:E", reqs = { {  } } },
         { from = "door:B", to = "ent:t", reqs = { {  } } },
+        { from = "door:C", to = "door:A", reqs = { { "driftvanes" } } },
+        { from = "door:C", to = "door:B", reqs = { { "driftvanes" } } },
+        { from = "door:C", to = "door:C", reqs = { {  } } },
+        { from = "door:C", to = "door:E", reqs = { { "driftvanes" } } },
+        { from = "door:C", to = "ent:t", reqs = { { "driftvanes" } } },
         { from = "door:E", to = "door:A", reqs = { {  } } },
         { from = "door:E", to = "door:B", reqs = { {  } } },
+        { from = "door:E", to = "door:C", reqs = { { "driftvanes" } } },
         { from = "door:E", to = "door:E", reqs = { {  } } },
         { from = "door:E", to = "ent:t", reqs = { {  } } },
       },
@@ -1137,19 +1359,20 @@ return {
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
-        { from = "door:A", to = "door:B", reqs = { { "grapple" } } },
-        { from = "door:A", to = "ent:4", reqs = { { "grapple", "plate_s3" } } },
+        { from = "door:A", to = "door:B", reqs = { { "driftvanes" }, { "grapple" } } },
+        { from = "door:A", to = "ent:4", reqs = { { "driftvanes", "plate_s3" }, { "grapple", "plate_s3" } } },
         { from = "door:A", to = "ent:x", reqs = { {  } } },
-        { from = "door:B", to = "door:A", reqs = { { "grapple" } } },
+        { from = "door:B", to = "door:A", reqs = { { "driftvanes" }, { "grapple" } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
         { from = "door:B", to = "ent:4", reqs = { { "plate_s3" } } },
-        { from = "door:B", to = "ent:x", reqs = { { "grapple" } } },
+        { from = "door:B", to = "ent:x", reqs = { { "driftvanes" }, { "grapple" } } },
       },
     },
     ["sky_4"] = {
       doors = {
         A = { "sky_3", "B" },
         B = { "sky_boss", "A" },
+        C = { "sky_nest", "A" },
       },
       gives = {
         ["ent:5"] = { flags = { "cap_sky" }, req = {  }, kind = "capsule" },
@@ -1157,10 +1380,16 @@ return {
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "door:B", reqs = { {  } } },
+        { from = "door:A", to = "door:C", reqs = { {  } } },
         { from = "door:A", to = "ent:5", reqs = { {  } } },
         { from = "door:B", to = "door:A", reqs = { {  } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "door:C", reqs = { {  } } },
         { from = "door:B", to = "ent:5", reqs = { {  } } },
+        { from = "door:C", to = "door:A", reqs = { {  } } },
+        { from = "door:C", to = "door:B", reqs = { {  } } },
+        { from = "door:C", to = "door:C", reqs = { {  } } },
+        { from = "door:C", to = "ent:5", reqs = { {  } } },
       },
     },
     ["sky_boss"] = {
@@ -1173,6 +1402,18 @@ return {
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "ent:t", reqs = { {  } } },
+      },
+    },
+    ["sky_nest"] = {
+      doors = {
+        A = { "sky_4", "C" },
+      },
+      gives = {
+        ["ent:3"] = { flags = { "chest_driftvanes", "driftvanes" }, req = {  }, kind = "chest" },
+      },
+      edges = {
+        { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "ent:3", reqs = { {  } } },
       },
     },
     ["sky_secret"] = {
@@ -1255,10 +1496,10 @@ return {
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "door:B", reqs = { {  } } },
-        { from = "door:A", to = "ent:k", reqs = { { "sparkjump" } } },
+        { from = "door:A", to = "ent:k", reqs = { { "driftvanes" }, { "sparkjump" } } },
         { from = "door:B", to = "door:A", reqs = { {  } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
-        { from = "door:B", to = "ent:k", reqs = { { "sparkjump" } } },
+        { from = "door:B", to = "ent:k", reqs = { { "driftvanes" }, { "sparkjump" } } },
       },
     },
     ["ug_5"] = {
@@ -1355,11 +1596,13 @@ return {
         A = { "ug_6", "D" },
       },
       gives = {
+        ["ent:1"] = { flags = { "musicbox", "musicbox_chest" }, req = {  }, kind = "chest" },
         ["ent:8"] = { flags = { "chest_ugsec" }, req = {  }, kind = "chest" },
         ["ent:9"] = { flags = { "chest_ugsec2" }, req = {  }, kind = "chest" },
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "ent:1", reqs = { {  } } },
         { from = "door:A", to = "ent:8", reqs = { {  } } },
         { from = "door:A", to = "ent:9", reqs = { {  } } },
       },

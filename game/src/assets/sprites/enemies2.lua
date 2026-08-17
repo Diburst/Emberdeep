@@ -671,4 +671,126 @@ out.en_icemaw = {
   },
 }
 
+-- ------------------------------------------------------------------
+-- THE SCRAPYARD
+-- ------------------------------------------------------------------
+out.en_scraphusk = {
+  pal = { k = "black", g = "gray", d = "slate", s = "shadow", r = "blood",
+    w = "silver" },
+  frames = {
+    {
+      "..............",
+      "....kkkkkk....",
+      "...kdssssdk...",
+      "...ksskrsdk...",
+      "..kkdssssdkk..",
+      ".kdddsssssdk..",
+      "kwkddddddsdk..",
+      "kkkkddddddkk..",
+      "...kk...kk....",
+      "..............",
+    },
+    {
+      "..............",
+      "..............",
+      "....kkkkkk....",
+      "...kdssssdk...",
+      "...kssrksdk...",
+      "..kkdssssdkk..",
+      "kwkdddsssssdk.",
+      "kkkkdddddddkk.",
+      "....kk..kk....",
+      "..............",
+    },
+  },
+}
+
+out.en_plateframe = {
+  pal = { k = "black", g = "gray", d = "slate", s = "shadow", r = "blood",
+    w = "silver", e = "maroon" },
+  frames = {
+    {
+      "....kkkkkk....",
+      "...kdddddddk..",
+      "...ksssssssk..",
+      "...kkkkkkkkk..",
+      "...kskrrksdk..",
+      "...kkkkkkkkk..",
+      "..kkeeeeeekk..",
+      "..kdssssssdkw.",
+      "..kdsssssssdw.",
+      "..kdssssssdkw.",
+      "..kddssssddk..",
+      "...kdddddddk..",
+      "...kddkkkddk..",
+      "...kdk...kdk..",
+      "...kdk...kdk..",
+      "..kkdkk.kkdkk.",
+      "..kkkkk.kkkkk.",
+    },
+    {
+      "....kkkkkk....",
+      "...kdddddddk..",
+      "...ksssssssk..",
+      "...kkkkkkkkk..",
+      "...kskrrksdk..",
+      "...kkkkkkkkk..",
+      "..kkeeeeeekk..",
+      "..kdssssssdkw.",
+      "..kdssssssdkw.",
+      "..kdsssssssdw.",
+      "..kddssssddk..",
+      "...kdddddddk..",
+      "...kddkkkddk..",
+      "...kdk...kdk..",
+      "...kdk...kdk..",
+      "..kkdkk.kkdkk.",
+      "..kkkkk.kkkkk.",
+    },
+  },
+}
+
+out.en_rammer = {
+  pal = { k = "black", g = "gray", d = "slate", s = "shadow", r = "blood",
+    e = "vessdark", w = "silver" },
+  frames = {
+    {
+      "...kkkkkk.....",
+      "..kddddddk....",
+      "..ksssssdk....",
+      "..kkkkkkkk....",
+      "..kskrrsdk....",
+      "..kkkkkkkk....",
+      ".kkeeeeeekk...",
+      ".kdsssssssdk..",
+      ".kdssssssssdw.",
+      ".kdsssssssdkw.",
+      ".kddsssssddk..",
+      "..kdddddddk...",
+      "..kddk.kddk...",
+      "..kdsk.kdsk...",
+      ".kkddkkkddkk..",
+      ".kkkkk.kkkkk..",
+    },
+    {
+      "...kkkkkk.....",
+      "..kddddddk....",
+      "..ksssssdk....",
+      "..kkkkkkkk....",
+      "..kskrrsdk....",
+      "..kkkkkkkk....",
+      ".kkeeeeeekk...",
+      ".kdsssssssdk..",
+      ".kdssssssssdw.",
+      ".kdsssssssdkw.",
+      ".kddsssssddk..",
+      "..kdddddddk...",
+      "..kddk.kddk...",
+      "..kddk.kdsk...",
+      ".kkdskkkddkk..",
+      ".kkkkk.kkkkk..",
+    },
+  },
+}
+
 return out

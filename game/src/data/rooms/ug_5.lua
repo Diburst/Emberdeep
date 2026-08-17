@@ -1,7 +1,7 @@
 -- The spore descent. Every ledge glows faintly with sleeping bulbs.
 return {
   zone = "undergrove", music = "undergrove",
-  mapPos = { x = 7, y = 2, w = 1, h = 2 },
+  mapPos = { x = 6, y = 0, w = 1, h = 2 },
   dark = 0.85,
   map = [[
 ##############################

@@ -2,7 +2,7 @@
 return {
   zone = "undergrove", music = "undergrove",
   arena = "mycelchoir",
-  mapPos = { x = 11, y = 3, w = 1, h = 2 },
+  mapPos = { x = 9, y = 1, w = 1, h = 2 },
   dark = 0.9,
   map = [[
 ##############################

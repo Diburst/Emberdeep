@@ -4,6 +4,11 @@ local U = require "src.core.util"
 
 local Cam = {}
 Cam.x, Cam.y = 0, 0
+-- The integer offset apply() last translated by, shake included. Anything
+-- that has to line up with the world while drawing OUTSIDE the camera
+-- transform (the darkness canvas) must use these, not Cam.x/Cam.y --
+-- otherwise it drifts by the shake every time something explodes.
+Cam.ox, Cam.oy = 0, 0
 Cam.shakeT, Cam.shakeMag = 0, 0
 Cam.roomW, Cam.roomH = 480, 270
 
@@ -56,8 +61,10 @@ function Cam.apply()
     sx = love.math.random(-Cam.shakeMag, Cam.shakeMag)
     sy = love.math.random(-Cam.shakeMag, Cam.shakeMag)
   end
+  Cam.ox = math.floor(Cam.x + sx)
+  Cam.oy = math.floor(Cam.y + sy)
   love.graphics.push()
-  love.graphics.translate(-math.floor(Cam.x + sx), -math.floor(Cam.y + sy))
+  love.graphics.translate(-Cam.ox, -Cam.oy)
 end
 
 function Cam.unapply()

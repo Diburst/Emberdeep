@@ -16,7 +16,11 @@ genprogress.py) reason about the same world the player experiences:
   - Magne-grapple anchors 'n' work only with the 'grapple' flag, radius
     GRAPPLE_R (Chebyshev tiles, matching the engine's 110px rope).
   - Jump height is JUMP_H tiles (JUMP_H_SPARK with 'sparkjump'), gap
-    clearance GAP_W tiles.
+    clearance GAP_W tiles -- GAP_W_HOVER with 'driftvanes', because Lu's
+    hover more than doubles her reach (engine measures 12.1 tiles).
+  - Updraft columns ('updraft:<tiles>' entities) are ladder-like: with
+    'driftvanes' Lu rides them upward one cell at a time and steps off to
+    either side. Without the vanes they are ordinary air.
 
 Physics constants are verified against the real engine by the
 `calibrate` test scenario -- if the engine changes, that test fails and
@@ -32,24 +36,38 @@ GATES = set("GHIJ")
 JUMP_H = 3
 JUMP_H_SPARK = 4
 GAP_W = 4
+# Lu with the DRIFT VANES. The engine measures 12.1 tiles of level gap
+# (hoversim: 1.3s of hover at 26px/s fall against 112px/s run); we model
+# 10 for two tiles of margin, because a hover gap is a long commitment
+# and the player is holding a button for the whole of it.
+GAP_W_HOVER = 10
 GRAPPLE_R = 6  # 110px rope / 16px tiles
 
 ALL_ABILITIES = frozenset({"sparkjump", "grapple", "hydroseals",
-                           "heatplating", "telenet"})
+                           "heatplating", "telenet", "driftvanes"})
 
 
 class Room:
-    def __init__(self, name, g, gates, key, links, hot=False, cold=False):
+    def __init__(self, name, g, gates, key, links, hot=False, cold=False,
+                 door_req=None):
         self.name = name
         self.g = g
         self.H, self.W = len(g), len(g[0])
         self.gates = gates      # char -> flag ('!' prefix = bridge)
         self.key = key          # char -> spec string
         self.links = links      # char -> (room, door)
+        # A door sealed until a flag is held: `req = "boss_crucible"` on the
+        # link. Tile gates cannot express this -- the traversal model counts
+        # a jump ARC over a door as using it, so a two-tile pocket around a
+        # doorway is not sealable no matter how it is built. The requirement
+        # rides on the door itself instead, and genprogress folds it into
+        # that door's edge requirements.
+        self.door_req = door_req or {}
         self.hot = hot
         self.cold = cold
         self.doors = {}
         self.spawns = {}        # entity char -> [(x, y)]
+        self.updraft = {}       # (x, y) -> column base y, for every cell
         tile = set("#.%c=~L") | SPIKES | GATES | DOORS
         for y in range(self.H):
             for x in range(self.W):
@@ -58,6 +76,23 @@ class Room:
                     self.doors.setdefault(ch, []).append((x, y))
                 elif ch not in tile:
                     self.spawns.setdefault(ch, []).append((x, y))
+
+    def build_updrafts(self):
+        """Thermal columns. The map char marks the BASE cell; the column
+        rises `n` tiles from there, inclusive, exactly as the entity does."""
+        self.updraft = {}
+        for ch, spec in self.key.items():
+            if not spec.startswith("updraft:"):
+                continue
+            try:
+                n = int(spec.split(":")[1])
+            except (IndexError, ValueError):
+                n = 1
+            for (x, y) in self.spawns.get(ch, []):
+                for k in range(n):
+                    yy = y - k
+                    if 0 <= yy < self.H:
+                        self.updraft[(x, yy)] = y
 
     def door_side(self, ch):
         cells = self.doors[ch]
@@ -116,16 +151,20 @@ def parse_room(fname):
     if km:
         for em in re.finditer(r'\["(.)"\]\s*=\s*"([^"]+)"', km.group(1)):
             key[em.group(1)] = em.group(2)
-    links = {}
+    links, door_req = {}, {}
     lm = re.search(r"links = \{(.*?)\n  \}", src, re.S)
     if lm:
         for em in re.finditer(
-                r'([A-F])\s*=\s*\{\s*"(\w+)"\s*,\s*"([A-F])"\s*\}', lm.group(1)):
+                r'([A-F])\s*=\s*\{\s*"(\w+)"\s*,\s*"([A-F])"\s*'
+                r'(?:,\s*req\s*=\s*"([^"]+)"\s*)?,?\s*\}', lm.group(1)):
             links[em.group(1)] = (em.group(2), em.group(3))
+            if em.group(4):
+                door_req[em.group(1)] = em.group(4)
     hot = "hot = true" in src
     cold = "cold = true" in src
-    room = Room(name, g, gates, key, links, hot, cold)
+    room = Room(name, g, gates, key, links, hot, cold, door_req)
     room.spawns = pre_spawns
+    room.build_updrafts()
     return room
 
 
@@ -136,7 +175,15 @@ class Nav:
         self.r = room
         self.flags = frozenset(flags)
         self.jump_h = JUMP_H_SPARK if "sparkjump" in self.flags else JUMP_H
+        # the DRIFT VANES roughly double Lu's reach across a hole
+        self.gap_w = GAP_W_HOVER if "driftvanes" in self.flags else GAP_W
         self.transit = set()  # cells the body passes through mid-fall/jump
+
+    def riding(self, x, y):
+        """Is (x, y) a thermal column cell this body can ride?"""
+        return ("driftvanes" in self.flags
+                and (x, y) in self.r.updraft
+                and self.passable(x, y))
 
     def gate_solid(self, ch):
         flag = self.r.gates.get(ch)
@@ -183,7 +230,7 @@ class Nav:
         if ch in GATES and self.gate_solid(ch):
             return False
         return (self.standable(x, y) or ch == "~" or ch in DOORS
-                or ch == "n" or ch in GATES)
+                or ch == "n" or ch in GATES or self.riding(x, y))
 
     def land(self, nx, ny):
         """Fall from (nx, ny); returns landing node or None (lava/void)."""
@@ -233,6 +280,23 @@ class Nav:
                 if n:
                     out.add(n)
             return out
+        # THERMAL COLUMN. Ride it a cell at a time while the vanes hold,
+        # and step off sideways onto whatever is beside you at that height.
+        # The column's declared height is the only limit -- riding costs no
+        # vane charge in the engine, so the model must not invent one.
+        if self.riding(x, y):
+            if self.riding(x, y - 1):
+                out.add((x, y - 1))
+            for dx in (-1, 1):
+                nx = x + dx
+                if 0 <= nx < W and self.passable(nx, y) and g[y][nx] not in SPIKES:
+                    if self.is_node(nx, y):
+                        out.add((nx, y))
+                    else:
+                        n = self.land(nx, y)
+                        if n:
+                            out.add(n)
+
         # fall straight down (standing in an open gate shaft etc.)
         n0 = self.land(x, y)
         if n0 and n0 != (x, y):
@@ -257,7 +321,7 @@ class Nav:
         # sideways at ground level, then rise at the target" is a lie the
         # ceiling will refute (sky_4's boss door taught us).
         for dy in range(1, self.jump_h + 1):
-            for dx in range(-GAP_W, GAP_W + 1):
+            for dx in range(-self.gap_w, self.gap_w + 1):
                 nx, ny = x + dx, y - dy
                 if not (0 <= nx < W and 0 <= ny < H and self.is_node(nx, ny)):
                     continue
@@ -278,7 +342,7 @@ class Nav:
                         break
         # jump across gaps at same height: the arc passes just above the
         # start row, so each crossed cell must be open at y or y-1
-        for dx in range(-GAP_W, GAP_W + 1):
+        for dx in range(-self.gap_w, self.gap_w + 1):
             if dx == 0:
                 continue
             nx = x + dx

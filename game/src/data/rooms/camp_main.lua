@@ -2,7 +2,7 @@
 return {
   zone = "camp", music = "camp",
   arena = "embercamp",
-  mapPos = { x = 2, y = 1, w = 4, h = 1 },
+  mapPos = { x = 2, y = 0, w = 4, h = 1 },
   hasSave = true,
   gates = { G = "camp_barricade" },
   onEnter = function(World)

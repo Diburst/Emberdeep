@@ -72,6 +72,10 @@ P.zoneAccent = {
   crystal = P.violet,
   skyroot = P.sky,
   core    = P.cyan,
+  scrapyard = P.slate,
+  undergrove = P.plum,
+  coldstore = P.ice,
+  cradle  = P.teal,
 }
 
 return P

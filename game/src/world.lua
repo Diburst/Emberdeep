@@ -4,6 +4,14 @@ local U = require "src.core.util"
 local PH = require "src.physics"
 local Cam = require "src.camera"
 local Entity = require "src.entities.entity"
+-- The palette used to be required eight hundred lines down, next to the
+-- first function that happened to need it. A local declared there is not
+-- an upvalue for anything ABOVE it, so every function written earlier saw
+-- the nil GLOBAL P instead -- which is how drawGrate crashed the Test
+-- Chamber the moment it loaded the Crucible's arena. It lives with the
+-- other requires now, and tools/load_test.lua fails the build on any
+-- function that reads a local declared after it.
+local P = require "src.assets.palette"
 
 local T = 16
 
@@ -98,6 +106,294 @@ end
 function World:spikeAt(tx, ty)
   local c = self:tileAt(tx, ty)
   return c >= SPIKE_U and c <= SPIKE_R
+end
+
+-- ------------------------------------------------------------------
+-- WHERE A DROPPED ITEM IS ALLOWED TO LAND
+--
+-- One rule, shared by everything that puts an object into a room: boss
+-- rewards, boss corpses, anything else that has to end up somewhere the
+-- player can walk to and take.
+--
+-- The rule has two halves, and the old code had neither:
+--
+--   1. FOOTING WITHOUT A HAZARD. The old settleSpot fell until it found
+--      a solid or one-way tile below and stopped there, checking only
+--      for lava and water. Spikes are not solid, so it fell straight
+--      THROUGH a spike bed, landed on the stone underneath, and left the
+--      prize sitting inside the spikes. The whole floor of the Mycel
+--      Choir's shaft (ug_boss row 30) is a spike bed, so that arena lost
+--      its reward every time unless the boss happened to die over one of
+--      the six one-way platforms.
+--
+--   2. REACHABLE. Footing is not enough -- a ledge you cannot climb to
+--      is as bad as a spike. Spots are kept only if they are connected
+--      to a door mouth, or to where a player is standing right now, by
+--      walking, falling, or a jump of 3 rows and 4 tiles (the numbers
+--      scripts/roommodel.py is calibrated to).
+--
+-- If nothing in the room qualifies, the item goes to a player's feet
+-- rather than to a "reasonable-looking" spot: standing on someone is by
+-- definition reachable and by definition not a spike.
+-- ------------------------------------------------------------------
+local JUMP_UP = 3        -- rows a jump clears  (roommodel JUMP_H)
+local JUMP_ACROSS = 4    -- tiles a jump crosses (roommodel GAP_W)
+
+-- can an object rest on this tile, and can a player stand there to take
+-- it? The tile itself and the one above it must be clear of hazards --
+-- a prize under a ceiling spike is collected by walking into the spike.
+function World:restable(tx, ty)
+  if tx < 1 or ty < 1 or tx >= self.w - 1 or ty >= self.h - 1 then return false end
+  if self:isSolid(tx, ty) then return false end
+  for _, row in ipairs({ ty, ty - 1 }) do
+    if self:spikeAt(tx, row) or self:isLava(tx, row) or self:isWater(tx, row) then
+      return false
+    end
+  end
+  return self:isSolid(tx, ty + 1) or self:isOneway(tx, ty + 1)
+end
+
+-- every tile an object may rest on, reachable from a door or a player.
+-- Not cached: it is computed once when a boss dies, and a cache would
+-- have to be invalidated by every gate, break and crumble in the room.
+function World:dropSpots()
+  local rest, out = {}, {}
+  local function key(tx, ty) return ty * self.w + tx end
+  for ty = 1, self.h - 2 do
+    for tx = 1, self.w - 2 do
+      if self:restable(tx, ty) then rest[key(tx, ty)] = true end
+    end
+  end
+
+  local seen, queue = {}, {}
+  local function push(tx, ty)
+    local k = key(tx, ty)
+    if rest[k] and not seen[k] then
+      seen[k] = true
+      queue[#queue + 1] = { tx, ty }
+      out[#out + 1] = { tx, ty }
+    end
+  end
+  -- fall down a column from ty until something holds
+  local function drop(tx, ty)
+    for y = ty, self.h - 2 do
+      if self:isSolid(tx, y) then return end
+      if rest[key(tx, y)] then push(tx, y) return end
+    end
+  end
+
+  -- seeds: the mouth of every door, and the ground under every player
+  for _, d in pairs(self.doors or {}) do
+    for tx = d.x0 - 1, d.x1 + 1 do
+      for ty = d.y0 - 1, d.y1 + 1 do
+        push(tx, ty)
+        drop(tx, ty)
+      end
+    end
+  end
+  for _, p in ipairs(self.players or {}) do
+    if not p.dead then
+      drop(math.floor((p.x + p.w / 2) / T), math.floor((p.y + p.h) / T))
+    end
+  end
+
+  local head = 1
+  while head <= #queue do
+    local tx, ty = queue[head][1], queue[head][2]
+    head = head + 1
+    -- walk, and step off either edge
+    for _, dx in ipairs({ -1, 1 }) do
+      push(tx + dx, ty)
+      drop(tx + dx, ty)
+    end
+    -- jump: only if the takeoff has headroom for the whole rise
+    for dy = 1, JUMP_UP do
+      if self:isSolid(tx, ty - dy) then break end
+      for dx = -JUMP_ACROSS, JUMP_ACROSS do
+        push(tx + dx, ty - dy)
+      end
+    end
+  end
+  return out
+end
+
+-- ------------------------------------------------------------------
+-- THE FLOOR FLOOD (the Crucible's pouring pots)
+--
+-- Real LAVA tiles, swapped into the arena's floor row and swapped out
+-- again -- not a bespoke damage volume. Everything the game already
+-- knows about lava then applies for free: the lava law, inLava physics,
+-- the Bulwark plate's surface skim, the renderer, and settleDrop, which
+-- will refuse to leave a boss reward on a flooded floor.
+--
+-- The room says which row floods (`floodRow`); the row below it is the
+-- grate the lava sits on and drains back through.
+-- ------------------------------------------------------------------
+local FLOOD_DRAIN = 1.3
+
+function World:floodFloor(dur)
+  local row = self.room and self.room.floodRow
+  if not row or self.flood then return false end
+  local cells, blocked = {}, {}
+  -- never flood a doorway: it is sealed during the fight, and a
+  -- lava-filled door reads as a bug even when nothing can walk into it
+  for _, d in pairs(self.doors or {}) do
+    for tx = d.x0 - 1, d.x1 + 1 do blocked[tx] = true end
+  end
+  for tx = 1, self.w - 2 do
+    if not blocked[tx] and self.tiles[row][tx] == AIR then
+      self.tiles[row][tx] = LAVA
+      cells[#cells + 1] = tx
+    end
+  end
+  self.flood = { row = row, cells = cells, t = dur or 6, level = 1, state = "on" }
+  if G.Audio then G.Audio.sfx("splash") end
+  return true
+end
+
+function World:floodActive()
+  return self.flood ~= nil and self.flood.state == "on"
+end
+
+-- lava is lethal for the whole "on" phase and harmless the instant the
+-- drain starts; the ooze is an outro, not a shrinking hitbox to read
+function World:updateFlood(dt)
+  local f = self.flood
+  if not f then return end
+  if f.state == "on" then
+    f.t = f.t - dt
+    -- Slag burns. That is the point of letting a pot pour: with a dozen
+    -- slaglings on the floor and a crucible filling, the strong play may
+    -- be to climb and let it happen, and come back down to a clean
+    -- arena. A mechanic that is always correct to prevent is not a
+    -- decision, it is a chore.
+    local top = f.row * T
+    for _, e in ipairs(self.entities) do
+      if not e.dead and e.kind == "enemy" and not e.heavy and not e.lavaProof
+        and e.y + e.h > top and e.y + e.h < top + T * 1.5 then
+        local tx = math.floor((e.x + e.w / 2) / T)
+        if self.tiles[f.row][tx] == LAVA then
+          self:fx("burst", e.x + e.w / 2, e.y + e.h,
+            { color = "hotcore", n = 8, speed = 120 })
+          e.hp = 0
+          if e.onDeath then e:onDeath() end
+          e.dead = true
+        end
+      end
+    end
+    if f.t <= 0 then
+      f.state = "drain"
+      f.t = FLOOD_DRAIN
+      for _, tx in ipairs(f.cells) do
+        if self.tiles[f.row][tx] == LAVA then self.tiles[f.row][tx] = AIR end
+      end
+      if G.Audio then G.Audio.sfx("crumble") end
+    end
+  else
+    f.t = f.t - dt
+    f.level = math.max(0, f.t / FLOOD_DRAIN)
+    -- it goes out the way it should: down, through the grate
+    if math.floor(f.t * 30) % 3 == 0 and #f.cells > 0 then
+      local tx = f.cells[love.math.random(1, #f.cells)]
+      self:fx("trail", tx * T + love.math.random(2, 14), (f.row + 1) * T + 4,
+        { color = "magma", r = 1.5, t = 0.5, vy = 60 })
+    end
+    if f.t <= 0 then self.flood = nil end
+  end
+end
+
+function World:clearFlood()
+  local f = self.flood
+  if not f then return end
+  for _, tx in ipairs(f.cells) do
+    if self.tiles[f.row][tx] == LAVA then self.tiles[f.row][tx] = AIR end
+  end
+  self.flood = nil
+end
+
+-- the receding pool, drawn after the tile pass because by then the tiles
+-- are already AIR again
+function World:drawFlood(g)
+  local f = self.flood
+  if not f or f.state ~= "drain" then return end
+  local h = T * f.level
+  for _, tx in ipairs(f.cells) do
+    local px, py = tx * T, (f.row + 1) * T - h
+    g.setColor(P.magma[1], P.magma[2], P.magma[3], 0.55 + f.level * 0.45)
+    g.rectangle("fill", px, py, T, h)
+    if h > 1.5 then
+      g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3], f.level)
+      g.rectangle("fill", px, py, T, 1.5)
+    end
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
+-- The grate. It is why the floor can hold lava for six seconds and then
+-- lose it downward, and it is drawn over the floor row's top cap so the
+-- arena reads as a foundry floor rather than as stone that inexplicably
+-- drains.
+function World:drawGrate(g)
+  local row = self.room and self.room.floodRow
+  if not row then return end
+  local gy = (row + 1) * T
+  local tx0 = math.max(0, math.floor(Cam.x / T) - 1)
+  local tx1 = math.min(self.w - 1, math.floor((Cam.x + G.VW) / T) + 1)
+  for tx = tx0, tx1 do
+    if self:tileAt(tx, row + 1) == SOLID then
+      local px = tx * T
+      g.setColor(0, 0, 0, 0.55)
+      g.rectangle("fill", px, gy + 1, T, 4)
+      g.setColor(P.rust[1], P.rust[2], P.rust[3], 0.85)
+      for b = 0, 3 do
+        g.rectangle("fill", px + 1 + b * 4, gy + 1, 2, 4)
+      end
+      g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.7)
+      g.rectangle("fill", px, gy, T, 1)
+      -- the fire underneath, visible between the bars
+      local glow = 0.10 + math.sin(G.time * 2 + tx * 0.7) * 0.05
+      if self.flood then glow = glow + 0.35 * (self.flood.level or 1) end
+      g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3], glow)
+      g.rectangle("fill", px, gy + 1, T, 4)
+    end
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
+-- is an object already sitting somewhere the rule allows? Used to vet
+-- spots recorded in an existing save by the old placer.
+function World:dropLegal(x, y, w, h)
+  local ty = math.floor((y + h - 1) / T)
+  for tx = math.floor(x / T), math.floor((x + w - 1) / T) do
+    if not self:restable(tx, ty) then return false end
+  end
+  return true
+end
+
+-- place a w x h object as near (x,y) as the rule allows
+function World:settleDrop(x, y, w, h)
+  local span = math.max(1, math.ceil(w / T))
+  local cx, cy = x + w / 2, y + h / 2
+  local best, bestD
+  for _, s in ipairs(self:dropSpots()) do
+    local tx, ty = s[1], s[2]
+    -- the whole footprint has to be on good ground, not just its centre
+    local wide = true
+    for i = 0, span - 1 do
+      if not self:restable(tx + i, ty) then wide = false break end
+    end
+    if wide then
+      local sx = tx * T + (span * T - w) / 2
+      local sy = (ty + 1) * T - h
+      local d = (sx + w / 2 - cx) ^ 2 + (sy + h / 2 - cy) ^ 2
+      if not bestD or d < bestD then best, bestD = { sx, sy }, d end
+    end
+  end
+  if best then return best[1], best[2] end
+  for _, p in ipairs(self.players or {}) do
+    if not p.dead then return p.x + p.w / 2 - w / 2, p.y + p.h - h end
+  end
+  return self.w * T / 2 - w / 2, self.h * T / 2
 end
 
 -- ------------------------------------------------------------------
@@ -234,6 +530,14 @@ function World:load(roomId, doorChar, keepPlayers)
     elseif d.y0 == 0 then d.edge = "top"
     elseif d.y1 == self.h - 1 then d.edge = "bottom" end
     d.link = def.links and def.links[ch]
+    -- A SEALED DOOR: `links = { B = { "room", "D", req = "boss_crucible" } }`.
+    -- Used for the boss-room shortcuts, which must not be walkable until
+    -- the boss is actually dead -- otherwise you can brush the shortcut on
+    -- the way in and skip the fight. Tile gates cannot express this: the
+    -- reachability model treats a jump ARC over a door as using it, so a
+    -- two-tile pocket is not sealable in the model no matter how it is
+    -- built. A requirement on the door itself is exact.
+    d.req = d.link and d.link.req
   end
 
   -- spawn entities
@@ -248,14 +552,23 @@ function World:load(roomId, doorChar, keepPlayers)
   end
 
   -- persistent boss remains: uncollected reward drops + corpses live in
-  -- the run, so they survive leaving the zone, saving, and reloading
+  -- the run, so they survive leaving the zone, saving, and reloading.
+  -- A drop written by the old placer may be sitting in a spike bed; that
+  -- is recorded in the save, so re-settling it here is the only thing
+  -- that gets an existing playthrough its prize back.
   if G.run then
     for _, d in ipairs((G.run.pendingDrops or {})[roomId] or {}) do
+      if not self:dropLegal(d.x, d.y, 14, 12) then
+        d.x, d.y = self:settleDrop(d.x, d.y, 14, 12)
+      end
       local e = Entity.make("reward", d.x, d.y, { "reward", d.spec })
       if e and e ~= true then self.entities[#self.entities + 1] = e end
     end
     for bossId, c in pairs(G.run.bossCorpses or {}) do
       if c.room == roomId then
+        if not self:dropLegal(c.x, c.y, 34, 16) then
+          c.x, c.y = self:settleDrop(c.x, c.y, 34, 16)
+        end
         local e = Entity.make("bosscorpse", c.x, c.y, { "bosscorpse", bossId })
         if e and e ~= true then self.entities[#self.entities + 1] = e end
       end
@@ -453,6 +766,7 @@ end
 -- Update
 -- ------------------------------------------------------------------
 function World:update(dt)
+  self:updateFlood(dt)
   -- flush add queue
   for _, e in ipairs(self.addQueue) do
     self.entities[#self.entities + 1] = e
@@ -570,6 +884,21 @@ function World:each(kind, fn)
   end
 end
 
+-- Is this body inside a thermal column? Uses the body's centre so you have
+-- to actually be IN the draft, not clipping its edge.
+function World:updraftAt(e)
+  local cx = e.x + e.w / 2
+  local cy = e.y + e.h / 2
+  for _, u in ipairs(self.entities) do
+    if u.kind == "updraft" and not u.dead
+      and cx >= u.x and cx <= u.x + u.w
+      and cy >= u.y and cy <= u.y + u.h then
+      return u
+    end
+  end
+  return nil
+end
+
 function World:nearestPlayer(x, y)
   local best, bd
   for _, p in ipairs(self.players) do
@@ -592,8 +921,6 @@ end
 -- ------------------------------------------------------------------
 -- Particles / ambient
 -- ------------------------------------------------------------------
-local P = require "src.assets.palette"
-
 function World:fx(kind, x, y, opts)
   opts = opts or {}
   if kind == "burst" then
@@ -641,8 +968,10 @@ function World:fx(kind, x, y, opts)
       }
     end
   elseif kind == "trail" then
+    -- vx/vy default to nothing, which is what every existing caller
+    -- wants; the Crucible's drain wants its drips to actually fall
     self.particles[#self.particles + 1] = {
-      x = x, y = y, vx = 0, vy = 0, t = opts.t or 0.2,
+      x = x, y = y, vx = opts.vx or 0, vy = opts.vy or 0, t = opts.t or 0.2,
       col = P[opts.color or "spark"], r = opts.r or 2,
     }
   end
@@ -834,10 +1163,13 @@ function World:draw()
     end
   end
 
+  self:drawGrate(g)
+  self:drawFlood(g)
+
   -- edge-door markers: a soft pulsing chevron pointing out of the room,
   -- so exits read at a glance
   for ch, d in pairs(self.doors) do
-    if d.edge and d.link then
+    if d.edge and d.link and not self:doorSealed(d) then
       local cx = (d.x0 + (d.x1 - d.x0 + 1) / 2) * T
       local cy = (d.y0 + (d.y1 - d.y0 + 1) / 2) * T
       local acc = P[set.conf.accent]
@@ -857,9 +1189,27 @@ function World:draw()
     end
   end
 
+  -- sealed doors: barred, and visibly so
+  for _, d in pairs(self.doors) do
+    if d.link and self:doorSealed(d) then
+      local px, py = d.x0 * T, d.y0 * T
+      local w = (d.x1 - d.x0 + 1) * T
+      local h = (d.y1 - d.y0 + 1) * T
+      g.setColor(P.black[1], P.black[2], P.black[3], 0.82)
+      g.rectangle("fill", px, py, w, h)
+      g.setColor(P.gray)
+      for i = 0, 3 do
+        g.rectangle("fill", px + 1, py + 2 + i * (h - 5) / 3, w - 2, 2)
+      end
+      g.setColor(P.slate)
+      g.rectangle("line", px, py, w, h)
+      g.setColor(1, 1, 1, 1)
+    end
+  end
+
   -- portal door frames (edge doors are just openings)
   for ch, d in pairs(self.doors) do
-    if not d.edge and d.link then
+    if not d.edge and d.link and not self:doorSealed(d) then
       local px = d.x0 * T
       local py = d.y0 * T
       local w = (d.x1 - d.x0 + 1) * T
@@ -946,7 +1296,7 @@ function World:draw()
   -- the frozen camp: after the Ember leaves, the cold owns this place
   if self:zoneFrozen() then
     g.setColor(0.55, 0.7, 0.95, 0.16)
-    g.rectangle("fill", Cam.x, Cam.y, G.VW, G.VH)
+    g.rectangle("fill", Cam.ox, Cam.oy, G.VW, G.VH)
     g.setColor(1, 1, 1, 1)
   end
 
@@ -1235,6 +1585,83 @@ function World:drawArenaBackdrop(g, arena, ox, oy)
     end
 
   -- ================================================================
+  -- THE SCRAPYARD
+  -- ================================================================
+  -- Sorting Yard 7. Three parallax ranks of dead caretaker frames, stacked
+  -- and leaning and hung from chains -- every one of them the same
+  -- silhouette as the bot the player is standing in. A few still have an
+  -- eye lit; some of those go out as you pass. Deliberately NOT a light-
+  -- radius mechanic: this zone must never depend on a Lu module.
+  elseif arena == "scrapyard" or arena == "vessel8" then
+    local ranks = {
+      { n = 7, a = 0.30, sc = 0.55, y = floorY - 6, step = 96, seed = 3 },
+      { n = 9, a = 0.44, sc = 0.80, y = floorY + 2, step = 74, seed = 11 },
+      { n = 6, a = 0.62, sc = 1.05, y = floorY + 8, step = 118, seed = 23 },
+    }
+    -- hanging chains, behind everything
+    g.setColor(P.dark[1], P.dark[2], P.dark[3], 0.8)
+    for i = 0, 9 do
+      local hx = 30 + i * 92 + (i % 3) * 13
+      g.rectangle("fill", X(hx), Y(0), 2, 40 + (i * 37) % 90)
+    end
+    for r, rk in ipairs(ranks) do
+      for i = 0, rk.n - 1 do
+        local k = i * rk.seed
+        local fx = 24 + i * rk.step + (k % 37)
+        local lean = ((k % 7) - 3) * 0.09
+        local bw, bh = 13 * rk.sc, 26 * rk.sc
+        local fy = rk.y - (k % 3) * 5
+        g.push()
+        g.translate(X(fx), Y(fy))
+        g.rotate(lean)
+        -- torso
+        g.setColor(P.shadow[1], P.shadow[2], P.shadow[3], rk.a)
+        g.rectangle("fill", -bw / 2, -bh, bw, bh)
+        -- head, on the ones that still have one
+        if k % 4 ~= 0 then
+          g.setColor(P.gray[1], P.gray[2], P.gray[3], rk.a * 0.9)
+          g.rectangle("fill", -bw / 2 + 1, -bh - 8 * rk.sc, bw - 2, 8 * rk.sc)
+        end
+        -- legs, on the ones that still have those
+        if k % 5 ~= 0 then
+          g.setColor(P.dark[1], P.dark[2], P.dark[3], rk.a)
+          g.rectangle("fill", -bw / 2 + 1, 0, 3 * rk.sc, 9 * rk.sc)
+          g.rectangle("fill", bw / 2 - 3 * rk.sc - 1, 0, 3 * rk.sc, 9 * rk.sc)
+        end
+        -- one eye, still lit. It flickers, and some of them give up.
+        if k % 6 == 1 then
+          local life = 0.5 + 0.5 * math.sin(G.time * (0.7 + (k % 5) * 0.3) + k)
+          local giveUp = math.sin(G.time * 0.13 + k * 1.7)
+          if giveUp > -0.2 then
+            g.setColor(P.blood[1], P.blood[2], P.blood[3], rk.a * life * 1.4)
+            g.circle("fill", 1.5 * rk.sc, -bh - 4 * rk.sc, 1.3 * rk.sc)
+          end
+        end
+        g.pop()
+      end
+    end
+    -- drifting ash, not embers. Nothing here is burning any more.
+    g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.22)
+    for i = 0, 25 do
+      local ax = (i * 71 + G.time * (5 + (i % 4) * 3)) % (W + 40) - 20
+      local ay = (i * 53 + G.time * (11 + (i % 3) * 5)) % (H + 20) - 10
+      g.circle("fill", X(ax), Y(ay), 0.8 + (i % 3) * 0.35)
+    end
+    if arena == "vessel8" then
+      -- EIGHT's room: the frames here are intact, sorted, and racked. It
+      -- did the filing itself.
+      g.setColor(P.gray[1], P.gray[2], P.gray[3], 0.45)
+      for i = 0, 3 do
+        g.rectangle("fill", X(40 + i * 150), Y(floorY - 74), 92, 3)
+        g.rectangle("fill", X(40 + i * 150), Y(floorY - 38), 92, 3)
+      end
+      -- and one rack left empty, at head height, waiting
+      g.setColor(P.blood[1], P.blood[2], P.blood[3],
+        0.16 + 0.06 * math.sin(G.time * 0.9))
+      g.rectangle("fill", X(W / 2 - 14), Y(floorY - 72), 28, 32)
+    end
+
+  -- ================================================================
   -- EMBER CAMP
   -- ================================================================
   elseif arena == "campshop" then
@@ -1443,7 +1870,10 @@ function World:drawDarkness(g)
   g.origin()
   g.clear(0, 0, 0, dark)
   g.setBlendMode("replace")
-  local cx0, cy0 = math.floor(Cam.x), math.floor(Cam.y)
+  -- Project through the offset the camera REALLY used. Using Cam.x here
+  -- ignored screen shake, so every explosion slid the dark frame and the
+  -- light spheres away from the world for as long as it lasted.
+  local cx0, cy0 = Cam.ox, Cam.oy
   local function hole(wx, wy, r)
     if r <= 0 then return end
     local sx, sy = wx - cx0, wy - cy0
@@ -1484,7 +1914,12 @@ function World:drawDarkness(g)
   g.setBlendMode("alpha")
   g.setCanvas(prev)
   g.setColor(1, 1, 1, 1)
-  g.draw(self.darkCanvas, cx0, cy0)
+  -- g.origin() above cleared the camera translate for the rest of this
+  -- function, so this draw is in SCREEN space. It used to be drawn at
+  -- (Cam.x, Cam.y), which pushed the whole overlay off by exactly the
+  -- scroll distance -- fine in a single-screen room, badly wrong anywhere
+  -- the camera moves. The canvas is already screen-sized and screen-aligned.
+  g.draw(self.darkCanvas, 0, 0)
 end
 
 -- ------------------------------------------------------------------
@@ -1639,9 +2074,21 @@ end
 -- ------------------------------------------------------------------
 -- Called by player logic when standing at a portal door pressing up,
 -- or automatically when overlapping an edge door.
+function World:doorSealed(d)
+  return d and d.req and not G.run.flags[d.req]
+end
+
 function World:requestTransition(doorChar)
   local d = self.doors[doorChar]
   if not d or not d.link then return end
+  if self:doorSealed(d) then
+    if not self.sealNagT or G.time - self.sealNagT > 2 then
+      self.sealNagT = G.time
+      if G.game then G.game:announce("Sealed. Something in this room is not finished.", 2) end
+      if G.Audio then G.Audio.sfx("deny") end
+    end
+    return
+  end
   if not self.pendingTransition then
     self.pendingTransition = { room = d.link[1], door = d.link[2] }
   end

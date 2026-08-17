@@ -34,6 +34,7 @@ BOSS_REWARDS = {
     "aeriesentinel": ["corekey3"],
     "motherengine": ["ending"],  # two-phase finale chains automatically
     "mycelchoir": ["weapon_pulsebloom"],
+    "vessel8": ["cinderram"],
 }
 
 # flags granted through NPC dialogue rather than a world entity
@@ -125,7 +126,11 @@ def room_targets(room):
 
 
 def relevant_flags(room):
-    flags = {"sparkjump", "grapple"}
+    # Movement flags whose presence can change what a room can reach.
+    # driftvanes belongs here for EVERY room, not just ones with a vanes
+    # gate: Lu's hover widens GAP_W from 4 to 10 tiles, so a ledge can be
+    # hover-only anywhere in the world.
+    flags = {"sparkjump", "grapple", "driftvanes"}
     for f in room.gates.values():
         flags.add(f[1:] if f.startswith("!") else f)
     return sorted(flags)
@@ -157,6 +162,14 @@ def analyze_room(room):
                     if nav.touches(reach, cells, radius=1):
                         edges.setdefault(("door:" + dch, tkey), []).append(
                             frozenset(combo))
+    # a door sealed behind a flag needs that flag on every edge that USES it
+    for k in list(edges.keys()):
+        tkey = k[1]
+        if tkey.startswith("door:"):
+            need = getattr(room, "door_req", {}).get(tkey[5:])
+            if need:
+                edges[k] = [frozenset(set(c) | {need}) for c in edges[k]]
+
     hot_extra = frozenset({"heatplating"}) if room.hot else frozenset()
     cold_extra = frozenset({"cryocoils"}) if getattr(room, "cold", False) else frozenset()
     out = {}

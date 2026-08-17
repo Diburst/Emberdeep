@@ -115,19 +115,47 @@ function Teleporter:init(x, y, parts)
   self.hint = "warp"
   self.interactRange = 20
   self.layer = -1
-  -- discovering a teleporter registers it
-  if G.run and not G.run.flags["tp_" .. self.id] then
-    G.run.flags["tp_" .. self.id] = true
-  end
 end
+
+-- Waking a pad is what puts it on the network.
+--
+-- This used to happen in init -- the moment the ROOM loaded -- so the
+-- network quietly filled itself in with pads the player had walked past in
+-- the dark and never touched, and the destination list grew entries nobody
+-- remembered earning. Registering on interaction matches both the fiction
+-- ("go wake it up", says Jun) and what a player thinks they did.
+function Teleporter:register()
+  local key = "tp_" .. self.id
+  if G.run.flags[key] then return false end
+  G.run.flags[key] = true
+  local WM = require "src.data.worldmap"
+  local label = self.id:upper()
+  for _, pad in ipairs(WM.TELEPADS) do
+    if pad.id == self.id then label = pad.label break end
+  end
+  if G.game then
+    -- before Jun hands over the master key the pads are inert, so calling
+    -- one "unlocked" would be a lie
+    G.game:announce((G.run.flags.telenet and "TELEPORTER UNLOCKED -- " or
+      "TELEPORTER FOUND -- ") .. label, 3)
+  end
+  if G.Audio then
+    G.Audio.sfx(G.run.flags.telenet and "capsule" or "checkpoint")
+  end
+  return true
+end
+
 function Teleporter:interact(p)
+  local firstTime = self:register()
   if G.run.flags.ember_taken then
     G.game:announce("The pad refuses the stolen heart. You carry it on foot.", 2.5)
     if G.Audio then G.Audio.sfx("menuback") end
     return
   end
   if not G.run.flags.telenet then
-    G.game:announce("It hums faintly. Jun in Ember Camp might know about this.", 3)
+    if not firstTime then
+      G.game:announce("It hums faintly. Jun in Ember Camp might know about this.", 3)
+    end
     return
   end
   G.State.push(require "src.states.teleport", self.id)
@@ -205,6 +233,140 @@ function Sign:draw()
   G.drawSprite("prop_sign", 1, self.x + 6, self.y + self.h)
 end
 Entity.register("sign", function(x, y, parts) return Sign.new(x, y, parts) end)
+
+-- ------------------------------------------------------------------
+-- Dead caretaker frame: deadvess:<n>
+-- ------------------------------------------------------------------
+-- Sorting Yard 7 is full of these, and every one of them has Vess's
+-- silhouette. Reading one posts a line of EIGHT's own filing log -- the
+-- player gets six dismantling reports before meeting the thing that
+-- wrote them.
+local Deadvess = Entity.extend()
+function Deadvess:init(x, y, parts)
+  Entity.init(self, x, y + 5)
+  self.kind = "deadvess"
+  self.w, self.h = 14, 11
+  self.variant = tonumber(parts[2]) or 1
+  self.interactable = true
+  self.hint = "read"
+  self.layer = -2
+  self.lean = ((self.variant * 37) % 7 - 3) * 0.12
+end
+function Deadvess:interact(p)
+  local Dialogue = require "src.data.dialogue"
+  local script = Dialogue.get("deadvess_" .. self.variant, p)
+  if script then G.game:startDialogue(script, { name = "", portrait = nil }) end
+end
+function Deadvess:draw()
+  local g = love.graphics
+  local cx, base = self.x + self.w / 2, self.y + self.h
+  g.push() g.translate(cx, base) g.rotate(self.lean)
+  -- a caretaker frame, slumped. Same shape as the bot reading it.
+  g.setColor(P.shadow)
+  g.rectangle("fill", -6, -11, 12, 11)
+  g.setColor(P.gray)
+  g.rectangle("fill", -5, -17, 10, 6)
+  g.setColor(P.dark)
+  g.rectangle("fill", -5, -10, 10, 2)
+  -- an arm, thrown out
+  g.setColor(P.slate)
+  g.rectangle("fill", 5, -6, 7, 2)
+  g.setColor(1, 1, 1, 1)
+  g.pop()
+  -- some of them still have an eye. It does not look at you.
+  if self.variant % 2 == 1 then
+    local f = 0.25 + 0.2 * math.sin(G.time * 1.3 + self.variant)
+    g.setColor(P.blood[1], P.blood[2], P.blood[3], f)
+    g.circle("fill", cx + 2, base - 14, 1.2)
+    g.setColor(1, 1, 1, 1)
+  end
+end
+Entity.register("deadvess", function(x, y, parts) return Deadvess.new(x, y, parts) end)
+
+-- ------------------------------------------------------------------
+-- The Sentinel's nest
+-- ------------------------------------------------------------------
+-- A hundred years of things that fell past Perch 2, matted into a spiral.
+-- Lu's vanes were in it. Scenery: no interact, no collision.
+local Nest = Entity.extend()
+function Nest:init(x, y)
+  Entity.init(self, x - 8, y - 6)
+  self.kind = "prop"
+  self.w, self.h = 32, 22
+  self.layer = -2
+end
+function Nest:update(dt) end
+function Nest:draw()
+  local g = love.graphics
+  local cx, base = self.x + self.w / 2, self.y + self.h
+  -- the bowl: coarse strands, lighter toward the rim
+  for i = 0, 22 do
+    local a = (i / 23) * math.pi
+    local rx, ry = 15 - (i % 4), 9 - (i % 3)
+    g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.55 + (i % 3) * 0.12)
+    g.setLineWidth(1)
+    g.arc("line", "open", cx, base - 4, rx, math.pi + a * 0.12, math.pi * 2 - a * 0.12)
+    if i % 5 == 0 then
+      g.setColor(P.gray)
+      g.line(cx - rx, base - 4, cx - rx + 4, base - 10 - (i % 4))
+      g.line(cx + rx, base - 4, cx + rx - 4, base - 10 - (i % 4))
+    end
+  end
+  -- salvage woven in: struts, a plate, something that was a lantern
+  g.setColor(P.silver[1], P.silver[2], P.silver[3], 0.7)
+  g.rectangle("fill", cx - 9, base - 9, 7, 2)
+  g.rectangle("fill", cx + 3, base - 12, 2, 7)
+  g.setColor(P.ember[1], P.ember[2], P.ember[3], 0.30 + math.sin(G.time * 0.7) * 0.1)
+  g.circle("fill", cx - 2, base - 8, 2)
+  g.setColor(1, 1, 1, 1)
+end
+Entity.register("nest", function(x, y) return Nest.new(x, y) end)
+
+-- ------------------------------------------------------------------
+-- Thermal column: updraft:<tiles>
+-- ------------------------------------------------------------------
+-- The map char marks the BASE cell; the column rises `n` tiles from there,
+-- inclusive. Lu rides it with the DRIFT VANES (Player:update); to anyone
+-- without them it is weather. Deliberately NOT a push for the un-vaned --
+-- a nudge on Vess would quietly change reachability, and roommodel would
+-- never know.
+local Updraft = Entity.extend()
+function Updraft:init(x, y, parts)
+  local n = tonumber(parts[2]) or 1
+  Entity.init(self, x, y - (n - 1) * 16)
+  self.kind = "updraft"
+  self.tiles = n
+  self.w, self.h = 16, n * 16
+  self.layer = -3
+end
+function Updraft:update(dt) end
+function Updraft:draw()
+  local g = love.graphics
+  local live = G.run.flags.driftvanes
+  -- the column: a soft rising wash, brighter once you can use it
+  g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], live and 0.10 or 0.05)
+  g.rectangle("fill", self.x + 1, self.y, 14, self.h)
+  -- motes riding it, so the direction is never in doubt
+  for i = 0, self.tiles * 2 do
+    local seed = i * 37
+    local yy = self.y + self.h
+      - ((G.time * (26 + (seed % 13)) + seed * 11) % self.h)
+    local xx = self.x + 3 + ((seed * 7) % 10)
+      + math.sin(G.time * 1.7 + i) * 1.5
+    g.setColor(P.spark[1], P.spark[2], P.spark[3],
+      (live and 0.55 or 0.28) * (0.4 + 0.6 * math.sin(i + G.time)))
+    g.circle("fill", xx, yy, 1)
+  end
+  -- the grate it blows out of
+  g.setColor(P.gray)
+  g.rectangle("fill", self.x + 1, self.y + self.h - 3, 14, 3)
+  g.setColor(P.slate)
+  for i = 0, 3 do
+    g.rectangle("fill", self.x + 2 + i * 4, self.y + self.h - 3, 2, 3)
+  end
+  g.setColor(1, 1, 1, 1)
+end
+Entity.register("updraft", function(x, y, parts) return Updraft.new(x, y, parts) end)
 
 -- ------------------------------------------------------------------
 -- Grapple anchor
@@ -579,10 +741,10 @@ function Sporebulb:hurt(dmg, sx, sy, opts)
   local r = Entity.hurt(self, dmg, sx, sy, opts)
   if self.dead then
     -- burst: drifting spores
-    for i = 1, 3 do
+    for i = 1, 4 do
       local Proj = require "src.entities.projectile"
       Proj.spawn(World, self.x + 6, self.y + 4, {
-        side = "enemy", dmg = 1, kind = "orb", size = 4,
+        side = "enemy", dmg = 6, kind = "orb", size = 4,
         vx = U.rand(-50, 50), vy = U.rand(-70, -20), gravity = 60, life = 2.0,
       })
     end
@@ -1140,9 +1302,9 @@ Entity.register("reward", function(x, y, parts) return Reward.new(x, y, parts) e
 local CORPSE_LORE = {
   bramblemaw = { "The Bramble Maw. The Mender seeded a fast-growth cultivar to feed a city that was already gone -- and never came back to prune it.", "It was hungry because it was told to grow. Nothing else." },
   rustwarden = { "The Rusted Warden. Posted to the pump hall on the night of the Untending, and never relieved.", "Its ledger shows a hundred years of patrols. Every one is marked: NO INCIDENTS." },
-  tideengine = { "The Tide Engine. The pump-heart of the waterworks and the hanging gardens.", "It watered the terraces until the terraces drowned. Then it kept watering them. The gardens never blamed it." },
+  tideengine = { "The Tide Engine. The pump-heart of the waterworks and the hanging gardens.", "It watered the terraces until the terraces drowned. Then it kept watering them." },
   slaggolem = { "The Slag Golem. It recast itself from its own spare parts so many times that nothing original remains.", "Repair was the only order it remembered. It obeyed to the end." },
-  crucible = { "The Crucible. Ten thousand perfect parts stand in its hoppers, forged for machines that no longer exist.", "Its work queue stretches past the century mark. Someone should have told it. Someone finally did." },
+  crucible = { "The Crucible. Ten thousand perfect parts stand in its hoppers, forged for machines that no longer exist.", "Its work queue stretches past the century mark. Someone should have told it." },
   prismtyrant = { "The Conductor. For a hundred years it hailed the Core on the resonance band -- one long, unanswered handshake.", "The stones sang back because something had to." },
   aeriesentinel = { "The Aerie Sentinel. Sky watch, final entry: day 36,512. No relief.", "Whatever it was watching for, it believed to the last that someone was coming." },
   motherengine2 = { "The Mender kneels in safe mode, hands open. A hundred years of solder and patience, spent mending around a hole shaped like a heart.", "It does not speak anymore. The pipes are quieter than they have ever been." },
@@ -1197,5 +1359,190 @@ function Bosscorpse:draw()
   g.setColor(1, 1, 1, 1)
 end
 Entity.register("bosscorpse", function(x, y, parts) return Bosscorpse.new(x, y, parts) end)
+
+-- ------------------------------------------------------------------
+-- THE POURING CRUCIBLE: cruciblepot:<side>
+--
+-- Two foundry pots flank the Crucible, hung over the two refuge
+-- platforms. Each runs a cycle the boss drives:
+--
+--   idle     cold, inert
+--   filling  5s of lava climbing inside it -- SHOOTABLE, 14 hp
+--   tilting  1.2s of commitment; shooting it now changes nothing
+--   pouring  it empties, and World:floodFloor turns the floor to lava
+--   cooling  6s righting itself, cannot re-arm
+--   broken   30s, if you shot it out during the fill
+--
+-- Placed directly above its own platform on purpose: players can only
+-- aim straight up, so "climb to the safe place and shoot the thing
+-- above you" is one motion. The cost is that from up there the boss is
+-- fourteen tiles away and you are dealing it nothing.
+-- ------------------------------------------------------------------
+local POT_HP = 14
+local FILL_T = 5
+local TILT_T = 1.2
+local POUR_T = 0.6
+local COOL_T = 6
+local BROKEN_T = 30
+
+local CruciblePot = Entity.extend()
+function CruciblePot:init(x, y, parts)
+  Entity.init(self, x, y)
+  self.kind = "enemy"            -- so shots collide with it
+  self.harmless = true           -- ...but it never touches you back
+  self.touchDmg = 0
+  self.pot = true
+  self.side = parts[2] or "left"
+  self.w, self.h = 5 * T, 4 * T
+  self.hp, self.maxhp = POT_HP, POT_HP
+  self.noKnockback = true
+  self.heavy = true
+  self.state = "idle"
+  self.stateT = 0
+  self.tilt = 0
+  self.fill = 0
+  self.layer = 1
+end
+
+function CruciblePot:ready()
+  return self.state == "idle"
+end
+
+function CruciblePot:arm()
+  if self.state ~= "idle" then return false end
+  self.state = "filling"
+  self.stateT = FILL_T
+  self.hp = POT_HP
+  if G.Audio then G.Audio.sfx("surgecharge") end
+  return true
+end
+
+-- the boss holds a full pot rather than pouring it onto its own vent
+function CruciblePot:hold()
+  if self.state == "filling" and self.stateT < 0.5 then self.stateT = 0.5 end
+end
+
+function CruciblePot:update(dt)
+  local World = require "src.world"
+  self.stateT = self.stateT - dt
+  if self.state == "filling" then
+    self.fill = 1 - math.max(0, self.stateT / FILL_T)
+    if math.floor(G.time * 20) % 5 == 0 then
+      World:fx("trail", self.x + U.rand(6, self.w - 6), self.y + 6,
+        { color = "hotcore", r = 1, t = 0.3 })
+    end
+    if self.stateT <= 0 then
+      self.state = "tilting"
+      self.stateT = TILT_T
+      if G.game then G.game:announce("THE CRUCIBLE TIPS -- get off the floor!", 1.8) end
+      if G.Audio then G.Audio.sfx("bosswarn") end
+    end
+  elseif self.state == "tilting" then
+    self.tilt = 1 - math.max(0, self.stateT / TILT_T)
+    if self.stateT <= 0 then
+      self.state = "pouring"
+      self.stateT = POUR_T
+      World:floodFloor(6)
+      local Cam = require "src.camera"
+      Cam.shake(5, 0.6)
+      if G.Audio then G.Audio.sfx("quake") end
+    end
+  elseif self.state == "pouring" then
+    self.fill = math.max(0, self.stateT / POUR_T)
+    local px = self.x + self.w / 2
+    World:fx("trail", px + U.rand(-8, 8), self.y + self.h,
+      { color = "magma", r = 2, t = 0.4, vy = 200 })
+    if self.stateT <= 0 then
+      self.state = "cooling"
+      self.stateT = COOL_T
+      self.fill = 0
+    end
+  elseif self.state == "cooling" or self.state == "broken" then
+    self.tilt = U.approach(self.tilt, 0, dt * 1.5)
+    if self.stateT <= 0 then
+      self.state = "idle"
+      self.fill = 0
+    end
+  end
+end
+
+function CruciblePot:hurt(dmg, srcx, srcy, opts)
+  local World = require "src.world"
+  if self.state ~= "filling" then
+    -- a cold pot, or one already committed, just rings
+    World:fx("spark", self.x + self.w / 2, self.y + self.h / 2,
+      { color = "rust", n = 3 })
+    if G.Audio then G.Audio.sfx("domehit") end
+    return false
+  end
+  self.hp = self.hp - (dmg or 1)
+  self.white = 0.12
+  World:fx("spark", self.x + self.w / 2, self.y + self.h / 2,
+    { color = "hotcore", n = 5 })
+  if G.Audio then G.Audio.sfx("hitenemy") end
+  if self.hp <= 0 then
+    self.state = "broken"
+    self.stateT = BROKEN_T
+    self.fill = 0
+    World:fx("burst", self.x + self.w / 2, self.y + self.h / 2,
+      { color = "magma", n = 20, speed = 150 })
+    local Cam = require "src.camera"
+    Cam.shake(3, 0.3)
+    if G.game then G.game:announce("The crucible cracks -- it dumps down the wall.", 2) end
+    if G.Audio then G.Audio.sfx("break") end
+  end
+  return true
+end
+
+function CruciblePot:draw()
+  local g = love.graphics
+  local cx, cy = self.x + self.w / 2, self.y + self.h / 2
+  local a = self.tilt * (self.side == "left" and 0.7 or -0.7)
+  g.push()
+  g.translate(cx, self.y + 6)
+  g.rotate(a)
+  -- the chain it hangs from
+  g.setColor(P.dark)
+  g.rectangle("fill", -2, -self.y - 6, 4, self.y + 6)
+  -- the vessel
+  local w2, h2 = self.w / 2, self.h - 8
+  g.setColor(P.shadow)
+  g.polygon("fill", -w2, 0, w2, 0, w2 - 6, h2, -w2 + 6, h2)
+  g.setColor(P.rust)
+  g.polygon("line", -w2, 0, w2, 0, w2 - 6, h2, -w2 + 6, h2)
+  g.setColor(P.maroon[1], P.maroon[2], P.maroon[3], 1)
+  g.rectangle("fill", -w2, -3, self.w, 4)
+  -- what is in it
+  if self.fill > 0.01 then
+    local fh = (h2 - 4) * self.fill
+    g.setColor(P.magma[1], P.magma[2], P.magma[3], 1)
+    g.polygon("fill", -w2 + 3, h2 - fh, w2 - 3, h2 - fh, w2 - 6, h2, -w2 + 6, h2)
+    g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3],
+      0.7 + math.sin(G.time * 8) * 0.3)
+    g.rectangle("fill", -w2 + 3, h2 - fh, self.w - 6, 2)
+  end
+  -- while it can still be shot, say so: a hit meter on the rim
+  if self.state == "filling" then
+    local frac = self.hp / self.maxhp
+    g.setColor(P.dark)
+    g.rectangle("fill", -w2, -10, self.w, 3)
+    g.setColor(P.spark)
+    g.rectangle("fill", -w2, -10, self.w * frac, 3)
+  end
+  if (self.white or 0) > 0 then
+    g.setColor(1, 1, 1, math.min(1, self.white * 6))
+    g.polygon("fill", -w2, 0, w2, 0, w2 - 6, h2, -w2 + 6, h2)
+    self.white = math.max(0, self.white - 0.02)
+  end
+  g.pop()
+  if self.state == "broken" then
+    g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.8)
+    g.print("X", cx - 2, cy)
+  end
+  g.setColor(1, 1, 1, 1)
+end
+Entity.register("cruciblepot", function(x, y, parts)
+  return CruciblePot.new(x, y, parts)
+end)
 
 return true

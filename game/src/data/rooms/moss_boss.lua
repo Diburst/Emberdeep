@@ -1,6 +1,7 @@
 -- The Bramble Maw's clearing.
 return {
   zone = "mosswood", music = "mosswood",
+  mapPos = { x = 12, y = 0, w = 3, h = 1 },
   arena = "bramblemaw",
   map = [[
 ############################################################

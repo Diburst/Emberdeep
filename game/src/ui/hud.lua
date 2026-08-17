@@ -70,6 +70,28 @@ local function drawPlayerPanel(game, p, x, y, rightAlign)
     end
   end
 
+  -- Vess charge: a cooldown wedge plus what the charge currently IS.
+  -- Grey wedge = mobility, lit wedge = a shield, chevron = an attack.
+  if p.isVess and G.run.flags.bulwark then
+    local cy2 = y + 25
+    local ready = (p.dashCd or 0) <= 0
+    local live = (p.bulwarkT or 0) > 0
+    g.push() g.translate(x + 4, cy2 + 3)
+    g.setColor(live and P.vesslite or (ready and P.vessred or P.gray))
+    g.polygon("fill", -3, -4, 3, -2.5, 3, 2.5, -3, 4)
+    g.pop()
+    if G.run.flags.cinderram then
+      g.setColor(ready and P.magma or P.gray)
+      g.setLineWidth(1.5)
+      g.line(x + 10, cy2 - 1, x + 13, cy2 + 3, x + 10, cy2 + 7)
+      g.setLineWidth(1)
+    end
+    -- cooldown drains left to right, so it reads at a glance
+    if not ready then
+      drawBar(x + 18, cy2 + 1, 34, 3, 1 - (p.dashCd or 0) / 0.65, P.vessdark)
+    end
+  end
+
   -- Lu energy
   if not p.isVess then
     local ey = y + 24

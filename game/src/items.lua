@@ -2,7 +2,7 @@
 local Items = {}
 
 Items.MODULES = {
-  sparkjump = { name = "SPARK JUMP MODULE", desc = "Lu's original leg actuators, home at last. She jumps a full block higher and hovers longer! Vess can WARP to her after she climbs." },
+  sparkjump = { name = "SPARK JUMP MODULE", desc = "Lu's original leg actuators, home at last. She jumps a full block higher! Vess can WARP to her after she climbs." },
   grapple = { name = "MAGNE-GRAPPLE", desc = "Vess's factory grapple, back where it belongs. Press DASH near an anchor ring to zip to it!" },
   heatplating = { name = "HEAT PLATING", desc = "Original caretaker furnace plating, refitted. Both bots endure the deep heat!" },
   hydroseals = { name = "HYDRO SEALS", desc = "Original hull seals, good as new. Both bots can dive underwater indefinitely!" },
@@ -19,6 +19,9 @@ Items.MODULES = {
   arcplate2 = { name = "ARCHIVE PLATE: THE DROWNED WING", desc = "A catalog plate, mis-shelved a century ago. Curator Lock wants it home." },
   arcplate3 = { name = "ARCHIVE PLATE: THE BURNING WING", desc = "A catalog plate, mis-shelved a century ago. Curator Lock wants it home." },
   arcplate4 = { name = "ARCHIVE PLATE: THE SINGING WING", desc = "A catalog plate, mis-shelved a century ago. Curator Lock wants it home." },
+  bulwark = { name = "BULWARK PLATE", desc = "Vess's own forward plate. His CHARGE now carries a shield." },
+  driftvanes = { name = "DRIFT VANES", desc = "Lu's original attitude assembly, recovered from the Sentinel's nest. Hold JUMP while falling and she falls slowly, with full control, for a long way. She can also ride thermal columns upward. Vess can WARP to her across the gaps he cannot jump." },
+  cinderram = { name = "CINDER RAM", desc = "Recovered from VESSEL-8. The CHARGE is an attack now. It damages what it hits, shatters a raised guard outright, and burns a chevron through the dark." },
 }
 
 -- spec: "scrap:15" | "weapon:scatterhex" | "module:grapple" | "heal:full"

@@ -1,7 +1,9 @@
--- The deep mossy well. Tikka's music box is down here somewhere.
+-- The deep mossy well. Tikka dropped her music box down here -- but the
+-- well drains into the Undergrove (door D, to ug_1), and the water took
+-- it with it. What is at the bottom now is the carving that says so.
 return {
   zone = "mosswood", music = "mosswood",
-  mapPos = { x = 4, y = 1, w = 1, h = 2 },
+  mapPos = { x = 2, y = 0, w = 1, h = 2 },
   map = [[
 ##############################
 ########.AA.................##
@@ -23,22 +25,22 @@ return {
 ##..........................##
 ##..........................##
 ##..........==########......##
-####.4....................####
+####.4.5..................####
 #########.................####
 ####~~~~~##~~~~~~~~~~~~~~~####
 ####~~~~~~~~~~~~~~~~~~~~~~####
 ####~~~~~~~~~~~~~~~~~~~~~~####
 ####~~~~~~~~~~~~~~~~~~~~~~####
 ####~~~~~~~~~~~~~~~~~~~~~~####
-####~~~~~~~~~~~~~~~~1~~~~~####
+####~~~~~~~~~~~~~~~~~~~~~~####
 ##############~~~#############
 ##############~~~#############
 ##############DDD#############
 ##############DDD#############
 ]],
   key = {
-    ["1"] = "chest:musicbox_chest:module:musicbox",
     ["4"] = "checkpoint",
+    ["5"] = "sign:sign_wellbottom",
     ["g"] = "gnat",
   },
   links = {

@@ -192,6 +192,81 @@ function SFX.buildAll()
       return (last * 0.4 + body * 1.3 + tri(ph) * 0.3) * e * 0.9
     end)
   end)()
+  -- ---- THE BULWARK LINE -------------------------------------------
+  -- plate: a short metallic shunk as the wedge locks forward
+  S.plate = (function()
+    local ph, last = 0, 0
+    return render(0.11, function(t, d)
+      ph = ph + (520 - t * 900) / RATE
+      last = last + (noise() - last) * 0.45
+      return (sq(ph, 0.35) * 0.45 + last * 0.5) * env(t, 0.002, d) * 0.5
+    end)
+  end)()
+  -- deflect: a bright ricochet ping. Pitch-jittered at the call site by
+  -- nothing at all -- instead the tail rings, so a burst overlaps rather
+  -- than machine-gunning.
+  S.deflect = (function()
+    local ph, ph2 = 0, 0
+    return render(0.16, function(t, d)
+      ph = ph + (2100 - t * 2600) / RATE
+      ph2 = ph2 + 1570 / RATE
+      return (sq(ph, 0.25) * 0.4 + tri(ph2) * 0.3) * env(t, 0.002, d) * 0.34
+    end)
+  end)()
+  -- impact: the wall thud. Body, not brightness.
+  S.impact = (function()
+    local ph, last, body = 0, 0, 0
+    return render(0.28, function(t, d)
+      ph = ph + (150 - t * 210) / RATE
+      last = last + (noise() - last) * 0.4
+      body = body + (last - body) * 0.09
+      return (tri(ph) * 0.45 + body * 1.1 + last * 0.2) * env(t, 0.004, d) * 0.65
+    end)
+  end)()
+  -- ram: the dash whoosh with an ignition roar underneath it
+  S.ram = (function()
+    local last, ph = 0, 0
+    return render(0.22, function(t, d)
+      local n = noise()
+      last = last + (n - last) * 0.15
+      ph = ph + (90 + t * 260) / RATE
+      return (last * 0.5 + sq(ph, 0.5) * 0.28) * env(t, 0.01, d) * 0.5
+    end)
+  end)()
+  -- ramhit: impact plus a downward-swept burst
+  S.ramhit = (function()
+    local ph, last, body = 0, 0, 0
+    return render(0.34, function(t, d)
+      ph = ph + (420 - t * 900) / RATE
+      last = last + (noise() - last) * 0.5
+      body = body + (last - body) * 0.08
+      return (sq(ph, 0.4) * 0.35 + body * 1.2 + last * 0.3) * env(t, 0.004, d) * 0.7
+    end)
+  end)()
+  -- concuss: the woozy little chime of something losing the thread
+  S.concuss = chirpArp({ 880, 660, 494, 415 }, 0.045, 0.25, 0.3)
+  -- guardbreak: a plate coming apart
+  S.guardbreak = (function()
+    local ph, last = 0, 0
+    return render(0.4, function(t, d)
+      ph = ph + (700 - t * 1300) / RATE
+      last = last + (noise() - last) * 0.6
+      return (sq(ph, 0.5) * 0.3 + last * 0.6) * env(t, 0.003, d) * 0.62
+    end)
+  end)()
+  -- ---- THE DRIFT VANES ---------------------------------------------
+  -- vanes: a soft pneumatic snap as the fins seat
+  S.vanes = (function()
+    local ph, last = 0, 0
+    return render(0.09, function(t, d)
+      ph = ph + (620 + t * 900) / RATE
+      last = last + (noise() - last) * 0.3
+      return (tri(ph) * 0.35 + last * 0.25) * env(t, 0.004, d) * 0.34
+    end)
+  end)()
+  -- vanesout: three notes down as they feather closed. The end of a hover
+  -- is the thing worth hearing.
+  S.vanesout = chirpArp({ 784, 659, 523 }, 0.05, 0.5, 0.22)
   S.crack = noiseBurst(0.1, 0.3, 0.6)
   S.crumble = noiseBurst(0.3, 0.4, 0.3)
   S.break_ = noiseBurst(0.2, 0.45, 0.5)

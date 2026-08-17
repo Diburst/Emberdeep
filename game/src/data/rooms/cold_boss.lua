@@ -2,7 +2,7 @@
 return {
   zone = "coldstore", music = "coldstore",
   arena = "archivist",
-  mapPos = { x = 15, y = 0, w = 3, h = 1 },
+  mapPos = { x = 16, y = 0, w = 3, h = 1 },
   gates = { G = "boss_archivist" },
   map = [[
 ############################################################
@@ -33,7 +33,7 @@ AA....z.C.....................a.......................G...BB
     ["a"] = "boss:archivist",
   },
   links = {
-    C = { "deep_stair_2", "E" },
+    C = { "deep_stair_2", "E", req = "boss_archivist" },
     A = { "cold_5", "B" },
     B = { "cradle_1", "A" },
   },

@@ -2,7 +2,7 @@
 return {
   zone = "camp", music = "camp",
   arena = "deepstair",
-  mapPos = { x = 3, y = 4, w = 1, h = 2 },
+  mapPos = { x = 24, y = 1, w = 1, h = 2 },
   gates = { H = "boss_crucible", I = "boss_prismtyrant" },
   map = [[
 ##############################

@@ -143,6 +143,18 @@ function Proj:update(dt)
     for _, e in ipairs(World.entities) do
       if e.kind == "enemy" and not e.dead and not self.hitList[e]
         and U.aabb(self.x, self.y, self.w, self.h, e.x, e.y, e.w, e.h) then
+        -- DIRECTIONAL SHIELDS get asked before the damage pass, and a shot
+        -- they stop is destroyed here. Declining the damage is not enough:
+        -- an un-consumed round keeps travelling, crosses the body's midline
+        -- next frame, and lands as if it had come from behind.
+        if e.deflects and e:deflects(self.x, self.y,
+            { owner = self.owner, link = self.link }) then
+          World:fx("spark", cx, cy,
+            { color = "gold", angle = math.atan2(-self.vy, -self.vx), n = 5 })
+          if G.Audio then G.Audio.sfx("deflect") end
+          self.dead = true
+          return
+        end
         local hurt = e:hurt(self.dmg, self.x, self.y,
           { owner = self.owner, link = self.link })
         if hurt ~= false then
@@ -155,6 +167,21 @@ function Proj:update(dt)
       end
     end
   else
+    -- BULWARK: Vess's plate DEFLECTS a shot instead of letting it sail
+    -- harmlessly through him and on into Lu. Runs before the damage pass
+    -- and ignores invuln, because a deflect is not a hit -- it is the
+    -- co-op verb the plate exists for.
+    for _, p in ipairs(World.players) do
+      if not p.dead and not p.downed and not p.idle and p.plateBlocks
+        and U.aabb(self.x, self.y, self.w, self.h, p.x, p.y, p.w, p.h)
+        and p:plateBlocks(cx) then
+        p:onPlateBlock(cx, cy)
+        World:fx("spark", cx, cy,
+          { color = "vesslite", angle = math.atan2(-self.vy, -self.vx), n = 6 })
+        self.dead = true
+        return
+      end
+    end
     for _, p in ipairs(World.players) do
       if not p.dead and not p.downed and not p.idle and p.invuln <= 0
         and U.aabb(self.x, self.y, self.w, self.h, p.x, p.y, p.w, p.h) then

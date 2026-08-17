@@ -5,6 +5,7 @@ local P = require "src.assets.palette"
 local PH = require "src.physics"
 local Proj = require "src.entities.projectile"
 local Pickup = require "src.entities.pickup"
+local Cam = require "src.camera"
 
 local T = 16
 local Enemy = Entity.extend()
@@ -24,6 +25,40 @@ function Enemy:init(x, y, def)
   self.facing = U.chance(0.5) and 1 or -1
   self.t = U.rand(0, 3)
   self.buffed = 0
+  -- How a body answers a plated charge (see Player:dashImpact):
+  --   "light" -- concussed and thrown  (the default, deliberately)
+  --   "heavy" -- shrugs it off, small shove, Vess still bounces
+  --   "fixed" -- bolted down; Vess bounces off it exactly like a wall
+  -- Defaulting to light is the safe way round: a tag we forgot makes
+  -- something more fun to hit, not a mini-boss we accidentally trivialised.
+  self.mass = def.mass or (def.heavy and "heavy") or "light"
+  self.stunT = 0
+end
+
+-- ==================================================================
+-- Concussion
+-- ==================================================================
+-- Set by Player:concuss when a plated charge connects. The important part
+-- is that an attack in flight is CANCELLED rather than paused: freezing a
+-- state machine mid-swing strands flags, and we have paid for that lesson
+-- once already (the Bramble Maw).
+function Enemy:stun(dur)
+  if self.isBoss or self.stunImmune or self.dead then return false end
+  self.stunT = math.max(self.stunT or 0, dur)
+  if self.onStunned then self:onStunned() end
+  if G.Audio then G.Audio.sfx("concuss") end
+  return true
+end
+
+function Enemy:drawStun()
+  local g = love.graphics
+  local cx, cy = self:center()
+  for i = 1, 3 do
+    local a = G.time * 5 + i * math.pi * 2 / 3
+    g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.55 + 0.35 * math.sin(G.time * 9 + i))
+    g.circle("fill", cx + math.cos(a) * 8, cy - self.h / 2 - 3 + math.sin(a) * 2.5, 1.4)
+  end
+  g.setColor(1, 1, 1, 1)
 end
 
 function Enemy:onHurt(dmg, srcx)
@@ -99,9 +134,24 @@ local function reg(name, def, updateFn, drawFn)
   C.update = function(self, dt)
     self.t = self.t + dt
     if self.buffed > 0 then self.buffed = self.buffed - dt end
+    -- Concussed: the type's own update does not run at all. Gravity and
+    -- movement still do, so a stunned flier falls -- which is the fun of
+    -- it. Contact damage is suppressed player-side, so you can stand on
+    -- one safely. One hook, thirty enemies, no per-type edits.
+    if (self.stunT or 0) > 0 then
+      self.stunT = self.stunT - dt
+      self.vx = U.approach(self.vx or 0, 0, 320 * dt)
+      self.vy = math.min((self.vy or 0) + 830 * dt, 300)
+      PH.move(self, self.vx * dt, self.vy * dt)
+      return
+    end
     updateFn(self, dt)
   end
-  if drawFn then C.draw = drawFn end
+  local baseDraw = drawFn or Enemy.draw
+  C.draw = function(self)
+    baseDraw(self)
+    if (self.stunT or 0) > 0 then Enemy.drawStun(self) end
+  end
   if def.onDeathExtra then
     local base = Enemy.onDeath
     C.onDeath = function(self)
@@ -111,6 +161,47 @@ local function reg(name, def, updateFn, drawFn)
   end
   Entity.register(name, function(x, y) return C.new(x, y) end)
   return C
+end
+
+-- ==================================================================
+-- Directional shields
+-- ==================================================================
+-- A plate that only covers the side it faces. Two things this has to get
+-- right, both learned the hard way:
+--
+--  1. Judge the shot by the SHOOTER, not by where the bullet currently is.
+--     A bolt travels 5px a frame and these bodies are 14 wide, so a round
+--     blocked on the frame it touches the plate is PAST the midline on the
+--     next one -- and then it reads as a hit in the back. That is why
+--     small-arms fire was going straight through. (The Rusted Warden
+--     already judged by the owner; that is why it never had this bug.)
+--
+--  2. A blocked shot must DIE. Returning false from hurt only declines the
+--     damage; the projectile sails on into the body and tries again next
+--     frame. Proj now asks `deflects` first and kills the round there.
+--
+-- The LINK blast is deliberately NOT stopped: it is the pair's answer to a
+-- raised guard, and blocking it would leave a shielded enemy with no
+-- counter for a player who has not found the Cinder Ram yet.
+local function frontBlocked(self, srcx, srcy, opts)
+  if opts and opts.link then return false end
+  local ax, ay = srcx, srcy
+  if opts and opts.owner then
+    ax = opts.owner.x + opts.owner.w / 2
+    ay = opts.owner.y + opts.owner.h        -- the shooter's feet
+  end
+  if not ax then return false end
+  if U.sign(ax - (self.x + self.w / 2)) ~= self.facing then return false end
+  -- shooting down onto its head gets through: a plate is a plate, not a roof
+  if ay and ay < self.y - 2 then return false end
+  return true
+end
+
+local function shieldSpark(self)
+  local World = require "src.world"
+  World:fx("spark", self.x + self.w / 2 + self.facing * 10, self.y + 6,
+    { color = "gold", n = 4 })
+  if G.Audio then G.Audio.sfx("deflect") end
 end
 
 local function playerNear(self, range)
@@ -187,7 +278,7 @@ reg("spitter", { hp = 5, touchDmg = 2, sprite = "en_spitter", w = 12, h = 14,
     end
   end)
 
-reg("rollpede", { hp = 6, touchDmg = 3, sprite = "en_rollpede", w = 14, h = 10,
+reg("rollpede", { mass = "heavy", hp = 6, touchDmg = 3, sprite = "en_rollpede", w = 14, h = 10,
   drops = { shards = 3, scrap = 0.12 }, deathColor = "moss", animRate = 8 },
   function(self, dt)
     self:patrol(dt, 68 * self:speedMult())
@@ -251,7 +342,7 @@ reg("bubbler", { hp = 4, touchDmg = 2, sprite = "en_bubbler", w = 12, h = 12,
     end
   end)
 
-reg("crab", { hp = 10, touchDmg = 3, sprite = "en_crab", w = 16, h = 12,
+reg("crab", { mass = "heavy", hp = 10, touchDmg = 3, sprite = "en_crab", w = 16, h = 12,
   drops = { shards = 4, scrap = 0.2 }, deathColor = "rust", animRate = 5,
   init = function(self) self.armored = true end },
   function(self, dt)
@@ -284,7 +375,7 @@ do
   end
 end
 
-reg("depthmine", { hp = 3, touchDmg = 0, sprite = "en_depthmine", w = 12, h = 12,
+reg("depthmine", { mass = "fixed", hp = 3, touchDmg = 0, sprite = "en_depthmine", w = 12, h = 12,
   drops = { shards = 2 }, deathColor = "magma", animRate = 2,
   onDeathExtra = function(self)
     -- explode: damage everything nearby
@@ -354,7 +445,7 @@ reg("cinderbat", { hp = 3, touchDmg = 2, sprite = "en_cinderbat", w = 12, h = 10
     if self.hitWall then self.facing = -self.hitWall self.swooping = false end
   end)
 
-reg("slagblob", { hp = 7, touchDmg = 3, sprite = "en_slagblob", w = 14, h = 12,
+reg("slagblob", { mass = "heavy", hp = 7, touchDmg = 3, sprite = "en_slagblob", w = 14, h = 12,
   drops = { shards = 3 }, deathColor = "magma", animRate = 3,
   onDeathExtra = function(self)
     if self.mini then return end
@@ -393,6 +484,9 @@ reg("slagblob", { hp = 7, touchDmg = 3, sprite = "en_slagblob", w = 14, h = 12,
   end)
 
 reg("slagling", { hp = 2, touchDmg = 2, sprite = "en_slagling", w = 8, h = 7,
+  -- tagged so the Crucible can count its own swarm against the cap, and
+  -- so a floor flood knows what it is allowed to burn
+  init = function(self) self.slagling = true end,
   drops = { shards = 1 }, deathColor = "magma", animRate = 6 },
   function(self, dt)
     -- molten spatter: small, fast, relentless hops at the nearest bot
@@ -449,7 +543,7 @@ reg("welder", { hp = 5, touchDmg = 2, sprite = "en_welder", w = 12, h = 12,
     end
   end)
 
-reg("shieldbug", { hp = 8, touchDmg = 3, sprite = "en_shieldbug", w = 14, h = 10,
+reg("shieldbug", { mass = "heavy", hp = 8, touchDmg = 3, sprite = "en_shieldbug", w = 14, h = 10,
   drops = { shards = 4 }, deathColor = "gold", animRate = 5,
   init = function(self) self.shieldT = 0 end },
   function(self, dt)
@@ -538,7 +632,7 @@ reg("prismwisp", { hp = 4, touchDmg = 2, sprite = "en_prismwisp", w = 10, h = 10
     end
   end)
 
-reg("cryoturret", { hp = 7, touchDmg = 2, sprite = "en_cryoturret", w = 12, h = 12,
+reg("cryoturret", { mass = "fixed", hp = 7, touchDmg = 2, sprite = "en_cryoturret", w = 12, h = 12,
   drops = { shards = 4 }, deathColor = "violet", animRate = 2,
   init = function(self) self.noKnockback = true end },
   function(self, dt)
@@ -593,7 +687,7 @@ reg("frostwisp", { hp = 4, touchDmg = 2, sprite = "en_frostwisp", w = 10, h = 10
     end
   end)
 
-reg("shelverbot", { hp = 8, touchDmg = 3, sprite = "en_shelverbot", w = 14, h = 14,
+reg("shelverbot", { mass = "heavy", hp = 8, touchDmg = 3, sprite = "en_shelverbot", w = 14, h = 14,
   drops = { shards = 4, heart = 0.15 }, deathColor = "slate", animRate = 2 },
   function(self, dt)
     -- archive drone: patrols the stacks, lobs book-crates in arcs
@@ -617,7 +711,7 @@ reg("shelverbot", { hp = 8, touchDmg = 3, sprite = "en_shelverbot", w = 14, h = 
     end
   end)
 
-reg("icemaw", { hp = 9, touchDmg = 4, sprite = "en_icemaw", w = 14, h = 10,
+reg("icemaw", { mass = "heavy", hp = 9, touchDmg = 4, sprite = "en_icemaw", w = 14, h = 10,
   drops = { shards = 4, big = 0.2 }, deathColor = "ice", animRate = 3,
   init = function(self) self.buried = true self.noKnockback = true end },
   function(self, dt)
@@ -645,7 +739,7 @@ reg("icemaw", { hp = 9, touchDmg = 4, sprite = "en_icemaw", w = 14, h = 10,
 -- ==================================================================
 -- THE RECKONING (Ember Camp)
 -- ==================================================================
-reg("keeperbrassa", { hp = 45, touchDmg = 3, sprite = "npc_brassa", w = 12, h = 15,
+reg("keeperbrassa", { mass = "heavy", hp = 45, touchDmg = 3, sprite = "npc_brassa", w = 12, h = 15,
   drops = {}, deathColor = "ember", animRate = 3,
   init = function(self) self.noKnockback = true end },
   function(self, dt)
@@ -836,9 +930,9 @@ reg("stormvane", { hp = 6, touchDmg = 2, sprite = "en_stormvane", w = 12, h = 14
 -- turns it away entirely, which is the counter it teaches.
 local FANG_WAKE = 130       -- how close you must get to wake it
 local FANG_DIVE = 190       -- px/sec of the swoop
-local FANG_LATCH = 1.6      -- seconds of grip
-local FANG_GAP = 0.5        -- seconds between bites
-local FANG_DMG = 2          -- damage per bite (6 over a full latch)
+local FANG_LATCH = 2.4      -- seconds of grip
+local FANG_GAP = 0.75        -- seconds between bites
+local FANG_DMG = 2          -- damage per bite (4 over a full latch)
 local Roostfang = reg("roostfang", { hp = 4, touchDmg = 2, sprite = "en_roostfang",
   w = 12, h = 10, drops = { shards = 2, heart = 0.15 }, deathColor = "sky",
   animRate = 12,
@@ -979,7 +1073,7 @@ end
 -- ==================================================================
 -- CORE
 -- ==================================================================
-reg("sentinel", { hp = 8, touchDmg = 3, sprite = "en_sentinel", w = 14, h = 14,
+reg("sentinel", { mass = "heavy", hp = 8, touchDmg = 3, sprite = "en_sentinel", w = 14, h = 14,
   drops = { shards = 5, big = 0.25, scrap = 0.25 }, deathColor = "cyan", animRate = 5 },
   function(self, dt)
     local p = playerNear(self, 170)
@@ -1127,7 +1221,7 @@ reg("sporefly", { hp = 3, touchDmg = 2, sprite = "en_sporefly", w = 10, h = 8,
     end
   end)
 
-reg("eliteguard", { hp = 12, touchDmg = 4, sprite = "en_eliteguard", w = 14, h = 16,
+reg("eliteguard", { mass = "heavy", hp = 12, touchDmg = 4, sprite = "en_eliteguard", w = 14, h = 16,
   drops = { shards = 6, big = 0.3, scrap = 0.3 }, deathColor = "cyan", animRate = 5 },
   function(self, dt)
     local p = playerNear(self, 150)
@@ -1147,5 +1241,260 @@ reg("eliteguard", { hp = 12, touchDmg = 4, sprite = "en_eliteguard", w = 14, h =
       if G.Audio then G.Audio.sfx("shoot1") end
     end
   end)
+
+-- ==================================================================
+-- THE SCRAPYARD
+-- ==================================================================
+-- Three enemies, in teaching order. The husk sets the tone, the plateframe
+-- teaches that a directional shield has a back, and the rammer teaches the
+-- bounce read you will need against EIGHT.
+
+-- A caretaker frame with no legs, dragging itself by one arm. Its job is
+-- tone, not threat: you should feel bad shooting the first one.
+reg("scraphusk", { hp = 5, touchDmg = 2, sprite = "en_scraphusk", w = 14, h = 9,
+  drops = { shards = 2, heart = 0.15 }, deathColor = "slate", animRate = 3,
+  init = function(self) self.lungeT = U.rand(1.2, 2.4) end },
+  function(self, dt)
+    self.vy = math.min((self.vy or 0) + 830 * dt, 300)
+    local p = playerNear(self, 120)
+    if p then
+      local s = U.sign(p.x - self.x)
+      if s ~= 0 then self.facing = s end
+    end
+    self.lungeT = self.lungeT - dt
+    if self.lungeT <= 0 and self.onGround then
+      -- one committed drag-lunge, then a long rest. It is trying.
+      self.lungeT = U.rand(1.6, 2.8) / self:speedMult()
+      self.lunging = 0.45
+      self.vy = -70
+    end
+    if (self.lunging or 0) > 0 then
+      self.lunging = self.lunging - dt
+      self.vx = self.facing * 96 * self:speedMult()
+    else
+      self.vx = U.approach(self.vx or 0, self.facing * 16 * self:speedMult(), 200 * dt)
+    end
+    PH.move(self, self.vx * dt, self.vy * dt)
+    if self.hitWall then self.facing = -self.hitWall end
+  end)
+
+-- THE LESSON. Immune from the side it faces; open from behind and from
+-- directly above. Slow to turn, and while it turns it is open -- so a
+-- co-op pair can pin its attention and gut it, and a solo player can dash
+-- past and shoot the back. Once you own the Cinder Ram the plate can be
+-- shattered head-on instead.
+local PLATE_TURN = 1.2      -- seconds to commit to a reversal
+local PLATE_SHOT = 2.2
+reg("plateframe", { mass = "heavy", hp = 12, touchDmg = 3, sprite = "en_plateframe",
+  w = 14, h = 16, drops = { shards = 5, big = 0.2, scrap = 0.2 },
+  deathColor = "slate", animRate = 3,
+  init = function(self)
+    self.turnT = 0
+    self.wantFace = self.facing
+    self.shotT = U.rand(0.8, PLATE_SHOT)
+    self.guardT = 0            -- > 0 means the plate is shattered
+  end },
+  function(self, dt)
+    self.vy = math.min((self.vy or 0) + 830 * dt, 300)
+    self.vx = U.approach(self.vx or 0, 0, 400 * dt)
+    PH.move(self, self.vx * dt, self.vy * dt)
+    if self.guardT > 0 then self.guardT = self.guardT - dt end
+
+    local p = playerNear(self, 190)
+    if p then
+      local want = U.sign((p.x + p.w / 2) - (self.x + self.w / 2))
+      if want ~= 0 and want ~= self.wantFace then
+        self.wantFace = want
+        self.turnT = PLATE_TURN
+      end
+    end
+    if self.turnT > 0 then
+      self.turnT = self.turnT - dt
+      if self.turnT <= 0 then self.facing = self.wantFace end
+    end
+
+    self.shotT = self.shotT - dt
+    if self.shotT <= 0 and p and self.turnT <= 0 then
+      self.shotT = PLATE_SHOT / self:speedMult()
+      local World = require "src.world"
+      Proj.spawn(World, self.x + self.w / 2 + self.facing * 9, self.y + 5, {
+        side = "enemy", dmg = 3, kind = "bolt", size = 5,
+        vx = self.facing * 150, vy = 0, life = 2.2,
+      })
+      if G.Audio then G.Audio.sfx("shoot1") end
+    end
+  end,
+  function(self)
+    self:drawSprite()
+    local g = love.graphics
+    local cx, cy = self:center()
+    if self.guardT > 0 then return end     -- shattered: no plate drawn
+    -- the plate itself, on the facing side, plus a tell while turning
+    local f = self.facing
+    g.push() g.translate(cx, cy) g.scale(f, 1)
+    g.setColor(P.gray[1], P.gray[2], P.gray[3], 0.95)
+    g.polygon("fill", 4, -8, 10, -6, 10, 6, 4, 8)
+    g.setColor(P.silver)
+    g.line(10, -6, 10, 6)
+    g.pop()
+    if self.turnT > 0 then
+      g.setColor(P.gold[1], P.gold[2], P.gold[3],
+        0.4 + 0.4 * math.sin(G.time * 18))
+      g.circle("line", cx, cy - self.h / 2 - 4, 3)
+    end
+    g.setColor(1, 1, 1, 1)
+  end)
+do
+  -- The facing side vetoes damage outright. Same shape as the shieldbug's
+  -- veto, but keyed to geometry rather than a timer.
+  local made = Entity.registry["plateframe"]
+  Entity.registry["plateframe"] = function(x, y)
+    local c = made(x, y)
+    c.guardBreak = function(self, dur)
+      if self.guardT > 0 then return false end
+      self.guardT = dur
+      self.turnT = 0
+      return true
+    end
+    -- asked by Proj BEFORE the damage pass, so a stopped round is stopped
+    c.deflects = function(self, srcx, srcy, opts)
+      return self.guardT <= 0 and frontBlocked(self, srcx, srcy, opts)
+    end
+    local baseHurt = Entity.hurt
+    c.hurt = function(self, dmg, srcx, srcy, opts)
+      if self:deflects(srcx, srcy, opts) then
+        shieldSpark(self)
+        return false
+      end
+      return baseHurt(self, dmg, srcx, srcy, opts)
+    end
+    return c
+  end
+end
+
+-- EIGHT's move, in miniature. Telegraphs, charges with frontal immunity,
+-- and bounces off the far wall into a long stagger. That stagger is your
+-- window -- and learning to read it here is the whole point.
+local RAM_TELE = 0.55
+local RAM_SPEED = 210
+local RAM_STAGGER = 1.0
+reg("rammer", { mass = "heavy", hp = 10, touchDmg = 3, sprite = "en_rammer",
+  w = 14, h = 15, drops = { shards = 5, big = 0.2, scrap = 0.25 },
+  deathColor = "vessred", animRate = 4,
+  init = function(self)
+    self.rstate = "stalk"
+    self.rt = U.rand(0.6, 1.4)
+  end },
+  function(self, dt)
+    self.vy = math.min((self.vy or 0) + 830 * dt, 300)
+    self.rt = self.rt - dt
+    local World = require "src.world"
+
+    if self.rstate == "stalk" then
+      local p = playerNear(self, 200)
+      if p then
+        local s = U.sign((p.x + p.w / 2) - (self.x + self.w / 2))
+        if s ~= 0 then self.facing = s end
+      end
+      self.vx = U.approach(self.vx or 0, self.facing * 34 * self:speedMult(), 300 * dt)
+      if self.rt <= 0 and p then
+        self.rstate = "tele"
+        self.rt = RAM_TELE
+        self.vx = 0
+      end
+    elseif self.rstate == "tele" then
+      self.vx = U.approach(self.vx or 0, 0, 700 * dt)
+      if self.rt <= 0 then
+        self.rstate = "charge"
+        self.rt = 1.6
+        if G.Audio then G.Audio.sfx("ram") end
+      end
+    elseif self.rstate == "charge" then
+      self.vx = self.facing * RAM_SPEED * self:speedMult()
+      World:fx("trail", self.x + self.w / 2, self.y + self.h / 2,
+        { color = "vessdark", r = 2.5, t = 0.16 })
+      if self.rt <= 0 then
+        self.rstate = "stalk"
+        self.rt = U.rand(0.9, 1.6)
+      end
+    else -- stagger
+      self.vx = U.approach(self.vx or 0, 0, 500 * dt)
+      if self.rt <= 0 then
+        self.rstate = "stalk"
+        self.rt = U.rand(0.8, 1.4)
+      end
+    end
+
+    PH.move(self, (self.vx or 0) * dt, self.vy * dt)
+    if self.hitWall then
+      if self.rstate == "charge" then
+        -- it hit the wall. Same rule it lives by, same rule you live by.
+        self.rstate = "stagger"
+        self.rt = RAM_STAGGER
+        self.vx = -self.hitWall * 120
+        self.vy = -80
+        Cam.shake(2, 0.15)
+        World:fx("burst", self.x + self.w / 2, self.y + self.h / 2,
+          { color = "slate", n = 10, speed = 140 })
+        if G.Audio then G.Audio.sfx("impact") end
+      else
+        self.facing = -self.hitWall
+      end
+    end
+  end,
+  function(self)
+    self:drawSprite()
+    local g = love.graphics
+    local cx, cy = self:center()
+    if self.rstate == "tele" then
+      local ig = 1 - math.max(0, self.rt) / RAM_TELE
+      g.push() g.translate(cx, cy) g.scale(self.facing, 1)
+      g.setColor(P.blood[1], P.blood[2], P.blood[3], 0.35 + ig * 0.55)
+      g.setLineWidth(1.5)
+      g.line(6, -5, 10, 0, 6, 5)
+      g.setLineWidth(1)
+      g.pop()
+    elseif self.rstate == "charge" then
+      g.push() g.translate(cx, cy) g.scale(self.facing, 1)
+      g.setColor(P.vessdark[1], P.vessdark[2], P.vessdark[3], 0.5)
+      g.polygon("fill", 4, -7, 10, -5, 10, 5, 4, 7)
+      g.pop()
+    elseif self.rstate == "stagger" then
+      Enemy.drawStun(self)
+    end
+    g.setColor(1, 1, 1, 1)
+  end)
+do
+  -- Frontal immunity while it is actually charging, and a charge that is
+  -- interrupted must not leave the state machine mid-swing.
+  local made = Entity.registry["rammer"]
+  Entity.registry["rammer"] = function(x, y)
+    local c = made(x, y)
+    c.onStunned = function(self)
+      self.rstate = "stalk"
+      self.rt = 0.6
+      self.vx = 0
+    end
+    c.guardBreak = function(self, dur)
+      if self.rstate ~= "charge" then return false end
+      self.rstate = "stagger"
+      self.rt = dur
+      self.vx = 0
+      return true
+    end
+    c.deflects = function(self, srcx, srcy, opts)
+      return self.rstate == "charge" and frontBlocked(self, srcx, srcy, opts)
+    end
+    local baseHurt = Entity.hurt
+    c.hurt = function(self, dmg, srcx, srcy, opts)
+      if self:deflects(srcx, srcy, opts) then
+        shieldSpark(self)
+        return false
+      end
+      return baseHurt(self, dmg, srcx, srcy, opts)
+    end
+    return c
+  end
+end
 
 return Enemy

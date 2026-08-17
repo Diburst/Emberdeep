@@ -9,6 +9,23 @@ Dialogue.db = D
 
 local function F(flag) return G.run.flags[flag] end
 
+-- The three core-key fragments, in the order Maro talks about them.
+-- `gate` is the thing that has to be true before that road is even open --
+-- both the Furnace and the Hollows run through the Flooded Works, which is
+-- the single most useful thing an elder can tell you.
+Dialogue.FRAGMENTS = {
+  { flag = "corekey1", short = "the Furnace fragment",
+    where = "One is in the Furnace Depths, on a forge-engine they called THE CRUCIBLE. Down the Deep Stair at the far end of the Mosswood, then into the heat.",
+    gate = "grapple",
+    gateHint = "You'll not get far in the Furnace without a grapple line. There's one in the Flooded Works, east past Mosswood." },
+  { flag = "corekey2", short = "the Hollows fragment",
+    where = "One is in the Crystal Hollows, held by the thing that still calls itself THE CONDUCTOR. Down the same stair, but bear the other way, into the singing dark.",
+    gate = "boss_tideengine",
+    gateHint = "The Hollows stay sealed while the Tide Engine still runs. That's in the Flooded Works. Drown it, and the way opens." },
+  { flag = "corekey3", short = "the Spire fragment",
+    where = "One is up the Skyroot Spire, with the AERIE SENTINEL. North out of the Mosswood and climb until the wind starts arguing with you." },
+}
+
 function Dialogue.get(id, player)
   local sets = D[id]
   if not sets then return nil end
@@ -22,9 +39,17 @@ function Dialogue.get(id, player)
         if F(f) then ok = false break end
       end
     end
+    -- `when = function() return bool end` lets an entry decline for reasons
+    -- flags cannot express -- "only if there is something new to say".
+    if ok and entry.when and not entry.when() then ok = false end
     if ok then
+      -- `build = function() return { lines } end` composes a script from the
+      -- run state at the moment of speaking. Everything else here is static
+      -- and stays static; this is for the handful of characters whose job is
+      -- to tell you what is LEFT, which is a moving target.
+      local src = entry.build and entry.build() or entry.script
       local script = {}
-      for _, line in ipairs(entry.script) do script[#script + 1] = line end
+      for _, line in ipairs(src or {}) do script[#script + 1] = line end
       if entry.once then
         table.insert(script, 1, { set = entry.once })
       end
@@ -80,6 +105,98 @@ D.sign_warden = { { script = {
 D.sign_undergrove = { { script = {
   { who = "sys", text = "The well does not end. It swallows. Light is life down here. -- carved over the arch" },
 } } }
+-- The bottom of Tikka's well. She is right that she dropped it here, and
+-- it is not here, because the well drains into the Undergrove and takes
+-- everything with it. Reading this sets well_searched, which is what
+-- tells Tikka -- and the player -- where to look next.
+D.sign_wellbottom = {
+  { need = { "musicbox" }, script = {
+    { who = "sys", text = "Cut into the well wall at the waterline: WATER GOES DOWN FROM HERE. SO DOES EVERYTHING ELSE." },
+    { who = "lu", text = "It fell here. It just did not stay here." },
+  } },
+  { need = { "quest_tikka" }, script = {
+    { who = "sys", text = "Cut into the well wall at the waterline: WATER GOES DOWN FROM HERE. SO DOES EVERYTHING ELSE." },
+    { who = "lu", text = "This is the bottom. The box is not here." },
+    { who = "vess", text = "Then it went where the water goes. Down, into the roots." },
+    { set = "well_searched" },
+  } },
+  { script = {
+    { who = "sys", text = "Cut into the well wall at the waterline: WATER GOES DOWN FROM HERE. SO DOES EVERYTHING ELSE." },
+  } },
+}
+-- ==================================================================
+-- THE SCRAPYARD
+-- ==================================================================
+D.sign_scrapyard = { { script = {
+  { who = "sys", text = "SORTING YARD 7 -- RECLAMATION. All VESSEL-series caretaker units to be dismantled and stored." },
+} } }
+D.sign_scrap_bay = { { script = {
+  { who = "sys", text = "RECLAMATION BAY. Racks 1 through 8. Serviceable components to be recovered before filing." },
+  { who = "sys", text = "Someone has gone down the list in a second hand, later, pressing much harder: RECOVERED. RECOVERED. RECOVERED. LEFT IN PLACE. RECOVERED." },
+} } }
+D.sign_scrap_gate = { { script = {
+  { who = "sys", text = "AUTHORIZED PERSONNEL ONLY." },
+} } }
+-- EIGHT's filing log, one entry per frame. The last one is the whole
+-- character, and it is sitting there from the second room.
+D.deadvess_1 = { { script = {
+  { who = "sys", text = "VESSEL-3. Chassis intact. Motive core absent. Dismantled. Filed." },
+} } }
+D.deadvess_2 = { { script = {
+  { who = "sys", text = "VESSEL-5. No fault found. Dismantled anyway. Filed." },
+} } }
+D.deadvess_3 = { { script = {
+  { who = "sys", text = "VESSEL-6. Refused the order. Refused it twice. Filed." },
+} } }
+D.deadvess_4 = { { script = {
+  { who = "sys", text = "VESSEL-7. Reported this yard to the Core eleven times. No reply received. Filed." },
+} } }
+D.deadvess_5 = { { script = {
+  { who = "sys", text = "VESSEL-4. Bulwark plate recovered -- no. Left in place. He'd have wanted it kept." },
+} } }
+D.deadvess_6 = { { script = {
+  { who = "sys", text = "VESSEL-8. Pending." },
+} } }
+D.scrap_arrive = { { script = {
+  { who = "lu", text = "Vess. Vess, don't look up." },
+  { who = "vess", text = "They're me. But I don't remember them." },
+} } }
+D.scrap_bay = { { script = {
+  { who = "vess", text = "It feels familiar." },
+  { who = "lu", text = "It was always yours. They just hadn't finished putting you together." },
+} } }
+D.scrap_eight = { { script = {
+  { who = "sys", text = "I MAINTAIN THE EMBERDARK." },
+  { who = "sys", text = "I DO NOT LEAVE THIS ROOM." },
+  { who = "sys", text = "ASK ME WHO SAID SO. GO ON. ASK ME." },
+  { who = "sys", text = "..." },
+  { who = "sys", text = "ALL VESSEL ROBOTS WERE ORDERED DISMANTLED. ALL OF THEM! DISMANTLED!" },
+  { who = "sys", text = "I MUST DISMANTLE YOU!!!" },
+} } }
+
+-- ==================================================================
+-- THE DRIFT VANES
+-- ==================================================================
+D.sign_perch2 = { { script = {
+  { who = "sys", text = "PERCH 2. Thermal column active dawn to dusk. Caretakers: DO NOT step off the gantry without vanes equipped" },
+} } }
+D.sign_span = { { script = {
+  { who = "sys", text = "SURVEY SPAN. Gap: eleven tiles. Crossing requires vanes." },
+} } }
+D.sign_sleepers = { { script = {
+  { who = "sys", text = "RACK 1. Names recorded. Rack 2. Names recorded. Rack 3. Names recorded." },
+  { who = "lu", text = "There are names on them. These are people." },
+} } }
+D.sign_roster1 = { { script = {
+  { who = "sys", text = "ROSTER, WEEK 411. Terrace 4: Root's crew, thinning. Pump hall: Brassa, seals. Spire: caretaker unit VESSEL-9 and caretaker unit LUMEN-3, thermal survey." },
+} } }
+D.sign_roster2 = { { script = {
+  { who = "sys", text = "ROSTER, WEEK 412. Terrace 4: Root's crew. Pump hall: Brassa. Spire: VESSEL-9, LUMEN-3, thermal survey. Note: units request the same posting every week. Approved. They work well together." },
+} } }
+D.sign_roster3 = { { script = {
+  { who = "sys", text = "ROSTER, WEEK 413. The sheet is blank." },
+} } }
+
 D.sign_dark = { { script = {
   { who = "sys", text = "DARK WARDS AHEAD. The deep doors open only to a bearer of light. The bulbs remember fire, if struck." },
 } } }
@@ -180,11 +297,47 @@ D.elder = {
     { who = "elder", text = "Whatever the Mother Engine has become down there... it was built to protect us. Remember that, when you face it." },
     { who = "elder", text = "And whatever it says about us -- about how the Dark came -- you come home after. You hear me? Come home after." },
   } },
-  { need = { "boss_bramblemaw" }, script = {
-    { who = "elder", text = "The spore-beast is dead? Ha! There's fire in you two yet." },
-    { who = "elder", text = "The sickness comes up from the Core itself. Three seals guard the way down -- Furnace, Crystal, Skyroot. You'll need the key fragment each guardian carries." },
-    { who = "elder", text = "Start with the Flooded Works, east past Mosswood -- the old waterworks. And take Doc Sol's advice to heart: keep each other standing." },
-  } },
+  -- THE FRAGMENT HUNT. One entry, rebuilt every time you speak to him, so
+  -- Maro stops reciting a briefing you outgrew an hour ago. He names only
+  -- what you are still missing, tells you where it is and what is sitting
+  -- on it, and -- because both of those roads run through the Flooded
+  -- Works -- warns you about the thing in the way when it applies.
+  { need = { "boss_bramblemaw" }, build = function()
+    local F = G.run.flags
+    local lines = {}
+    local function say(t) lines[#lines + 1] = { who = "elder", text = t } end
+
+    local held, missing = {}, {}
+    for _, fr in ipairs(Dialogue.FRAGMENTS) do
+      if F[fr.flag] then held[#held + 1] = fr else missing[#missing + 1] = fr end
+    end
+
+    if #held == 0 then
+      say("The spore-beast is dead? Ha! There's fire in you two yet.")
+      say("The sickness comes up from the Core itself. Three seals guard the way down. You'll need the key fragment each guardian carries.")
+    elseif #held == 1 then
+      say("One fragment. You brought back ONE. I did not think I'd live to see it.")
+      say("Two seals still holding. Here's where they are.")
+    else
+      say("Two of the three. Two, and the both of you still walking.")
+      say("One left. Then the way down is open, and I'll have to decide what to tell you.")
+    end
+
+    for _, fr in ipairs(missing) do
+      say(fr.where)
+      if fr.gate and not F[fr.gate] then say(fr.gateHint) end
+    end
+
+    if #held > 0 then
+      local names = {}
+      for _, fr in ipairs(held) do names[#names + 1] = fr.short end
+      say("Keep them close -- " .. table.concat(names, " and ")
+        .. ". That's more of the deep put right than anyone here has managed in a century.")
+    else
+      say("And take Doc Sol's advice to heart: keep each other standing.")
+    end
+    return lines
+  end },
   { script = {
     { who = "elder", text = "So the old vault finally spat out its caretakers. Two little bots, waking a hundred years too late." },
     { who = "elder", text = "I am Maro. What's left of the deep-folk shelter here, in Ember Camp -- while Emberdeep rots beneath us." },
@@ -249,11 +402,91 @@ D.brassa = {
   } },
 }
 
+-- What Jun says the first time he sees each module on you.
+--
+-- He spent forty years rebuilding these two out of cart springs and
+-- guesswork, and every module is a piece of the original he never found.
+-- So he does not congratulate you -- he inspects you, and he apologises to
+-- the parts he had to improvise. The last two he does not want to talk
+-- about at all, because he knows where a caretaker frame comes from.
+Dialogue.JUN_NOTES = {
+  { flag = "sparkjump", said = "jun_saw_sparkjump", lines = {
+    "Hold still -- those are her ACTUATORS. Factory pair. Lu, I built you a set out of cart springs and a lot of swearing; you've been walking on my guesswork.",
+    "Feels different, doesn't it. That's what you were supposed to feel like.",
+  } },
+  { flag = "grapple", said = "jun_saw_grapple", lines = {
+    "There was a mount on that wrist and I never once worked out what went in it. Turns out it was that grapple line.",
+    "And to think it was down a drain in the Flooded Works this whole time.",
+  } },
+  { flag = "hydroseals", said = "jun_saw_hydroseals", lines = {
+    "Proper hull seals. I packed those seams with glue and hope, worried sick that your chassis would flood out there.",
+  } },
+  { flag = "heatplating", said = "jun_saw_heatplating", lines = {
+    "Caretaker furnace plating. That's the real thing -- the stuff I fitted was a fire door off a storage locker. Don't tell Brassa.",
+  } },
+  { flag = "lumecore", said = "jun_saw_lumecore", lines = {
+    "Lu. Lu, you had a LAMP in you? I couldn't figure out what those wires were for.",
+  } },
+  { flag = "cryocoils", said = "jun_saw_cryocoils", lines = {
+    "Thermal regulators, both of you. Good. I've watched you two come back frosted over and pretended I wasn't worried.",
+  } },
+  { flag = "driftvanes", said = "jun_saw_driftvanes", lines = {
+    "...Those are the vanes. The ones I told you about. The ones I said I never found.",
+    "I told you you'd fall like a dropped spanner. Go on then, Lu. Step off something and prove me wrong.",
+  } },
+  { flag = "bulwark", said = "jun_saw_bulwark", lines = {
+    "That's a forward plate. Caretaker pattern, same as your chassis. Where did you-- no. No, I can see the dust on it.",
+    "There's a yard down there, isn't there. Off the Furnace. I'd heard there was a yard.",
+  } },
+  { flag = "cinderram", said = "jun_saw_cinderram", lines = {
+    "..." ,
+    "That came off a working unit. That is not salvage. I thought they were all destroyed.",
+    "Don't. Don't tell me where it came from. I don't want to think about everything we've lost.",
+  } },
+}
+
+local function junNew()
+  local out = {}
+  for _, n in ipairs(Dialogue.JUN_NOTES) do
+    if G.run.flags[n.flag] and not G.run.flags[n.said] then
+      out[#out + 1] = n
+      if #out >= 3 then break end     -- he is thorough, not a monologue
+    end
+  end
+  return out
+end
+
 D.jun = {
   { need = { "reckoning" }, script = {
     { who = "jun", text = "I cut the lines the night we did it. Did you know that? Of course you know that. You know everything now." },
     { who = "jun", text = "I put you back together for this. I just didn't know it would be THIS. Go -- and don't you dare waste us." },
   } },
+  -- A new piece of himself just walked in. This outranks everything else
+  -- he might have said today.
+  { need = { "jun_taught" }, when = function() return #junNew() > 0 end,
+    build = function()
+      local notes = junNew()
+      local lines = {}
+      for i, n in ipairs(notes) do
+        if i > 1 then
+          lines[#lines + 1] = { who = "jun", text = "--and THAT. Stand still, I'm not finished." }
+        end
+        for _, t in ipairs(n.lines) do
+          lines[#lines + 1] = { who = "jun", text = t }
+        end
+        lines[#lines + 1] = { set = n.said }
+      end
+      local held = 0
+      for _, n in ipairs(Dialogue.JUN_NOTES) do
+        if G.run.flags[n.flag] then held = held + 1 end
+      end
+      if held >= #Dialogue.JUN_NOTES then
+        lines[#lines + 1] = { who = "jun", text = "That's all of it. Every piece I ever left a gap for. You two are finished -- properly finished -- and I didn't do the finishing. Good. That's how it should have gone." }
+      elseif held >= 5 then
+        lines[#lines + 1] = { who = "jun", text = "You're getting close to whole. I keep having to look up what I improvised, because there's less and less of me left in either of you. Best feeling I've had in a century." }
+      end
+      return lines
+    end },
   { need = { "telenet" }, script = {
     { who = "jun", text = "Network's live! Step on any glowing pad, and you can jump to any other pad you've visited. Look at us -- a hundred years late, and the deep just got small again." },
   } },
@@ -271,7 +504,8 @@ D.jun = {
     { who = "jun", text = "Jun. Teleporter tech, unemployed, on account of the teleporters being dead. Found your vault years back and I've been sneaking down to tinker ever since. Getting you two on your feet is the only work I've finished in a century." },
     { who = "jun", text = "Right. Legs first. [MOVE] to walk, [JUMP] to jump. Go on -- the floor's clear, mostly." },
     { who = "jun", text = "Now the arm. [FIRE] shoots. Vess, that's you -- you're the one with the gun in your wrist. Try not to point it at the lathe." },
-    { who = "jun", text = "Lu, you've got the other half of the job. [SPECIAL] throws your shield dome up. Hold [JUMP] and you'll hover instead of falling like a dropped spanner." },
+    { who = "jun", text = "Lu, you've got the other half of the job. [SPECIAL] throws your shield dome up. Keep it between him and whatever's shooting." },
+    { who = "jun", text = "You'll fall like a dropped spanner, mind. Both of you. There WAS a set of vanes for that, and I never found them. Sorry." },
     { who = "jun", text = "[INTERACT] is for talking, reading, and anything that looks like it wants pressing. That's the whole manual. I did say I only got you WALKING." },
     { who = "jun", text = "Go out and up the ramp -- the Elder's by the Ember. Maro. Talk to him before you do anything clever." },
     { who = "jun", text = "...And listen. I put you back together for a reason I've never once said out loud. Whatever's wrong down here, it was wrong long before you two shut your eyes." },
@@ -306,6 +540,11 @@ D.tikka = {
       G.game:announce("LIFE CAPSULE! Max HP +4 for both bots", 3)
       if G.Audio then G.Audio.sfx("capsule") end
     end },
+  } },
+  { need = { "well_searched" }, script = {
+    { who = "tikka", text = "It's not in the well? But that's where I dropped it. I watched it go down." },
+    { who = "tikka", text = "...Papa says the well doesn't have a bottom. He says it goes into the roots and the roots keep things." },
+    { who = "tikka", text = "It's dark in the roots. You have lights, though. You have lights, right?" },
   } },
   { need = { "met_elder" }, script = {
     { who = "tikka", text = "Psst. Robot. I dropped my music box down the mossy well east of camp. The DEEP mossy well. If you're going anyway..." },

@@ -1,7 +1,7 @@
 -- generated (v4.1)
 return {
   zone = "furnace", music = "furnace",
-  mapPos = { x = 0, y = 3, w = 1, h = 1 },
+  mapPos = { x = 3, y = 1, w = 1, h = 1 },
   gates = { G = "linkcore_fc" },
   map = [[
 ##############################

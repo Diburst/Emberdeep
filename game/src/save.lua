@@ -7,7 +7,7 @@ local Save = {}
 Save.SLOTS = 3
 -- Current save-file format. Bump this in the same commit as any new
 -- Save.migrate step: writeSlot stamps it, migrate upgrades anything older.
-Save.VERSION = 2
+Save.VERSION = 3
 
 function Save.defaultSettings()
   return {
@@ -100,6 +100,12 @@ function Save.migrate(data)
   data.forge = data.forge or forge
   data.capsules = math.max(data.capsules or 0, forge.hpTier)
   data.tanks = math.max(data.tanks or 0, forge.energyTier)
+  -- v3: hover moved out of SPARK JUMP and into the DRIFT VANES. Anyone who
+  -- already held spark jump already had the full 1.3s hover, so granting
+  -- the vanes alongside it is the only migration that changes nothing.
+  if data.flags and data.flags.sparkjump then
+    data.flags.driftvanes = true
+  end
   data.version = Save.VERSION
   return data
 end

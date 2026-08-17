@@ -19,6 +19,74 @@ local BASE = {
   coyote = 0.09, jumpBuffer = 0.12,
 }
 
+-- ==================================================================
+-- THE BULWARK LINE (Vess's charge upgrades)
+-- ==================================================================
+-- Two modules, both flags on G.run.flags:
+--   `bulwark`   -- a directional plate on the charge (Scrapyard midpoint)
+--   `cinderram` -- damage on the charge (dropped by VESSEL-8)
+--
+-- The base dash already grants blanket i-frames (see takeDamage). The plate
+-- adds the four things the dash could never do: it stops `pierceDash`
+-- hazards taken head-on, it DEFLECTS enemy shots instead of letting them
+-- sail through, it refuses to pass through a body, and it concusses
+-- anything light enough to be concussed.
+--
+-- INVARIANT, no exceptions: a charge never carries Vess through a body.
+-- Not an enemy, not a boss, not with the ram, not at any speed. Contact
+-- means bounce. See Player:dashImpact.
+local DASH_SPEED = 265
+local PLATE_HOLD = 0.12        -- plate stays up this long after the dash ends
+local PLATE_HOLD_BOSS = 0.18   -- ...longer after bouncing off something big
+
+-- recoil: { vx, vy, cooldown floor, plate hold, shake mag, shake t }
+local BOUNCE = {
+  light = { 130, -70, 0.35, PLATE_HOLD, 2.0, 0.15 },
+  heavy = { 130, -70, 0.35, PLATE_HOLD, 2.0, 0.15 },
+  boss  = { 190, -90, 0.45, PLATE_HOLD_BOSS, 3.5, 0.25 },
+  wall  = { 110, -55, 0.30, PLATE_HOLD, 1.5, 0.12 },
+}
+local BOUNCE_T = 0.18          -- reduced horizontal authority during recoil
+local BOUNCE_AUTHORITY = 0.35
+local HITSTOP = 0.06
+
+local STUN_DUR = 1.2           -- plate alone
+local STUN_DUR_RAM = 1.6       -- with the Cinder Ram
+local RAM_DMG = 6
+local GUARD_BREAK_T = 2.0      -- a ram shatters a guard instead of damaging it
+
+-- Vault assist. `vy` is already forced to 0 for the whole dash, so an
+-- air-dash is a flat 53px hop -- that is how you get behind a boss, since
+-- you cannot go through one. Committing within 21px of a 22px-wide target
+-- is a pixel check nobody lands, so if the dash ends directly ABOVE
+-- something we carry 70% of dash speed until clear.
+local VAULT_T = 0.12
+local VAULT_SPEED = DASH_SPEED * 0.7
+local VAULT_MAX_W = 32         -- wide bosses cannot be vaulted, by design
+
+-- ==================================================================
+-- THE DRIFT VANES (Lu's hover, made an unlockable)
+-- ==================================================================
+-- Flag `driftvanes`. Until she finds them Lu falls like Vess.
+--
+-- Hover used to be free from frame one, and Spark Jump silently doubled
+-- it from 0.65s to 1.3s -- a coupling nothing in the game ever mentioned.
+-- The vanes now own hover outright at a flat 1.3s, and Spark Jump is once
+-- again purely a jump-height module. A finished save plays identically;
+-- the early game is what changes.
+--
+-- Measured (tools/hover_test.lua): 1.3s of hover carries Lu 194px across
+-- a hole against 80px without. roommodel's GAP_W_HOVER = 10 tiles models
+-- that with two tiles of margin, and `calibrate` fails if the engine drifts.
+local HOVER_T = 1.3
+local HOVER_FALL = 26          -- clamped fall speed while the vanes are out
+
+-- THERMAL COLUMNS. Riding one costs no vane charge -- it is an elevator you
+-- steer, and the column's declared height is the only limit. That is what
+-- lets the co-op cap in the design doc (12 tiles per column, then a shared
+-- landing) be a level-design rule rather than a physics accident.
+local UPDRAFT_LIFT = 110       -- pre-gravity target; ~96px/s after gravity
+
 function Player:init(idx, x, y)
   Entity.init(self, x, y)
   self.kind = "player"
@@ -55,6 +123,16 @@ function Player:init(idx, x, y)
   self.dashCd = 0
   self.airDashed = false
   self.grappling = nil
+  -- bulwark / cinder ram
+  self.bulwarkT = 0      -- plate live (dash + follow-through)
+  self.bounceT = 0       -- recoil: reduced horizontal authority
+  self.dashHits = nil    -- one hit per target per charge
+  self.vaultT = 0        -- carry-through when a dash ends above a body
+  self.vaultDir = 0
+  self.vaultOver = nil
+  self.hitstopT = 0
+  self.chevT = 0         -- fiery chevron ignition (cinder ram)
+  self.plateFlashT = 0   -- white lip flash on a deflect/block
 
   -- Lu kit
   self.maxenergy = pd.maxenergy or 100
@@ -64,6 +142,8 @@ function Player:init(idx, x, y)
   self.domeRadius = 36
   self.repairCd = 0
   self.hoverT = 0
+  self.inUpdraft = false
+  self.vanesT = 0        -- >0 while the fins are open (drives the draw)
 
   -- pinned: something has hold of you (the Aerie Sentinel's talons).
   -- No control until it lets go, a partner hurts it, or you struggle free.
@@ -104,10 +184,48 @@ function Player:heal(n)
   self.hp = math.min(self.maxhp, self.hp + n)
 end
 
+-- ==================================================================
+-- The plate
+-- ==================================================================
+-- Live during a charge and for a short follow-through afterwards, so the
+-- bounce recovery is not a free hit on you.
+function Player:plateUp()
+  return self.isVess and G.run.flags.bulwark and (self.bulwarkT or 0) > 0
+end
+
+-- Front arc. The plate points along `facing`; the protected region is the
+-- forward half-plane. Only something strictly BEHIND you gets through --
+-- which keeps a spike directly underfoot (dx == 0) covered during a run,
+-- while a shot in the back is still a shot in the back.
+--
+-- A nil source has no direction at all: drowning, heat, cold and the other
+-- environmental timers are deliberately NOT blockable by a shield.
+function Player:plateBlocks(srcx)
+  if not self:plateUp() then return false end
+  if not srcx then return false end
+  local cx = self.x + self.w / 2
+  return U.sign(srcx - cx) ~= -self.facing
+end
+
+function Player:onPlateBlock(srcx, srcy)
+  local World = require "src.world"
+  local cx = self.x + self.w / 2 + self.facing * 8
+  local cy = srcy or (self.y + self.h / 2)
+  self.plateFlashT = 0.12
+  World:fx("spark", cx, cy, { color = "vesslite", angle = math.pi - (self.facing > 0 and 0 or math.pi), n = 5 })
+  if G.Audio then G.Audio.sfx("deflect") end
+end
+
 function Player:takeDamage(dmg, srcx, opts)
   if self.dead or self.downed or self.idle then return end
   if self.invuln > 0 or self.roomEnterProtect > 0 then return end
   if self.dashT > 0 and not (opts and opts.pierceDash) then return end
+  -- BULWARK: the plate stops what the dash never could -- spikes, vents,
+  -- and the boss attacks that were flagged to punch through a dash.
+  if opts and opts.pierceDash and self:plateBlocks(srcx) then
+    self:onPlateBlock(srcx)
+    return
+  end
   local mult = ({ 0.5, 1, 1.5 })[G.run.difficulty] or 1
   dmg = math.max(1, math.floor(dmg * mult + 0.5))
   self.hp = self.hp - dmg
@@ -221,6 +339,118 @@ function Player:domeAbsorb(dmg)
 end
 
 -- ==================================================================
+-- Impact: bounce, concussion, and the vault
+-- ==================================================================
+-- Every body falls into one of four buckets. `mass` is declared on the
+-- enemy def (see enemies.lua); anything untagged is light, which is the
+-- safe default -- a missed tag makes something more fun to hit rather
+-- than accidentally trivialising a mini-boss.
+local function massOf(e)
+  if e.isBoss then return "boss" end
+  if e.mass then return e.mass end
+  if e.heavy then return "heavy" end
+  return "light"
+end
+
+-- Recoil off a body or a wall. Ends the charge in the same frame, before
+-- PH.move runs, which is what makes pass-through structurally impossible.
+function Player:bounceOff(what, contactX, contactY)
+  local World = require "src.world"
+  local b = BOUNCE[what] or BOUNCE.light
+  self.dashT = 0
+  self.vx = -self.facing * b[1]
+  self.vy = b[2]
+  self.dashCd = math.max(self.dashCd, b[3])
+  self.bulwarkT = math.max(self.bulwarkT or 0, b[4])
+  self.bounceT = BOUNCE_T
+  self.hitstopT = HITSTOP
+  self.vaultT = 0
+  self.vaultOver = nil
+  Cam.shake(b[5], b[6])
+  G.Input.rumble(self:controlSlot() or self.idx,
+    what == "boss" and 0.7 or 0.4, what == "boss" and 0.2 or 0.12)
+  if contactX then
+    World:fx("burst", contactX, contactY or (self.y + self.h / 2),
+      { color = G.run.flags.cinderram and "magma" or "vessred", n = 10, speed = 150 })
+  end
+  if G.Audio then G.Audio.sfx(what == "wall" and "impact" or "ramhit") end
+end
+
+-- Concussion. Never applied directly -- Enemy:stun cancels whatever the
+-- thing was in the middle of doing, so a frozen update can't strand a
+-- half-finished attack (the Bramble Maw class of bug).
+function Player:concuss(e)
+  local dur = G.run.flags.cinderram and STUN_DUR_RAM or STUN_DUR
+  if e.stun then e:stun(dur) else e.stunT = math.max(e.stunT or 0, dur) end
+  local World = require "src.world"
+  World:fx("burst", e.x + e.w / 2, e.y + e.h / 2 - 2,
+    { color = "spark", n = 8, speed = 110 })
+end
+
+-- Swept contact test for the frame of dash travel. Returns nothing; all
+-- effects are applied in place.
+function Player:dashImpact(dt, World)
+  self.dashHits = self.dashHits or {}
+  local travel = self.vx * dt
+  local x0 = math.min(self.x, self.x + travel)
+  local bw = self.w + math.abs(travel)
+  for _, e in ipairs(World.entities) do
+    if e.kind == "enemy" and not e.dead and not e.harmless and not self.dashHits[e]
+      and U.aabb(x0, self.y, bw, self.h, e.x, e.y, e.w, e.h) then
+      self.dashHits[e] = true
+      local m = massOf(e)
+      local cxe, cye = e.x + e.w / 2, e.y + e.h / 2
+      -- damage / guard-break (Cinder Ram only)
+      if G.run.flags.cinderram then
+        if e.guardBreak and e:guardBreak(GUARD_BREAK_T) then
+          -- the guard shattered; that IS the payload, no damage this hit
+          World:fx("burst", cxe, cye, { color = "gold", n = 14, speed = 170 })
+          if G.Audio then G.Audio.sfx("guardbreak") end
+        else
+          e:hurt(RAM_DMG, self.x + self.w / 2, self.y + self.h / 2, { owner = self })
+        end
+        self.chevT = 0.22
+      end
+      -- concussion: light bodies only, never bosses
+      if m == "light" then
+        self:concuss(e)
+        if not e.noKnockback then
+          e.vx = (e.vx or 0) + self.facing * 150
+          e.vy = math.min(e.vy or 0, -90)
+        end
+      elseif m == "heavy" then
+        if not e.noKnockback then e.vx = (e.vx or 0) + self.facing * 55 end
+      end
+      -- ...and Vess always stops. Always.
+      local recoil = m
+      if m == "fixed" then recoil = "wall" end
+      self:bounceOff(recoil, cxe, cye)
+      return
+    end
+  end
+end
+
+-- Called the frame a charge runs out without having hit anything. If we
+-- ended up directly above a narrow body while still overlapping it
+-- horizontally, carry momentum until clear rather than dropping onto its
+-- head -- otherwise the vault is a pixel-perfect check nobody lands.
+function Player:tryVault(World)
+  for _, e in ipairs(World.entities) do
+    if e.kind == "enemy" and not e.dead and not e.harmless and e.w <= VAULT_MAX_W then
+      local overlapX = self.x < e.x + e.w and self.x + self.w > e.x
+      local clearlyAbove = self.y + self.h <= e.y + 1
+      if overlapX and clearlyAbove then
+        self.vaultT = VAULT_T
+        self.vaultDir = self.facing
+        self.vaultOver = e
+        return true
+      end
+    end
+  end
+  return false
+end
+
+-- ==================================================================
 -- Update
 -- ==================================================================
 function Player:update(dt)
@@ -232,6 +462,12 @@ function Player:update(dt)
   self.fireCd = self.fireCd - dt
   self.repairCd = self.repairCd - dt
   self.dashCd = self.dashCd - dt
+  if self.bulwarkT > 0 then self.bulwarkT = self.bulwarkT - dt end
+  if self.bounceT > 0 then self.bounceT = self.bounceT - dt end
+  if self.chevT > 0 then self.chevT = self.chevT - dt end
+  if self.plateFlashT > 0 then self.plateFlashT = self.plateFlashT - dt end
+  if self.hitstopT > 0 then self.hitstopT = self.hitstopT - dt end
+  if self.dashT <= 0 and self.vaultT <= 0 then self.dashHits = nil end
 
   if self.downed then
     self:updateDowned(dt, World)
@@ -283,20 +519,48 @@ function Player:update(dt)
 
   if self.dashT > 0 then
     self.dashT = self.dashT - dt
-    self.vx = self.facing * 265
+    self.vx = self.facing * DASH_SPEED
     self.vy = 0
-    World:fx("trail", self.x + self.w / 2, self.y + self.h / 2,
-      { color = "vessred", r = 3, t = 0.18 })
-    -- dash breaks breakable tiles ahead
-    local tx = math.floor((self.x + self.w / 2 + self.facing * 10) / T)
-    local ty0 = math.floor(self.y / T)
-    local ty1 = math.floor((self.y + self.h - 1) / T)
-    for ty = ty0, ty1 do World:breakTile(tx, ty) end
+    -- The plate is live for the whole charge. Contact is resolved BEFORE
+    -- the trail and the tile-breaker so that a bounce takes effect on the
+    -- same frame it happens.
+    if G.run.flags.bulwark then
+      self.bulwarkT = math.max(self.bulwarkT, PLATE_HOLD)
+      self:dashImpact(dt, World)
+    end
+    if self.dashT > 0 then
+      World:fx("trail", self.x + self.w / 2, self.y + self.h / 2,
+        { color = G.run.flags.cinderram and "magma" or "vessred", r = 3, t = 0.18 })
+      -- dash breaks breakable tiles ahead
+      local tx = math.floor((self.x + self.w / 2 + self.facing * 10) / T)
+      local ty0 = math.floor(self.y / T)
+      local ty1 = math.floor((self.y + self.h - 1) / T)
+      for ty = ty0, ty1 do World:breakTile(tx, ty) end
+    elseif self.bounceT <= 0 and G.run.flags.bulwark then
+      -- the charge simply ran out. If we finished directly over a narrow
+      -- body, carry through rather than dropping onto its head.
+      self:tryVault(World)
+    end
+  elseif self.vaultT > 0 then
+    self.vaultT = self.vaultT - dt
+    self.vx = self.vaultDir * VAULT_SPEED
+    self.vy = 0
+    local e = self.vaultOver
+    local stillOver = e and not e.dead
+      and self.x < e.x + e.w and self.x + self.w > e.x
+    if not stillOver then
+      self.vaultT = 0
+      self.vaultOver = nil
+    end
   elseif self.grappling then
     -- handled below
   else
+    -- recoil from an impact: reduced authority so the bounce reads as a
+    -- bounce instead of being cancelled the frame it starts. Jump is not
+    -- locked -- cancelling a bounce upward is the skill expression.
+    local auth = self.bounceT > 0 and BOUNCE_AUTHORITY or 1
     if mx ~= 0 then
-      self.vx = U.approach(self.vx, mx * topSpeed, accel * dt)
+      self.vx = U.approach(self.vx, mx * topSpeed, accel * auth * dt)
       if not self.charging then self.facing = mx > 0 and 1 or -1 end
     else
       self.vx = U.approach(self.vx, 0,
@@ -353,14 +617,26 @@ function Player:update(dt)
     self.vy = -80
   end
 
-  -- Lu hover: hold jump while falling
+  -- ---- Lu hover: hold jump while falling. DRIFT VANES only.
+  local wasHovering = self.hovering
   self.hovering = false
-  if not self.isVess and down("jump") and self.vy > 20 and not self.onGround
-    and not waterMode then
-    local maxHover = G.run.flags.sparkjump and 1.3 or 0.65
-    if self.hoverT < maxHover then
+  self.inUpdraft = false
+  if not self.isVess and G.run.flags.driftvanes and down("jump")
+    and not self.onGround and not waterMode then
+    local col = World:updraftAt(self)
+    if col then
+      -- A thermal column. She rises for as long as she holds it, and it
+      -- costs no charge -- so a column's height is the designed limit.
+      self.inUpdraft = true
+      self.hovering = true
+      self.vy = math.min(self.vy, -UPDRAFT_LIFT)
+      if math.floor(G.time * 26) % 2 == 0 then
+        World:fx("trail", self.x + self.w / 2 + U.rand(-5, 5), self.y + self.h,
+          { color = "spark", r = 2, t = 0.28 })
+      end
+    elseif self.vy > 20 and self.hoverT < HOVER_T then
       self.hoverT = self.hoverT + dt
-      self.vy = math.min(self.vy, 26)
+      self.vy = math.min(self.vy, HOVER_FALL)
       self.hovering = true
       if math.floor(G.time * 20) % 2 == 0 then
         World:fx("trail", self.x + self.w / 2 + U.rand(-3, 3), self.y + self.h,
@@ -368,11 +644,24 @@ function Player:update(dt)
       end
     end
   end
+  if self.hovering then
+    if not wasHovering then
+      self.vanesT = 0.001
+      if G.Audio then G.Audio.sfx("vanes") end
+    end
+    self.vanesT = math.min(1, (self.vanesT or 0) + dt * 8)
+  elseif (self.vanesT or 0) > 0 then
+    -- the fins feather closed, and you HEAR it -- which matters when you
+    -- are eleven tiles into a twelve-tile gap
+    if wasHovering and G.Audio then G.Audio.sfx("vanesout") end
+    self.vanesT = math.max(0, self.vanesT - dt * 5)
+  end
   if self.onGround then self.hoverT = 0 self.airDashed = false end
 
   -- ---- gravity
-  if self.dashT <= 0 and not self.grappling then
+  if self.dashT <= 0 and self.vaultT <= 0 and not self.grappling then
     local grav = waterMode and BASE.waterGravity or BASE.gravity
+    if self.inUpdraft then grav = grav * 0.45 end   -- the column is winning
     local maxFall = waterMode and BASE.waterMaxFall or BASE.maxFall
     self.vy = math.min(self.vy + grav * dt, maxFall)
   end
@@ -388,8 +677,18 @@ function Player:update(dt)
       elseif not self.airDashed or self.onGround then
         self.dashT = 0.2
         self.dashCd = 0.65
+        self.dashHits = {}
+        self.vaultT = 0
+        self.vaultOver = nil
+        if G.run.flags.bulwark then
+          self.bulwarkT = 0.2 + PLATE_HOLD
+          if G.run.flags.cinderram then self.chevT = 0.32 end
+        end
         if not self.onGround then self.airDashed = true end
-        if G.Audio then G.Audio.sfx("dash") end
+        if G.Audio then
+          G.Audio.sfx(G.run.flags.cinderram and "ram" or "dash")
+          if G.run.flags.bulwark then G.Audio.sfx("plate") end
+        end
         G.Input.rumble(slot or 1, 0.3, 0.1)
       end
     end
@@ -470,9 +769,21 @@ function Player:update(dt)
   self:updateFire(dt, World, slot, down, pressed)
 
   -- ---- physics move
-  PH.move(self, self.vx * dt, self.vy * dt)
+  -- hit-stop: a beat of frozen travel on impact. It is what makes the
+  -- bounce feel like it weighed something.
+  local moveScale = (self.hitstopT or 0) > 0 and 0 or 1
+  PH.move(self, self.vx * dt * moveScale, self.vy * dt * moveScale)
   if self.grappling and (self.hitWall or self.onGround or self.hitCeil) then
     self.grappling = nil
+  end
+  -- a plated charge into unbreakable tile RECOILS; without the plate it
+  -- still just stops dead, exactly as it always has
+  if self.dashT > 0 and self.hitWall and G.run.flags.bulwark then
+    self:bounceOff("wall", self.x + self.w / 2 + self.facing * 6, self.y + self.h / 2)
+  end
+  if self.vaultT > 0 and self.hitWall then
+    self.vaultT = 0
+    self.vaultOver = nil
   end
 
   -- landed effects
@@ -547,6 +858,20 @@ function Player:update(dt)
   end
 
   -- hazards
+  -- BULWARK: a plated charge SKIMS a lava surface. Only the surface --
+  -- if your centre is in it you are swimming in it, and the plate has
+  -- nothing to say about that.
+  if self.inLava and self.dashT > 0 and self:plateUp() then
+    local mcx = math.floor((self.x + self.w / 2) / T)
+    local mcy = math.floor((self.y + self.h / 2) / T)
+    if not World:isLava(mcx, mcy) then
+      self.inLava = false
+      self.vy = math.min(self.vy, -30)
+      World:fx("burst", self.x + self.w / 2, self.y + self.h,
+        { color = "hotcore", n = 6, speed = 120 })
+      self.plateFlashT = 0.1
+    end
+  end
   if self.inLava then
     -- lava does not negotiate: fire, smoke, and the wreck thrown back
     -- to the last solid ground it stood on
@@ -556,8 +881,26 @@ function Player:update(dt)
     World:fx("burst", cx, feet - 10, { color = "slate", n = 16, speed = 70 })
     Cam.shake(4, 0.4)
     if G.Audio then G.Audio.sfx("explode") end
-    if self.safeX and self.safeRoom == (World.room and World.room.id) then
-      self.x, self.y = self.safeX, self.safeY
+    -- "the wreck thrown back to the last solid ground it stood on" was
+    -- only ever true while the room stayed still. The Crucible floods
+    -- its own floor, so the ground you were standing on a second ago is
+    -- the lava you are dying in -- and throwing the wreck there kills it
+    -- again, and again, forever. Ground that WAS safe is not the test;
+    -- ground that is safe NOW is, and settleDrop already knows which
+    -- tiles those are.
+    local sx, sy = self.safeX, self.safeY
+    if sx and self.safeRoom ~= (World.room and World.room.id) then sx = nil end
+    if sx and not World:dropLegal(sx, sy, self.w, self.h) then sx = nil end
+    if not sx then
+      local fx, fy = self.x, self.y
+      if World.settleDrop then
+        sx, sy = World:settleDrop(fx, fy, self.w, self.h)
+        if not World:dropLegal(sx, sy, self.w, self.h) then sx = nil end
+      end
+    end
+    if sx then
+      self.x, self.y = sx, sy
+      self.safeX, self.safeY = sx, sy
       self.inLava = false
     else
       self.vy = -240
@@ -571,8 +914,10 @@ function Player:update(dt)
   -- enemy contact damage
   if self.invuln <= 0 and self.dashT <= 0 then
     for _, e in ipairs(World.entities) do
+      -- a concussed body cannot hurt you: standing on one is safe, which
+      -- is half the point of concussing it
       if e.kind == "enemy" and not e.dead and e.touchDmg and e.touchDmg > 0
-        and not e.harmless
+        and not e.harmless and (e.stunT or 0) <= 0
         and U.aabb(self.x, self.y, self.w, self.h, e.x, e.y, e.w, e.h) then
         self:takeDamage(e.touchDmg, e.x + e.w / 2)
         break
@@ -635,12 +980,20 @@ function Player:update(dt)
       if math.max(ddx, ddy) > 12 then self.doorGrace = nil end
     end
   end
-  if ch and ch ~= self.doorGrace then
+  -- The arrival grace stops a door you just came out of from firing again.
+  -- For an EDGE door that has to hold, because edge doors trigger on touch.
+  -- A PORTAL needs a deliberate button press, so a deliberate press should
+  -- always be honoured -- otherwise a portal that opens into a pocket no
+  -- bigger than the doorway is inescapable: the grace clears only once you
+  -- get 12px clear of the door, and in a pocket that IS the door you never
+  -- can. (deep_stair_1's door E is exactly that shape.)
+  if ch and not World:doorSealed(d) then
     if d.edge then
-      World:requestTransition(ch)
+      if ch ~= self.doorGrace then World:requestTransition(ch) end
     else
       self.atPortalDoor = true
       if (pressed("interact") or pressed("up")) and not self.interactedThisFrame then
+        self.doorGrace = nil
         World:requestTransition(ch)
       end
     end
@@ -977,6 +1330,73 @@ function Player:draw()
       g.circle("line", self.x + self.w / 2, self.y - 6, 3)
       g.setColor(1, 1, 1, 1)
     end
+  end
+
+  -- ---- the DRIFT VANES: four fins that snap open when the hover engages
+  -- and feather closed when it runs out, plus a depletion arc for the last
+  -- of the charge. The END of a hover is the thing worth telegraphing.
+  if (self.vanesT or 0) > 0 and not self.isVess then
+    local o = self.vanesT
+    local cx, cy = self.x + self.w / 2, self.y + self.h / 2
+    local col = self.inUpdraft and P.spark or P.cyan
+    g.setColor(col[1], col[2], col[3], 0.35 + o * 0.5)
+    for _, fin in ipairs({ { -1, -2, 7 }, { 1, -2, 7 }, { -1, 6, 5 }, { 1, 6, 5 } }) do
+      local sx, fy, len = fin[1], fin[2], fin[3]
+      local spread = 2 + o * len
+      g.setLineWidth(1.5)
+      g.line(cx + sx * 4, cy + fy, cx + sx * (4 + spread), cy + fy + spread * 0.45)
+      g.setLineWidth(1)
+    end
+    -- charge remaining. Absent in a thermal column, which costs nothing.
+    if not self.inUpdraft and self.hovering then
+      local frac = 1 - self.hoverT / HOVER_T
+      if frac < 0.35 then
+        g.setColor(P.spark[1], P.spark[2], P.spark[3],
+          0.55 + math.sin(G.time * 22) * 0.35)
+        g.arc("line", "open", cx, self.y - 7, 5,
+          -math.pi / 2, -math.pi / 2 + math.pi * 2 * math.max(0, frac / 0.35))
+      end
+    end
+    g.setColor(1, 1, 1, 1)
+  end
+
+  -- ---- the Bulwark plate: a hard-edged wedge AHEAD of Vess. It must read
+  -- as directional at a glance, because the back being open is a rule the
+  -- player is expected to learn and use.
+  if self:plateUp() then
+    local f = self.facing
+    local cx = self.x + self.w / 2
+    local cy = self.y + self.h / 2
+    local live = math.min(1, (self.bulwarkT or 0) / PLATE_HOLD)
+    local reach = 9 + live * 2
+    local half = 9
+    local flash = (self.plateFlashT or 0) > 0
+    g.push() g.translate(cx, cy) g.scale(f, 1)
+    -- body of the wedge
+    g.setColor(P.vessred[1], P.vessred[2], P.vessred[3], 0.30 + live * 0.14)
+    g.polygon("fill", 2, -half, reach, -half + 3, reach, half - 3, 2, half)
+    -- the lip: the bit that actually stops things
+    g.setColor(flash and P.white or P.vesslite)
+    g.setLineWidth(flash and 2 or 1)
+    g.line(reach, -half + 3, reach, half - 3)
+    g.setLineWidth(1)
+    -- ...and the fiery chevrons, once the charge is an attack
+    if G.run.flags.cinderram and (self.chevT or 0) > 0 then
+      local ig = math.min(1, (self.chevT or 0) / 0.22)
+      local strobe = 0.65 + 0.35 * math.sin(G.time * 36)
+      local cols = { P.magma, P.hotcore, P.cream }
+      for i = 1, 3 do
+        local ox = 3 + i * 4.5
+        local sc = 1 - (i - 1) * 0.18
+        local c = cols[i]
+        g.setColor(c[1], c[2], c[3], ig * strobe * (1 - (i - 1) * 0.2))
+        g.setLineWidth(1.5)
+        g.line(ox - 3, -6 * sc, ox, 0, ox - 3, 6 * sc)
+        g.setLineWidth(1)
+      end
+    end
+    g.pop()
+    g.setColor(1, 1, 1, 1)
   end
 
   -- muzzle flash

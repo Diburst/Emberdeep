@@ -1,7 +1,7 @@
 -- Flooded roots. The water tables of the old well pool here in the dark.
 return {
   zone = "undergrove", music = "undergrove",
-  mapPos = { x = 7, y = 4, w = 2, h = 1 },
+  mapPos = { x = 5, y = 2, w = 2, h = 1 },
   dark = 0.8,
   map = [[
 ######AAA#####################################

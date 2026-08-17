@@ -2,7 +2,7 @@
 return {
   zone = "flooded", music = "flooded",
   arena = "rustwarden",
-  mapPos = { x = 9, y = 0, w = 2, h = 1 },
+  mapPos = { x = 9, y = 1, w = 2, h = 1 },
   map = [[
 ########################################
 ########################################

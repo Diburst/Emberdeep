@@ -1,7 +1,7 @@
 -- Root Hollow: the Undergrove waystation. The deep doors are sealed to the lightless.
 return {
   zone = "undergrove", music = "undergrove",
-  mapPos = { x = 4, y = 2, w = 1, h = 1 },
+  mapPos = { x = 3, y = 0, w = 1, h = 1 },
   dark = 0.7,
   hasSave = true,
   hasTeleporter = true,
@@ -18,8 +18,8 @@ return {
 ##.......................H..##
 ##.......................H..##
 AA.......................H..BB
-AA...t..s..z........1....H..BB
-##.......................H..##
+AA..................1....H..BB
+##...t..s...........#....H..##
 ##############...#############
 ##############...#############
 ##############DDD#############
@@ -28,7 +28,6 @@ AA...t..s..z........1....H..BB
   key = {
     ["t"] = "teleporter:undergrove",
     ["s"] = "save",
-    ["z"] = "checkpoint",
     ["1"] = "sign:sign_roothollow",
   },
   links = {

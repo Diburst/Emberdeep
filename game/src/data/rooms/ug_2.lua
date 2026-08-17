@@ -1,7 +1,7 @@
 -- First caverns under the well. The dark thickens; spores glow when struck.
 return {
   zone = "undergrove", music = "undergrove",
-  mapPos = { x = 2, y = 2, w = 2, h = 1 },
+  mapPos = { x = 1, y = 0, w = 2, h = 1 },
   dark = 0.8,
   map = [[
 ##############################################

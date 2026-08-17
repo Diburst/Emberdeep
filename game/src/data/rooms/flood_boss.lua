@@ -2,7 +2,7 @@
 return {
   zone = "flooded", music = "flooded",
   arena = "tideengine",
-  mapPos = { x = 17, y = 0, w = 3, h = 1 },
+  mapPos = { x = 17, y = 1, w = 3, h = 1 },
   map = [[
 ############################################################
 ############################################################
@@ -31,7 +31,7 @@ AA............#.....t....#.......F..#.....................##
     ["t"] = "boss:tideengine",
   },
   links = {
-    F = { "deep_stair_2", "D" },
+    F = { "deep_stair_2", "D", req = "boss_tideengine" },
     A = { "flood_5", "B" },
   },
 }

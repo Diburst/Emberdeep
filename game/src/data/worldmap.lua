@@ -12,10 +12,13 @@ WM.ROOMS = {
   "flood_5", "flood_boss", "flood_deep1",
   "furn_1", "furn_2", "furn_3", "furn_golem", "furn_4", "furn_5", "furn_6",
   "furn_boss", "furn_cache",
+  "scrap_1", "scrap_2", "scrap_3", "scrap_4", "scrap_bay", "scrap_5",
+  "scrap_secret", "scrap_6", "scrap_boss",
   "crys_1", "crys_2", "crys_3", "crys_4", "crys_5", "crys_boss", "crys_secret",
   "cold_1", "cold_2", "cold_3", "cold_4", "cold_5", "cold_secret",
   "cold_boss", "cradle_1",
   "sky_1", "sky_2", "sky_3", "sky_4", "sky_boss", "sky_secret",
+  "sky_nest", "gal_1", "gal_2", "gal_3",
   "core_1", "core_2", "core_3", "core_4", "core_boss",
 }
 
@@ -25,20 +28,22 @@ WM.ZONE_NAMES = {
   skyroot = "SKYROOT SPIRE", core = "THE CORE",
   undergrove = "THE UNDERGROVE",
   coldstore = "THE COLDSTORE", cradle = "THE CRADLE",
+  scrapyard = "THE SCRAPYARD",
 }
 
 -- map-canvas offsets (in map cells)
 WM.ZONE_OFFSETS = {
-  camp = { x = 10, y = 8 },
-  mosswood = { x = 16, y = 8 },
-  skyroot = { x = 20, y = 1 },
-  flooded = { x = 26, y = 9 },
-  furnace = { x = 27, y = 15 },
-  crystal = { x = 17, y = 15 },
-  core = { x = 2, y = 10 },
-  undergrove = { x = 18, y = 11 },
-  coldstore = { x = 9, y = 15 },
-  cradle = { x = 9, y = 19 },
+  camp = { x = 6, y = 9 },
+  coldstore = { x = 31, y = 13 },
+  core = { x = 31, y = 17 },
+  cradle = { x = 50, y = 13 },
+  crystal = { x = 30, y = 14 },
+  flooded = { x = 27, y = 6 },
+  furnace = { x = 31, y = 10 },
+  mosswood = { x = 12, y = 7 },
+  scrapyard = { x = 24, y = 12 },
+  skyroot = { x = 18, y = 1 },
+  undergrove = { x = 14, y = 14 },
 }
 
 WM.TELEPADS = {

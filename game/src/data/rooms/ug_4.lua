@@ -1,7 +1,7 @@
 -- The mycel gallery. Things regrow here if you do not finish them.
 return {
   zone = "undergrove", music = "undergrove",
-  mapPos = { x = 5, y = 2, w = 2, h = 1 },
+  mapPos = { x = 4, y = 0, w = 2, h = 1 },
   dark = 0.85,
   map = [[
 ##############################################

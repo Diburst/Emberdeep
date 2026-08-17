@@ -276,6 +276,60 @@ SONGS.cradle = {
   } },
 }
 
+-- THE SCRAPYARD. Soft and sad: no percussion anywhere in the zone, a
+-- thin lead over one held bass note per bar, and a four-note descending
+-- figure in A minor that quotes Tikka's music-box motif a fifth down,
+-- at half speed, never resolving. Eight patterns so the loop point does
+-- not announce itself.
+SONGS.scrapyard = {
+  bpm = 62, echo = 0.6,
+  lead = { duty = 0.125, vol = 0.09, order = { 1, 2, 1, 3, 4, 2, 1, 5 }, patterns = {
+    "A4 -- -- -- -- -- -- -- G4 -- -- -- -- -- -- --",
+    "F4 -- -- -- -- -- -- -- E4 -- -- -- -- -- -- --",
+    "C5 -- -- -- -- -- -- -- A4 -- -- -- -- -- -- --",
+    "D5 -- -- -- C5 -- -- -- A4 -- -- -- -- -- -- --",
+    "E4 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+  } },
+  harm = { duty = 0.25, vol = 0.04, order = { 3, 3, 1, 3, 2, 3, 1, 2 }, patterns = {
+    "A3 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+    "F3 -- -- -- -- -- -- -- E3 -- -- -- -- -- -- --",
+    "-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+  } },
+  bass = { vol = 0.18, order = { 1, 1, 2, 1, 3, 1, 2, 2 }, patterns = {
+    "A1 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+    "F1 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+    "D1 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+  } },
+  drums = { vol = 0.0, order = { 1 }, patterns = {
+    "-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+  } },
+}
+
+-- EIGHT. The same tune, one hundred years angrier: same motif, 150bpm,
+-- and the drums the zone never had.
+SONGS.vessel8 = {
+  bpm = 150, echo = 0.2,
+  lead = { duty = 0.25, vol = 0.2, order = { 1, 2, 1, 3, 1, 2, 4, 4 }, patterns = {
+    "A4 -- A4 -- G4 -- G4 -- F4 -- F4 -- E4 -- E4 --",
+    "A4 -- G4 -- F4 -- E4 -- D4 -- E4 -- F4 -- G4 --",
+    "C5 -- C5 -- A4 -- A4 -- G4 -- G4 -- E4 -- E4 --",
+    "A5 -- -- -- G5 -- -- -- F5 -- -- -- E5 -- -- --",
+  } },
+  harm = { duty = 0.5, vol = 0.1, order = { 1, 1, 2, 1, 1, 1, 2, 2 }, patterns = {
+    "A3 -- -- -- E3 -- -- -- A3 -- -- -- E3 -- -- --",
+    "F3 -- -- -- C3 -- -- -- D3 -- -- -- E3 -- -- --",
+  } },
+  bass = { vol = 0.37, order = { 1, 1, 1, 2, 1, 1, 1, 3 }, patterns = {
+    "A1 A1 -- A1 -- A1 -- -- A1 A1 -- A1 -- A1 -- --",
+    "F1 F1 -- F1 -- F1 -- -- F1 F1 -- F1 -- F1 -- --",
+    "D1 D1 -- D1 -- D1 -- -- E1 E1 -- E1 -- E1 -- --",
+  } },
+  drums = { vol = 0.27, order = { 1, 1, 1, 2 }, patterns = {
+    "k- -- h- -- s- -- h- -- k- -- h- -- s- h- h- --",
+    "k- -- h- -- s- -- h- -- k- k- s- -- s- s- s- s-",
+  } },
+}
+
 SONGS.boss = {
   bpm = 160, echo = 0.18,
   lead = { duty = 0.25, vol = 0.21, order = { 1, 1, 2, 3 }, patterns = {

@@ -48,7 +48,8 @@ def parse(fname):
     lm = re.search(r"links = \{(.*?)\n  \}", src, re.S)
     if lm:
         for em in re.finditer(
-                r'([A-F])\s*=\s*\{\s*"([\w]+)"\s*,\s*"([A-F])"\s*\}', lm.group(1)):
+                r'([A-F])\s*=\s*\{\s*"([\w]+)"\s*,\s*"([A-F])"\s*'
+                r'(?:,\s*req\s*=\s*"([^"]+)"\s*)?,?\s*\}', lm.group(1)):
             links[em.group(1)] = (em.group(2), em.group(3))
     return sides, links
 

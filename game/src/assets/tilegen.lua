@@ -25,6 +25,8 @@ local ZONES = {
                bg1 = "navy", bg2 = "shadow", sky1 = "black", sky2 = "navy" },
   cradle   = { base = "gloom", dark = "black", accent = "ice", cap = "slate",
                bg1 = "black", bg2 = "dark", sky1 = "black", sky2 = "black" },
+  scrapyard = { base = "shadow", dark = "black", accent = "slate", cap = "gray",
+               bg1 = "black", bg2 = "dark", sky1 = "black", sky2 = "black" },
 }
 TG.ZONES = ZONES
 

@@ -11,40 +11,16 @@ local Cam = require "src.camera"
 local T = 16
 local Bosses = {}
 
--- find a safe, door-distant, hazard-free ground spot for remains
+-- Where remains and prizes come to rest. This used to be a local hand
+-- rolled fall-until-something-is-under-you, which checked for lava and
+-- water and nothing else -- so it fell straight through spike beds and
+-- left the Mycel Choir's reward sitting in the spikes at the bottom of
+-- its shaft. The rule now lives in World:settleDrop, where the chest
+-- and capsule placers can share it: real footing, no hazard touching
+-- the object or the player who comes for it, and reachable from a door
+-- or from where a player is standing.
 local function settleSpot(World, x, y, w, h)
-  local PH2 = require "src.physics"
-  local function trySettle(sx)
-    sx = U.clamp(sx, 4 * T, World.w * T - 4 * T - w)
-    local sy = y
-    local guard = 0
-    while PH2.boxBlocked(sx, sy, w, h) and guard < 24 do
-      sy = sy - 8
-      guard = guard + 1
-    end
-    guard = 0
-    while guard < 200 do
-      local ty = math.floor((sy + h + 2) / T)
-      local tx0, tx1 = math.floor((sx + 2) / T), math.floor((sx + w - 2) / T)
-      for tx = tx0, tx1 do
-        -- never settle onto (or through) liquid
-        if World:isLava(tx, ty) or World:isWater(tx, ty) then return nil end
-        if World:isSolid(tx, ty) or World:isOneway(tx, ty) then return sx, sy end
-      end
-      sy = sy + 4
-      guard = guard + 1
-    end
-    return nil
-  end
-  -- try the death spot, then march toward the room center
-  local cx = World.w * T / 2
-  local step = (x < cx and 1 or -1) * T
-  for i = 0, 24 do
-    local sx, sy = trySettle(x + i * step)
-    if sx then return sx, sy end
-  end
-  -- last resort: room center at mid height (ensureFree cleans it up)
-  return cx - w / 2, World.h * T / 2
+  return World:settleDrop(x, y, w, h)
 end
 Bosses.settleSpot = settleSpot
 
@@ -76,6 +52,12 @@ function Boss:onDeath()
   local cx, cy = self:center()
   G.run.flags["boss_" .. self.bossId] = true
   World.bossActive = nil
+  -- a dead boss cannot be allowed to leave its arena on fire: the reward
+  -- is about to be placed, and the players have to walk out
+  if World.clearFlood then World:clearFlood() end
+  for _, e in ipairs(World.entities) do
+    if e.pot and not e.dead then e.dead = true end
+  end
   Cam.shake(5, 0.8)
   if G.Audio then
     G.Audio.sfx("explode")
@@ -85,9 +67,15 @@ function Boss:onDeath()
     World:fx("burst", cx + U.rand(-16, 16), cy + U.rand(-16, 16),
       { color = U.choose({ "ember", "gold", "magma" }), n = 12, speed = 160 })
   end
-  Pickup.drop(World, cx, cy, "bigshard", 6)
-  Pickup.drop(World, cx, cy, "heart", 3)
-  Pickup.drop(World, cx, cy, "scrap", 4)
+  -- Loot falls with physics and dies after seven seconds, so it has to
+  -- START somewhere you can chase it. A boss that dies over the Mycel
+  -- Choir's spike floor used to scatter six bigshards, three hearts and
+  -- four scrap straight into the spikes, where they simply expired.
+  local lx, ly = World:settleDrop(cx - 7, cy - 6, 14, 12)
+  lx, ly = lx + 7, ly + 6
+  Pickup.drop(World, lx, ly, "bigshard", 6)
+  Pickup.drop(World, lx, ly, "heart", 3)
+  Pickup.drop(World, lx, ly, "scrap", 4)
   -- the broken machine stays where it fell, for the rest of the game
   if self.bossId ~= "maro" and self.bossId ~= "motherengine" then
     G.run.bossCorpses = G.run.bossCorpses or {}
@@ -391,6 +379,8 @@ function Rustwarden:update(dt)
     end
   end
 
+  if (self.guardT or 0) > 0 then self.guardT = self.guardT - dt end
+
   -- ---- ENRAGE: a one-way door, checked before any normal state runs
   if not self.enraged and self.hp <= self.maxhp * WARDEN_ENRAGE_AT then
     self:beginEnrage()
@@ -584,21 +574,40 @@ function Rustwarden:update(dt)
     if self.stateT <= 0 then self:setState("stalk", 3) end
   end
 end
+-- A plated charge into the tower shield shatters the guard instead of
+-- dealing damage -- the Cinder Ram is a key, not just a number.
+function Rustwarden:guardBreak(dur)
+  if self.shieldGone or (self.guardT or 0) > 0 then return false end
+  self.guardT = dur
+  local World = require "src.world"
+  World:fx("burst", self.x + self.w / 2 + self.facing * 14, self.y + 10,
+    { color = "silver", n = 16, speed = 150 })
+  Cam.shake(3, 0.3)
+  if G.game then G.game:announce("The tower shield buckles!", 1.8) end
+  return true
+end
+-- Asked by Proj before the damage pass so a stopped round is destroyed at
+-- the shield instead of sailing through the body. The LINK blast is never
+-- stopped -- it is the pair's standing answer to a raised guard.
+function Rustwarden:deflects(srcx, srcy, opts)
+  if opts and opts.link then return false end
+  if self.state == "stunned" or self.shieldGone or (self.guardT or 0) > 0 then
+    return false
+  end
+  -- judge the attack by where it CAME from (the shooter if known --
+  -- fast projectiles can tunnel past the midline before they connect)
+  local ax = srcx
+  if opts and opts.owner then ax = opts.owner.x + opts.owner.w / 2 end
+  local side = ax and U.sign(ax - (self.x + self.w / 2)) or self.facing
+  return side == self.facing or side == 0
+end
 function Rustwarden:hurt(dmg, srcx, srcy, opts)
-  -- shield law only applies while it still has a shield
-  if self.state ~= "stunned" and not self.shieldGone then
-    -- judge the attack by where it CAME from (the shooter if known --
-    -- fast projectiles can tunnel past the midline before they connect)
-    local ax = srcx
-    if opts and opts.owner then ax = opts.owner.x + opts.owner.w / 2 end
-    local side = ax and U.sign(ax - (self.x + self.w / 2)) or self.facing
-    if side == self.facing or side == 0 then
-      local World = require "src.world"
-      World:fx("spark", self.x + self.w / 2 + self.facing * 14, self.y + 10,
-        { color = "silver", n = 4 })
-      if G.Audio then G.Audio.sfx("crack") end
-      return false
-    end
+  if self:deflects(srcx, srcy, opts) then
+    local World = require "src.world"
+    World:fx("spark", self.x + self.w / 2 + self.facing * 14, self.y + 10,
+      { color = "silver", n = 4 })
+    if G.Audio then G.Audio.sfx("crack") end
+    return false
   end
   return Entity.hurt(self, dmg, srcx, srcy, opts)
 end
@@ -776,8 +785,8 @@ local SURGE_AT = { 0.75, 0.5, 0.25 }  -- health fractions that trigger it
 local SURGE_CHARGE = 2.0              -- seconds of telegraph before it fires
 local SURGE_SPEED = 340               -- pixels/second the wall travels
 local SURGE_HALFW = 16                -- half-thickness of the killing edge
-local SURGE_DMG = { 4, 6, 8 }         -- Story / Normal / Veteran
-local SURGE_DOME_COST = 5             -- energy bite for sheltering one body
+local SURGE_DMG = { 8, 10, 20 }         -- Story / Normal / Veteran
+local SURGE_DOME_COST = 20             -- energy bite for sheltering one body
 
 local Tideengine = Boss.extend()
 function Tideengine:init(x, y)
@@ -847,8 +856,8 @@ function Tideengine:update(dt)
     self.valves = {}
     local roomW = World.w * T
     local floorY = World.h * T - 5 * T - 18
-    local v1 = Valve.new(self.x - 90, self.y, self)
-    local v2 = Valve.new(self.x + self.w + 76, self.y, self)
+    local v1 = Valve.new(self.x - 90, self.y + 3 * T, self)
+    local v2 = Valve.new(self.x + self.w + 76, self.y + 3 * T, self)
     World:add(v1) World:add(v2)
     self.valves = { v1, v2 }
     World.waterLine = World.h * T - 40
@@ -1157,9 +1166,27 @@ Bosses.slaggolem = Slaggolem
 -- 5. THE CRUCIBLE (Furnace boss) -- link shot proves itself here
 -- It hovers four tiles up between two flanking gun platforms. On its
 -- vent cycle it slams down in the arena's center and vents for five
--- seconds -- the ONLY window a LINK SHOT shatters the lattice. Break
--- it there and it is stunned for five more; when it finally rises, it
--- vomits a swarm of slaglings.
+-- seconds -- the ONLY window a LINK SHOT shatters the lattice.
+--
+-- Three things pile on top of that, in phases:
+--
+--   POUR-SHOT   it locks a random bot, charges for eight tenths, and
+--               fires three heavy fireballs in a fan at where that bot
+--               WAS. The lock does not track, so movement is the answer.
+--   SLAG TIDE   every slam now spews, not just a slam you punished. Hard
+--               capped, because a swarm you cannot clear inside a cycle
+--               stops being difficulty and becomes arithmetic.
+--   THE POTS    two crucibles over the two refuge platforms fill with
+--               lava and tip, and the whole floor becomes lava for six
+--               seconds. Shoot a filling pot out and it stays broken
+--               for thirty.
+--
+-- The interlocks in armPots() are load-bearing, not polish: no pot may
+-- COMMIT while the boss is on the ground, because those five grounded
+-- seconds are the link window, and the link window is the entire reason
+-- this fight exists. Flooding the floor during it would leave a boss
+-- that checkprogress still calls completable and a player who cannot
+-- read what the fight wants.
 -- ==================================================================
 local Crucible = Boss.extend()
 function Crucible:init(x, y)
@@ -1170,6 +1197,83 @@ function Crucible:init(x, y)
   self.ventT = 9          -- hover time until the next vent slam
   self.shieldHintT = 11
   self.homeX, self.homeY = x, y
+  self.aimT = 6.5         -- hover time until the next pour-shot
+  self.potT = 8           -- no pot may arm in the opening seconds
+  self.phase = 1
+end
+
+local SLAG_CAP = 14       -- concurrent slaglings; see the header
+local SLAG_PER_SLAM = 8
+local AIM_LOCK = 0.25
+local AIM_CHARGE = 0.8
+
+function Crucible:slagCount(World)
+  local n = 0
+  for _, e in ipairs(World.entities) do
+    if not e.dead and e.slagling then n = n + 1 end
+  end
+  return n
+end
+
+function Crucible:pots(World)
+  local out = {}
+  for _, e in ipairs(World.entities) do
+    if not e.dead and e.pot then out[#out + 1] = e end
+  end
+  return out
+end
+
+-- Grounded means the link window is open or about to be; nothing may
+-- tip into it. A pot already filling is HELD at the brim instead, so the
+-- threat does not evaporate -- it waits for you on the way back up.
+function Crucible:grounded()
+  local st = self.state
+  return st == "ventapproach" or st == "ventslam" or st == "venting"
+    or st == "stunned" or st == "rise"
+end
+
+function Crucible:armPots(World, dt)
+  local pots = self:pots(World)
+  if #pots == 0 then return end
+  self.potT = self.potT - dt
+  if self:grounded() then
+    for _, p in ipairs(pots) do p:hold() end
+    return
+  end
+  if self.phase < 2 then return end
+  if self.potT > 0 then return end
+  -- A wall of slaglings between you and the ladder is not a fight, it is
+  -- a sentence, so a crowded floor delays the arming. It must not CANCEL
+  -- it: the swarm caps at SLAG_CAP and a slam refills it, so a player who
+  -- is not clearing adds would otherwise never see a pot again -- the
+  -- mechanic would quietly switch itself off for exactly the player it
+  -- was meant to pressure. Six seconds of grace, then it arms anyway.
+  if self:slagCount(World) > 12 then
+    self.potBlockT = (self.potBlockT or 0) + dt
+    if self.potBlockT < 6 then self.potT = 0.5 return end
+  else
+    self.potBlockT = 0
+  end
+  local ready = {}
+  for _, p in ipairs(pots) do if p:ready() then ready[#ready + 1] = p end end
+  if #ready == 0 then self.potT = 2 return end
+  local armed = 0
+  -- phase 3 arms both at once when both are cold: the finale, and the
+  -- reason the centre platform exists
+  local want = (self.phase >= 3 and #ready >= 2) and 2 or 1
+  for i = 1, math.min(want, #ready) do
+    local p = (want == 2) and ready[i] or ready[love.math.random(1, #ready)]
+    if p:arm() then armed = armed + 1 end
+  end
+  if armed > 0 then
+    self.potBlockT = 0
+    self.potT = (self.phase >= 3 and 13 or 17)
+    if G.game then
+      G.game:announce(armed > 1
+        and "BOTH CRUCIBLES ARE FILLING -- shoot them out!"
+        or "A crucible is filling. Shoot it out, or get off the floor.", 2.4)
+    end
+  end
 end
 function Crucible:update(dt)
   local World = require "src.world"
@@ -1183,6 +1287,21 @@ function Crucible:update(dt)
     return
   end
 
+  -- phase by health: everything arrives in layers, because all of it at
+  -- once is a wall rather than a fight
+  local frac = self.hp / self.maxhp
+  local want = frac > 0.66 and 1 or (frac > 0.33 and 2 or 3)
+  if want > self.phase then
+    self.phase = want
+    if want == 2 and G.game then
+      G.game:announce("The flanking crucibles wake up.", 2.4)
+    elseif want == 3 and G.game then
+      G.game:announce("It opens every vent it has.", 2.4)
+    end
+    if G.Audio then G.Audio.sfx("bosswarn") end
+  end
+  self:armPots(World, dt)
+
   local hovering = self.state == "spiral" or self.state == "wave"
   if hovering then
     -- float in a slow circle between the gun platforms
@@ -1190,6 +1309,13 @@ function Crucible:update(dt)
     self.y = self.homeY + math.sin(self.t * 1.1) * 8
     self.ventT = self.ventT - dt
     self.shieldHintT = self.shieldHintT - dt
+    self.aimT = self.aimT - dt
+    -- never start a pour-shot inside the run-up to a vent: the volley
+    -- would still be in the air during the link window
+    if self.aimT <= 0 and self.ventT > 2.2 then
+      self.aimT = (self.phase >= 3) and 5 or 6.5
+      self:setState("aimlock", AIM_LOCK)
+    end
     if self.shieldHintT <= 0 then
       self.shieldHintT = 20
       if G.game then
@@ -1203,7 +1329,37 @@ function Crucible:update(dt)
     end
   end
 
-  if self.state == "spiral" then
+  if self.state == "aimlock" then
+    -- freeze the aim point NOW. It does not follow you: the dodge is to
+    -- move, and moving ACROSS the line beats moving along it.
+    if not self.lockPt then
+      local p = self:randomTarget(World)
+      if p then
+        self.lockPt = { p.x + p.w / 2, p.y + p.h / 2 }
+      else
+        self.lockPt = { World.w * T / 2, World.h * T - 6 * T }
+      end
+      if G.Audio then G.Audio.sfx("surgecharge") end
+    end
+    if self.stateT <= 0 then self:setState("aimcharge", AIM_CHARGE) end
+  elseif self.state == "aimcharge" then
+    if self.stateT <= 0 then
+      local cx, cy = self:center()
+      local lp = self.lockPt
+      local a = math.atan(lp[2] - cy, lp[1] - cx)
+      for k = -1, 1 do
+        local a2 = a + k * 0.157        -- +/- 9 degrees
+        Proj.spawn(World, cx, cy, {
+          side = "enemy", dmg = 6, kind = "fireball", size = 10,
+          vx = math.cos(a2) * 165, vy = math.sin(a2) * 165, life = 3.0,
+        })
+      end
+      self.lockPt = nil
+      Cam.shake(3, 0.25)
+      if G.Audio then G.Audio.sfx("surgeblast") end
+      self:setState("spiral", 3.5)
+    end
+  elseif self.state == "spiral" then
     self.gap = (self.gap or 0) - dt
     if self.gap <= 0 then
       self.gap = 0.22
@@ -1260,6 +1416,7 @@ function Crucible:update(dt)
           vx = dir * 160, vy = 0, life = 1.4,
         })
       end
+      self:spewSlag(World, SLAG_PER_SLAM)
       self.ventsOpen = true
       self:setState("venting", 5)
       if G.game then G.game:announce("It slams down, venting -- NOW is the link window!", 2.5) end
@@ -1277,7 +1434,6 @@ function Crucible:update(dt)
     self.ventsOpen = false
     if self.stateT <= 0 then
       self.shielded = true
-      self.spewSwarm = true
       self:setState("rise", 2)
       if G.game then G.game:announce("The shield lattice reknits...", 1.6) end
       if G.Audio then G.Audio.sfx("domeon") end
@@ -1286,23 +1442,38 @@ function Crucible:update(dt)
     self.y = U.approach(self.y, self.homeY, 90 * dt)
     if math.abs(self.y - self.homeY) < 3 or self.stateT <= 0 then
       self.y = self.homeY
-      if self.spewSwarm then
-        -- it remembers being hurt: a swarm of slaglings
-        self.spewSwarm = nil
-        for i = 1, 5 do
-          local e = Entity.make("slagling",
-            self.x + self.w / 2 + U.rand(-40, 40), self.y + self.h)
-          World:add(e)
-        end
-        World:fx("burst", self.x + self.w / 2, self.y + self.h,
-          { color = "magma", n = 16, speed = 140 })
-        if G.game then G.game:announce("It spews a tide of slaglings!", 2) end
-        if G.Audio then G.Audio.sfx("roar") end
-      end
       self:setState("spiral", 5)
     end
   end
 end
+-- a random live bot, not the nearest: the nearest is always whoever is
+-- being brave, and punishing bravery every single time reads as unfair
+function Crucible:randomTarget(World)
+  local live = {}
+  for _, p in ipairs(World.players) do
+    if not p.dead and not p.downed and not p.idle then live[#live + 1] = p end
+  end
+  if #live == 0 then return nil end
+  return live[love.math.random(1, #live)]
+end
+
+function Crucible:spewSlag(World, n)
+  local room = SLAG_CAP - self:slagCount(World)
+  if room <= 0 then return end
+  n = math.min(n, room)
+  local cx = self.x + self.w / 2
+  for i = 1, n do
+    local e = Entity.make("slagling", cx + U.rand(-52, 52), self.y + self.h - 8)
+    if e and e ~= true then
+      e.vy = -140 - U.rand(0, 60)
+      World:add(e)
+    end
+  end
+  World:fx("burst", cx, self.y + self.h, { color = "magma", n = 16, speed = 140 })
+  if G.game then G.game:announce("It spews a tide of slaglings!", 1.6) end
+  if G.Audio then G.Audio.sfx("roar") end
+end
+
 function Crucible:hurt(dmg, srcx, srcy, opts)
   if self.state == "stunned" then
     return Entity.hurt(self, dmg, srcx, srcy, opts)
@@ -1334,6 +1505,26 @@ end
 function Crucible:draw()
   local g = love.graphics
   local cx, cy = self:center()
+  -- the pour-shot's aim line: thin on the lock, thick and bright as it
+  -- charges. It is the whole fairness of the attack -- you are told
+  -- exactly where it is going a second before it goes there.
+  if self.lockPt then
+    local lp = self.lockPt
+    local charging = self.state == "aimcharge"
+    local k = charging and (1 - math.max(0, self.stateT / AIM_CHARGE)) or 0
+    g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3], 0.35 + k * 0.5)
+    g.setLineWidth(1 + k * 2)
+    g.line(cx, cy, lp[1], lp[2])
+    g.setLineWidth(1)
+    local r = 4 + k * 5
+    g.setColor(P.magma[1], P.magma[2], P.magma[3], 0.5 + k * 0.4)
+    g.circle("line", lp[1], lp[2], r)
+    if charging then
+      g.setColor(P.spark[1], P.spark[2], P.spark[3], k)
+      g.circle("fill", cx, cy, 4 + k * 6)
+    end
+    g.setColor(1, 1, 1, 1)
+  end
   G.drawSprite("boss_crucible", math.floor(self.t * 3) % 2 + 1, cx, self.y + self.h,
     { sx = 2.0, sy = 1.7, white = math.max(0, (self.white or 0) * 6) })
   -- rotating shield ring
@@ -2875,6 +3066,403 @@ end
 Bosses.maro = Maro
 
 -- ==================================================================
+-- EIGHT (VESSEL-8) -- The Scrapyard
+-- ==================================================================
+-- The unit immediately before Vess. The last one that worked, because it
+-- was the one that did the work. Three orders that cannot all be obeyed:
+-- dismantle every VESSEL unit, maintain the Emberdark, never leave this
+-- room. It dismantled its siblings, filed them, and stayed -- waiting on
+-- the last name on the list, which is itself.
+--
+-- The fight teaches, in order: the plate exists (phase 1), a charge
+-- bounces (phase 2), and you cannot go THROUGH a body, only over it
+-- (phase 3). Its box is 22 wide precisely so Player:tryVault can clear it.
+local V8_W, V8_H = 22, 30
+local V8_P2 = 0.66            -- health fractions where the fight changes
+local V8_P3 = 0.33
+local V8_LAST = 0.15
+local V8_WALK = 42            -- phase-3 advance, plate up
+local V8_TURN = 1.4           -- commitment to a reversal: longer than a dash
+local V8_CHARGE = 250
+local V8_CHARGE_MAX = 1.5     -- per leg, before it gives up and recovers
+local V8_STAGGER = 3.0        -- the wall-bounce window
+local V8_TELE = 0.7
+local V8_FLAK_GAP = 4.0       -- punishes a lazy vault
+local V8_DART_GAP = 3.2       -- anti-dome pressure, only at a live dome
+
+local Vessel8 = Boss.extend()
+function Vessel8:init(x, y)
+  Boss.init(self, x, y, { id = "vessel8", name = "EIGHT",
+    hp = 190, touchDmg = 4, w = V8_W, h = V8_H, reward = "module:cinderram" })
+  self.facing = -1
+  self.phase = 1
+  self.turnT = 0
+  self.wantFace = -1
+  self.legs = 0               -- charge legs used this telegraph
+  self.flakT = V8_FLAK_GAP
+  self.dartT = V8_DART_GAP
+  self.barkT = 8
+  self.barked = {}
+end
+
+-- It never leaves the room. If a charge would carry it into a door it
+-- stops short and turns around -- visible mid-fight, and the whole
+-- character.
+function Vessel8:clampToRoom(World)
+  local lo, hi = 2 * T, World.w * T - 2 * T - self.w
+  if self.x < lo then self.x = lo return -1 end
+  if self.x > hi then self.x = hi return 1 end
+  return nil
+end
+
+-- Point the next leg at whoever is actually there.
+--
+-- Two things were wrong. A charge that ran out of TIME mid-room never
+-- counted as a leg, so the follow-up simply repeated the same heading --
+-- two charges in a row at empty floor. And nothing ever re-aimed between
+-- legs, so even the wall-bounce return was blind. EIGHT is a gunner that
+-- has had a century to practise; it should look before it commits.
+--
+-- The one thing it will not do is turn INTO the wall it is already
+-- standing against: if the player has slipped behind it at the very edge,
+-- the bounce heading stands and it takes the long way round.
+function Vessel8:aimCharge(World)
+  local p = World:nearestPlayer(self:center())
+  if not p then return end
+  local want = U.sign((p.x + p.w / 2) - (self.x + self.w / 2))
+  if want == 0 then return end
+  local lo, hi = 2 * T, World.w * T - 2 * T - self.w
+  if want < 0 and self.x <= lo + 2 then return end
+  if want > 0 and self.x >= hi - 2 then return end
+  self.facing = want
+end
+
+function Vessel8:bark(key, text)
+  if self.barked[key] then return end
+  self.barked[key] = true
+  if G.game then G.game:announce(text, 2.4) end
+end
+
+function Vessel8:enterPhase(n)
+  self.phase = n
+  Cam.shake(4, 0.5)
+  if G.Audio then G.Audio.sfx("roar") end
+  if n == 2 then
+    self:bark("p2", "YOU ARE NOT REGISTERED. THERE IS NO VESSEL-9!")
+    self:setState("tele", V8_TELE)
+  elseif n == 3 then
+    self:bark("p3", "I WAS TOLD THE SCRAP NEEDED KEEPING. I KEPT IT.")
+    self:setState("wall", 6)
+  elseif n == 4 then
+    self:bark("p4", "IT IS MAINTAINED. IT IS MAINTAINED. IT IS--")
+    self:setState("tele", 0.35)
+  end
+end
+
+-- Phase 3: the plate is up and pointed at you. Frontal fire sparks off.
+function Vessel8:plateLive()
+  return self.phase >= 3 and self.state == "wall"
+end
+
+function Vessel8:update(dt)
+  local World = require "src.world"
+  self.t = self.t + dt
+  self.stateT = self.stateT - dt
+  self.vy = math.min((self.vy or 0) + 700 * dt, 280)
+
+  if self.state == "intro" then
+    PH.move(self, 0, self.vy * dt)
+    if self.stateT <= 0 then self:setState("gun", 2.4) end
+    return
+  end
+
+  -- phase gates: one-way doors, checked before any state runs
+  local frac = self.hp / self.maxhp
+  if self.phase == 1 and frac <= V8_P2 then self:enterPhase(2) return end
+  if self.phase == 2 and frac <= V8_P3 then self:enterPhase(3) return end
+  if self.phase == 3 and frac <= V8_LAST then self:enterPhase(4) return end
+
+  local p = World:nearestPlayer(self:center())
+  local cx, cy = self:center()
+
+  -- ---- anti-dome pressure. Only ever aimed at a dome that is actually
+  -- up, so a solo run (nobody holding one) never sees darts and eats
+  -- ordinary gunfire instead -- which is dodgeable alone.
+  if self.phase >= 3 then
+    self.dartT = self.dartT - dt
+    if self.dartT <= 0 then
+      local domed
+      for _, pl in ipairs(World.players) do
+        if pl.domeActive and not pl.dead and not pl.downed then domed = pl break end
+      end
+      if domed then
+        self.dartT = V8_DART_GAP
+        for i = 0, 2 do
+          Proj.energyDart(World, cx, cy - 4,
+            domed.x + domed.w / 2 + U.rand(-6, 6), domed.y + domed.h / 2,
+            { speed = 430 + i * 20, drain = 8, dmg = 3 })
+        end
+        if G.Audio then G.Audio.sfx("shoot2") end
+      else
+        self.dartT = 0.8
+      end
+    end
+  end
+
+  -- ---- upward flak: vaulting must not be free
+  if self.phase >= 3 then
+    self.flakT = self.flakT - dt
+    if self.flakT <= 0 then
+      self.flakT = V8_FLAK_GAP
+      local airborne
+      for _, pl in ipairs(World.players) do
+        if not pl.dead and not pl.downed and not pl.onGround then airborne = pl break end
+      end
+      if airborne then
+        for i = -1, 1 do
+          self:fireAt(cx, self.y - 2, cx + i * 26, self.y - 60, 300,
+            { dmg = 4, kind = "spark", size = 5, life = 1.4 })
+        end
+        if G.Audio then G.Audio.sfx("shoot1") end
+      else
+        self.flakT = 1.2
+      end
+    end
+  end
+
+  if self.state == "gun" then
+    -- PHASE 1: it mirrors your Arc Lance, and it uses the plate to
+    -- reposition -- you watch it work before you are allowed one.
+    if p then
+      local s = U.sign((p.x + p.w / 2) - cx)
+      if s ~= 0 then self.facing = s end
+      local d = math.abs(p.x - self.x)
+      self.vx = self.facing * (d > 110 and 46 or (d < 44 and -46 or 0))
+    end
+    PH.move(self, (self.vx or 0) * dt, self.vy * dt)
+    self:clampToRoom(World)
+    self.gap = (self.gap or 0.5) - dt
+    if self.gap <= 0 and p then
+      self.gap = 0.9
+      self.burst = 3
+    end
+    if (self.burst or 0) > 0 then
+      self.bgap = (self.bgap or 0) - dt
+      if self.bgap <= 0 and p then
+        self.bgap = 0.12
+        self.burst = self.burst - 1
+        -- leads the target, like a gunner who has had a century to practise
+        local lx = p.x + p.w / 2 + (p.vx or 0) * 0.18
+        self:fireAt(cx + self.facing * 10, cy - 4, lx, p.y + p.h / 2, 330,
+          { dmg = 4, kind = "bolt", size = 5, life = 2.2 })
+        if G.Audio then G.Audio.sfx("shoot1") end
+      end
+    end
+    if self.stateT <= 0 then
+      if self.phase >= 2 then self:setState("tele", V8_TELE)
+      else self:setState("dashmove", 0.5) end
+    end
+
+  elseif self.state == "dashmove" then
+    -- a plated reposition: protected, harmless. The demonstration.
+    self.vx = self.facing * 200
+    PH.move(self, self.vx * dt, self.vy * dt)
+    World:fx("trail", cx, cy, { color = "vessdark", r = 3, t = 0.18 })
+    if self:clampToRoom(World) or self.hitWall then
+      self.facing = -self.facing
+      self:setState("gun", 2.6)
+    elseif self.stateT <= 0 then
+      self:setState("gun", 2.6)
+    end
+
+  elseif self.state == "tele" then
+    -- plant, ignite the chevrons, commit
+    self.vx = U.approach(self.vx or 0, 0, 900 * dt)
+    PH.move(self, self.vx * dt, self.vy * dt)
+    if p then
+      local s = U.sign((p.x + p.w / 2) - cx)
+      if s ~= 0 then self.facing = s end
+      -- if you are in the air when it plants, it shoots you instead
+      if not p.onGround and not self.shotUp and self.stateT < 0.2 then
+        self.shotUp = true
+        self:fireAt(cx, self.y - 2, p.x + p.w / 2, p.y + p.h / 2, 320,
+          { dmg = 4, kind = "spark", size = 5, life = 1.6 })
+      end
+    end
+    if self.stateT <= 0 then
+      self.shotUp = nil
+      self.legs = 0
+      self:setState("charge", V8_CHARGE_MAX)
+      if G.Audio then G.Audio.sfx("ram") end
+    end
+
+  elseif self.state == "charge" then
+    self.vx = self.facing * V8_CHARGE
+    PH.move(self, self.vx * dt, self.vy * dt)
+    World:fx("trail", cx, cy, { color = "magma", r = 3.5, t = 0.2 })
+    local edge = self:clampToRoom(World)
+    local hitWall = edge or self.hitWall
+    local spent = hitWall or self.stateT <= 0
+    if spent then
+      -- EVERY completed leg counts, whether it ended against the wall or
+      -- simply ran out of road. Only counting wall hits let a charge that
+      -- timed out mid-room repeat itself for free.
+      self.legs = self.legs + 1
+      if hitWall then
+        -- it hit the wall. Same rule it lives by.
+        self.facing = -self.facing
+        Cam.shake(3.5, 0.3)
+        World:fx("burst", cx, cy, { color = "slate", n = 16, speed = 180 })
+        if G.Audio then G.Audio.sfx("impact") end
+      end
+      if self.phase >= 4 then
+        -- desperation: wall to wall, no gap. It does not aim any more.
+        self:setState("charge", V8_CHARGE_MAX)
+      elseif self.legs >= 2 then
+        self:setState("stagger", V8_STAGGER)
+      else
+        self:setState("stagger", V8_STAGGER * (hitWall and 0.5 or 0.7))
+      end
+    end
+
+  elseif self.state == "stagger" then
+    -- the damage window, and it is the same one the rammer taught you
+    self.vx = U.approach(self.vx or 0, 0, 600 * dt)
+    PH.move(self, self.vx * dt, self.vy * dt)
+    if self.stateT <= 0 then
+      if self.phase >= 4 then
+        self:aimCharge(World)
+        self:setState("charge", V8_CHARGE_MAX)
+      elseif self.legs >= 2 then
+        if self.phase >= 3 then self:setState("wall", 6)
+        else self:setState("gun", 2.6) end
+      else
+        -- second leg: look first
+        self:aimCharge(World)
+        self:setState("charge", V8_CHARGE_MAX)
+        if G.Audio then G.Audio.sfx("ram") end
+      end
+    end
+
+  elseif self.state == "wall" then
+    -- PHASE 3. Plate up, walking, firing. There is no way through it;
+    -- there is only over it.
+    if p then
+      local want = U.sign((p.x + p.w / 2) - cx)
+      if want ~= 0 and want ~= self.wantFace then
+        self.wantFace = want
+        self.turnT = V8_TURN
+      end
+    end
+    if self.turnT > 0 then
+      self.turnT = self.turnT - dt
+      self.vx = 0
+      if self.turnT <= 0 then self.facing = self.wantFace end
+    else
+      self.vx = self.facing * V8_WALK
+    end
+    PH.move(self, self.vx * dt, self.vy * dt)
+    self:clampToRoom(World)
+    self.gap = (self.gap or 1) - dt
+    if self.gap <= 0 and p and self.turnT <= 0 then
+      self.gap = 1.0
+      self:fireAt(cx + self.facing * 11, cy - 2,
+        p.x + p.w / 2, p.y + p.h / 2, 300,
+        { dmg = 4, kind = "bolt", size = 5, life = 2.2 })
+      if G.Audio then G.Audio.sfx("shoot1") end
+    end
+    if self.stateT <= 0 then self:setState("tele", V8_TELE) end
+  end
+
+  self.barkT = self.barkT - dt
+  if self.barkT <= 0 then
+    self.barkT = 20
+    self:bark("p1", "YOU'RE THE NEW ONE.")
+  end
+end
+
+-- The plate is a plate. Frontal fire sparks off it, and only in the wall
+-- phase -- everywhere else EIGHT is an honest target.
+function Vessel8:deflects(srcx, srcy, opts)
+  if opts and opts.link then return false end
+  if not self:plateLive() or self.turnT > 0 then return false end
+  local ax = srcx
+  if opts and opts.owner then ax = opts.owner.x + opts.owner.w / 2 end
+  local side = ax and U.sign(ax - (self.x + self.w / 2)) or self.facing
+  return side == self.facing or side == 0
+end
+function Vessel8:hurt(dmg, srcx, srcy, opts)
+  if self:deflects(srcx, srcy, opts) then
+    local World = require "src.world"
+    World:fx("spark", self.x + self.w / 2 + self.facing * 13, self.y + 12,
+      { color = "silver", n = 4 })
+    if G.Audio then G.Audio.sfx("crack") end
+    return false
+  end
+  return Entity.hurt(self, dmg, srcx, srcy, opts)
+end
+
+function Vessel8:onDeath()
+  Boss.onDeath(self)
+  if G.game then
+    G.game:startDialogue({
+      { who = "lu", text = "All the others were dismantled. What does that make us?" },
+      { who = "vess", text = "..." },
+    })
+  end
+end
+
+function Vessel8:draw()
+  local g = love.graphics
+  local cx, cy = self:center()
+  G.drawSprite("boss_vessel8", math.floor(self.t * 4) % 2 + 1,
+    self.x + self.w / 2, self.y + self.h + 0.5,
+    { flip = self.facing < 0, white = math.max(0, (self.white or 0) * 6) })
+
+  -- the one eye
+  local eyeX = self.x + self.w / 2 + self.facing * 4
+  g.setColor(P.blood[1], P.blood[2], P.blood[3], 0.6 + math.sin(G.time * 3) * 0.3)
+  g.circle("fill", eyeX, self.y + 8, 2)
+  g.setColor(P.cream)
+  g.circle("fill", eyeX, self.y + 8, 0.9)
+
+  -- the plate, in the wall phase
+  if self:plateLive() then
+    g.push() g.translate(cx, cy) g.scale(self.facing, 1)
+    local turning = self.turnT > 0
+    g.setColor(P.gray[1], P.gray[2], P.gray[3], turning and 0.5 or 0.95)
+    g.polygon("fill", 6, -14, 13, -11, 13, 11, 6, 14)
+    g.setColor(turning and P.gold or P.silver)
+    g.line(13, -11, 13, 11)
+    g.pop()
+    if turning then
+      g.setColor(P.gold[1], P.gold[2], P.gold[3], 0.4 + 0.4 * math.sin(G.time * 16))
+      g.circle("line", cx, self.y - 6, 3.5)
+    end
+  end
+
+  -- chevrons while it commits to a charge
+  if self.state == "tele" or self.state == "charge" then
+    local ig = self.state == "charge" and 1
+      or (1 - math.max(0, self.stateT) / V8_TELE)
+    local strobe = 0.6 + 0.4 * math.sin(G.time * 30)
+    g.push() g.translate(cx, cy) g.scale(self.facing, 1)
+    local cols = { P.magma, P.hotcore, P.cream }
+    for i = 1, 3 do
+      local ox = 6 + i * 5
+      local c = cols[i]
+      g.setColor(c[1], c[2], c[3], ig * strobe * (1 - (i - 1) * 0.22))
+      g.setLineWidth(2)
+      g.line(ox - 4, -8, ox, 0, ox - 4, 8)
+      g.setLineWidth(1)
+    end
+    g.pop()
+  end
+  g.setColor(1, 1, 1, 1)
+end
+Bosses.vessel8 = Vessel8
+
+-- ==================================================================
 -- Boss starter (called by boss triggers)
 -- ==================================================================
 local PLACE = {
@@ -2888,6 +3476,8 @@ local PLACE = {
   aeriesentinel = function(World) return World.w * T / 2 - 17, 60 end,
   motherengine = function(World) return World.w * T / 2 - 24, 64 end,
   mycelchoir = function(World) return World.w * T / 2 - 14, 56 end,
+  -- EIGHT starts on the far side of its room, between you and nothing
+  vessel8 = function(World) return World.w * T - 110, World.h * T - 96 end,
   archivist = function(World) return World.w * T / 2 - 20, 44 end,
 }
 
@@ -2904,6 +3494,7 @@ local EPITAPH = {
   motherengine = "it mends. that is all that is left of it.",
   mycelchoir = "the deep learned to sing what the city forgot.",
   archivist = "the only one that never broke. the only one that never slept.",
+  vessel8 = "VESSEL-8 dismantled the others and protected the scrap. On whose orders? Why?",
 }
 
 function Bosses.start(id, World)
@@ -2927,7 +3518,8 @@ function Bosses.start(id, World)
   Cam.shake(3, 0.5)
   if G.Audio then
     G.Audio.sfx("roar")
-    G.Audio.playMusic(id == "motherengine" and "finalboss" or "boss")
+    G.Audio.playMusic(id == "motherengine" and "finalboss"
+      or id == "vessel8" and "vessel8" or "boss")
   end
   if G.game then
     G.game:announce("-- " .. b.bossName .. " --", 2.5)
