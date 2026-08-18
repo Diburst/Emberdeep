@@ -230,38 +230,74 @@ end
 -- grate the lava sits on and drains back through.
 -- ------------------------------------------------------------------
 local FLOOD_DRAIN = 1.3
+local FLOOD_SPREAD = 0.25    -- seconds per tile; lava is a tide, not a switch
 
-function World:floodFloor(dur)
+-- Lava does not appear, it ARRIVES. A pour opens two fronts at the spout
+-- and each crawls one tile every FLOOD_SPREAD seconds until it runs into
+-- ground that is higher than the pool -- which is what makes the raised
+-- ends of the Crucible's floor mean something. You can see it coming
+-- from twenty tiles away, and the tile you are standing on tells you how
+-- long you have.
+function World:floodFloor(dur, srcX, x0, x1)
   local row = self.room and self.room.floodRow
-  if not row or self.flood then return false end
-  local cells, blocked = {}, {}
-  -- never flood a doorway: it is sealed during the fight, and a
-  -- lava-filled door reads as a bug even when nothing can walk into it
+  if not row then return false end
+  local w = self.w
+  srcX = math.max(1, math.min(w - 2, math.floor(srcX or (w / 2))))
+  x0 = math.max(1, x0 or 1)
+  x1 = math.min(w - 2, x1 or (w - 2))
+
+  local blocked = {}
   for _, d in pairs(self.doors or {}) do
     for tx = d.x0 - 1, d.x1 + 1 do blocked[tx] = true end
   end
-  for tx = 1, self.w - 2 do
-    if not blocked[tx] and self.tiles[row][tx] == AIR then
-      self.tiles[row][tx] = LAVA
-      cells[#cells + 1] = tx
-    end
+
+  if not self.flood then
+    self.flood = { row = row, cells = {}, seen = {}, fronts = {},
+                   t = dur or 6, level = 1, state = "grow",
+                   growT = FLOOD_SPREAD, blocked = blocked, x0 = x0, x1 = x1 }
+  else
+    -- a second pot pouring into a pool that is still spreading widens it
+    -- rather than being swallowed
+    self.flood.state = "grow"
+    self.flood.t = math.max(self.flood.t, dur or 6)
+    self.flood.x0 = math.min(self.flood.x0, x0)
+    self.flood.x1 = math.max(self.flood.x1, x1)
   end
-  self.flood = { row = row, cells = cells, t = dur or 6, level = 1, state = "on" }
+  local f = self.flood
+  self:wetTile(srcX)
+  f.fronts[#f.fronts + 1] = { x = srcX, dir = -1 }
+  f.fronts[#f.fronts + 1] = { x = srcX, dir = 1 }
   if G.Audio then G.Audio.sfx("splash") end
   return true
 end
 
-function World:floodActive()
-  return self.flood ~= nil and self.flood.state == "on"
+-- one tile becomes lava; returns false if this column is not part of the
+-- basin, which is how a front learns it has hit higher ground
+function World:wetTile(tx)
+  local f = self.flood
+  if not f then return false end
+  if tx < f.x0 or tx > f.x1 then return false end
+  if f.blocked[tx] then return false end
+  if self.tiles[f.row][tx] ~= AIR and self.tiles[f.row][tx] ~= LAVA then
+    return false                     -- solid: the ground is higher here
+  end
+  if not f.seen[tx] then
+    f.seen[tx] = true
+    f.cells[#f.cells + 1] = tx
+    self.tiles[f.row][tx] = LAVA
+  end
+  return true
 end
 
--- lava is lethal for the whole "on" phase and harmless the instant the
--- drain starts; the ooze is an outro, not a shrinking hitbox to read
+function World:floodActive()
+  return self.flood ~= nil and self.flood.state ~= "drain"
+end
+
 function World:updateFlood(dt)
   local f = self.flood
   if not f then return end
-  if f.state == "on" then
-    f.t = f.t - dt
+
+  if f.state ~= "drain" then
     -- Slag burns. That is the point of letting a pot pour: with a dozen
     -- slaglings on the floor and a crucible filling, the strong play may
     -- be to climb and let it happen, and come back down to a clean
@@ -272,7 +308,7 @@ function World:updateFlood(dt)
       if not e.dead and e.kind == "enemy" and not e.heavy and not e.lavaProof
         and e.y + e.h > top and e.y + e.h < top + T * 1.5 then
         local tx = math.floor((e.x + e.w / 2) / T)
-        if self.tiles[f.row][tx] == LAVA then
+        if f.seen[tx] then
           self:fx("burst", e.x + e.w / 2, e.y + e.h,
             { color = "hotcore", n = 8, speed = 120 })
           e.hp = 0
@@ -281,6 +317,31 @@ function World:updateFlood(dt)
         end
       end
     end
+  end
+
+  if f.state == "grow" then
+    f.growT = f.growT - dt
+    if f.growT <= 0 then
+      f.growT = FLOOD_SPREAD
+      local moving = false
+      for _, fr in ipairs(f.fronts) do
+        if not fr.done then
+          if self:wetTile(fr.x + fr.dir) then
+            fr.x = fr.x + fr.dir
+            moving = true
+            self:fx("trail", fr.x * T + 8, f.row * T + 12,
+              { color = "hotcore", r = 2, t = 0.35, vy = -20 })
+          else
+            fr.done = true
+          end
+        end
+      end
+      if not moving then
+        f.state = "on"               -- the pool has found its edges
+      end
+    end
+  elseif f.state == "on" then
+    f.t = f.t - dt
     if f.t <= 0 then
       f.state = "drain"
       f.t = FLOOD_DRAIN
@@ -299,6 +360,21 @@ function World:updateFlood(dt)
         { color = "magma", r = 1.5, t = 0.5, vy = 60 })
     end
     if f.t <= 0 then self.flood = nil end
+  end
+end
+
+-- send an active pool down the grate early. The Crucible's vent blast
+-- does this when it slams: the link window is five grounded seconds and
+-- it has to be five seconds of FLOOR. Stopping a pot from tipping is not
+-- enough on its own now that lava takes twenty seconds to cross the
+-- room -- a pour that started legally can still be arriving.
+function World:drainFlood()
+  local f = self.flood
+  if not f or f.state == "drain" then return end
+  f.state = "drain"
+  f.t = FLOOD_DRAIN
+  for _, tx in ipairs(f.cells) do
+    if self.tiles[f.row][tx] == LAVA then self.tiles[f.row][tx] = AIR end
   end
 end
 
@@ -329,10 +405,10 @@ function World:drawFlood(g)
   g.setColor(1, 1, 1, 1)
 end
 
--- The grate. It is why the floor can hold lava for six seconds and then
--- lose it downward, and it is drawn over the floor row's top cap so the
--- arena reads as a foundry floor rather than as stone that inexplicably
--- drains.
+-- The grate. It is why the floor can hold lava and then lose it
+-- downward, and it is drawn only across the BASIN -- the stretch of the
+-- flood row that is open -- so the raised ends read as stone banks
+-- rather than as more of the same drain.
 function World:drawGrate(g)
   local row = self.room and self.room.floodRow
   if not row then return end
@@ -340,7 +416,7 @@ function World:drawGrate(g)
   local tx0 = math.max(0, math.floor(Cam.x / T) - 1)
   local tx1 = math.min(self.w - 1, math.floor((Cam.x + G.VW) / T) + 1)
   for tx = tx0, tx1 do
-    if self:tileAt(tx, row + 1) == SOLID then
+    if self:tileAt(tx, row + 1) == SOLID and self:tileAt(tx, row) ~= SOLID then
       local px = tx * T
       g.setColor(0, 0, 0, 0.55)
       g.rectangle("fill", px, gy + 1, T, 4)

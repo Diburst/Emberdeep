@@ -10,6 +10,11 @@ local Cam = require "src.camera"
 local T = 16
 local Player = Entity.extend()
 
+-- Lava is a burn, not a delete: hits every quarter second. Shared with the
+-- Crucible's pouring stream, which is the same substance in mid-air.
+local LAVA_DMG = 10
+local LAVA_TICK = 0.25
+
 local BASE = {
   runSpeed = 112, accel = 950, airAccel = 620, friction = 800,
   jumpVel = -310, gravity = 830, maxFall = 300,   -- apex ~3.2 tiles measured
@@ -873,41 +878,57 @@ function Player:update(dt)
     end
   end
   if self.inLava then
-    -- lava does not negotiate: fire, smoke, and the wreck thrown back
-    -- to the last solid ground it stood on
+    -- Lava BURNS now; it does not delete you. 5 damage every quarter
+    -- second is twenty a second, so standing in it is still fatal in
+    -- about a second at base health -- but a mistimed step is a wound
+    -- and a scramble instead of an instant wreck, which is the only way
+    -- a floor that floods for a few seconds can be a mechanic rather
+    -- than a coin toss.
+    --
+    -- Note for the validators: scripts/roommodel.py still treats lava as
+    -- lethal and will never route through it. That is a deliberate
+    -- UNDER-approximation -- the model claims less than the engine
+    -- allows, so no completability proof can be made wrong by this.
+    self.lavaTick = (self.lavaTick or 0) - dt
     local cx, feet = self.x + self.w / 2, self.y + self.h
-    World:fx("burst", cx, feet, { color = "magma", n = 20, speed = 210 })
-    World:fx("burst", cx, feet - 6, { color = "hotcore", n = 10, speed = 150 })
-    World:fx("burst", cx, feet - 10, { color = "slate", n = 16, speed = 70 })
-    Cam.shake(4, 0.4)
-    if G.Audio then G.Audio.sfx("explode") end
-    -- "the wreck thrown back to the last solid ground it stood on" was
-    -- only ever true while the room stayed still. The Crucible floods
-    -- its own floor, so the ground you were standing on a second ago is
-    -- the lava you are dying in -- and throwing the wreck there kills it
-    -- again, and again, forever. Ground that WAS safe is not the test;
-    -- ground that is safe NOW is, and settleDrop already knows which
-    -- tiles those are.
-    local sx, sy = self.safeX, self.safeY
-    if sx and self.safeRoom ~= (World.room and World.room.id) then sx = nil end
-    if sx and not World:dropLegal(sx, sy, self.w, self.h) then sx = nil end
-    if not sx then
-      local fx, fy = self.x, self.y
-      if World.settleDrop then
-        sx, sy = World:settleDrop(fx, fy, self.w, self.h)
+    if math.floor(G.time * 20) % 2 == 0 then
+      World:fx("trail", cx + U.rand(-5, 5), feet - U.rand(0, 8),
+        { color = "hotcore", r = 1.5, t = 0.25, vy = -50 })
+    end
+    if self.lavaTick <= 0 then
+      self.lavaTick = LAVA_TICK
+      World:fx("burst", cx, feet, { color = "magma", n = 10, speed = 160 })
+      World:fx("burst", cx, feet - 6, { color = "hotcore", n = 6, speed = 120 })
+      World:fx("burst", cx, feet - 10, { color = "slate", n = 8, speed = 60 })
+      Cam.shake(2, 0.2)
+      if G.Audio then G.Audio.sfx("hitenemy") end
+      self.invuln = 0
+      self:takeDamage(LAVA_DMG, nil, { pierceDash = true, lava = true })
+    end
+    -- only when it finally finishes you does the wreck get moved, and it
+    -- goes to ground that is safe NOW, not ground that was safe once:
+    -- the Crucible floods its own floor, so the tile you were standing
+    -- on a second ago is the lava you are dying in, and sending the
+    -- wreck back there kills it again, and again, forever.
+    if self.downed or self.dead or self.hp <= 0 then
+      local sx, sy = self.safeX, self.safeY
+      if sx and self.safeRoom ~= (World.room and World.room.id) then sx = nil end
+      if sx and not World:dropLegal(sx, sy, self.w, self.h) then sx = nil end
+      if not sx and World.settleDrop then
+        sx, sy = World:settleDrop(self.x, self.y, self.w, self.h)
         if not World:dropLegal(sx, sy, self.w, self.h) then sx = nil end
       end
+      if sx then
+        self.x, self.y = sx, sy
+        self.safeX, self.safeY = sx, sy
+        self.inLava = false
+        self.vx, self.vy = 0, 0
+      else
+        self.vy = -240
+      end
     end
-    if sx then
-      self.x, self.y = sx, sy
-      self.safeX, self.safeY = sx, sy
-      self.inLava = false
-    else
-      self.vy = -240
-    end
-    self.invuln = 0
-    self:takeDamage(9999, nil, { pierceDash = true })
-    self.vx, self.vy = 0, 0
+  else
+    self.lavaTick = 0
   end
   self:checkSpikes(World)
 

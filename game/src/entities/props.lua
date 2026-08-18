@@ -1380,12 +1380,20 @@ Entity.register("bosscorpse", function(x, y, parts) return Bosscorpse.new(x, y, 
 -- ------------------------------------------------------------------
 local POT_HP = 14
 local FILL_T = 5
-local TILT_T = 1.2
-local POUR_T = 0.6
+local TILT_T = 2.0        -- a slow, unmistakable commitment
+local POUR_T = 1.4        -- the stream; it runs on while the pool spreads
 local COOL_T = 6
-local BROKEN_T = 30
+local BROKEN_T = 20
 
 local CruciblePot = Entity.extend()
+-- cruciblepot:<side>[:auto:<period>:<x0>:<x1>]
+--
+-- With `auto` the pot runs its own cycle with no boss to drive it, and
+-- pours only the stretch of floor between x0 and x1. That is how the
+-- mechanic gets taught in the world before the Crucible asks you to
+-- handle three of them at once: same pot, same tell, same answer, in a
+-- room where the platform is three tiles away and the flood is four
+-- seconds instead of six.
 function CruciblePot:init(x, y, parts)
   Entity.init(self, x, y)
   self.kind = "enemy"            -- so shots collide with it
@@ -1402,6 +1410,18 @@ function CruciblePot:init(x, y, parts)
   self.tilt = 0
   self.fill = 0
   self.layer = 1
+  if parts[3] == "auto" then
+    self.auto = tonumber(parts[4]) or 14
+    self.autoT = self.auto * 0.5      -- not immediately: let them arrive
+    self.zx0 = tonumber(parts[5])
+    self.zx1 = tonumber(parts[6])
+    -- the teaching pots run a tight cycle: the lesson wants repetition,
+    -- and a pot you wait half a minute for teaches nothing
+    self.fillT = 4
+    self.tiltT = 1.2
+    self.floodT = 2                   -- a shorter dwell than the arena's 6
+    self.coolT = 3
+  end
 end
 
 function CruciblePot:ready()
@@ -1411,50 +1431,87 @@ end
 function CruciblePot:arm()
   if self.state ~= "idle" then return false end
   self.state = "filling"
-  self.stateT = FILL_T
+  self.stateT = self.fillT or FILL_T
   self.hp = POT_HP
   if G.Audio then G.Audio.sfx("surgecharge") end
   return true
 end
 
--- the boss holds a full pot rather than pouring it onto its own vent
+-- The boss holds a pot rather than pouring it onto its own vent. It has
+-- to catch a pot that is already TILTING too, not just one still
+-- filling: the tilt is two seconds long now, so a pot that committed
+-- legally while the boss was airborne would otherwise finish its tip
+-- straight into the link window.
 function CruciblePot:hold()
-  if self.state == "filling" and self.stateT < 0.5 then self.stateT = 0.5 end
+  if self.state == "filling" and self.stateT < 0.5 then
+    self.stateT = 0.5
+  elseif self.state == "tilting" and self.stateT < 0.4 then
+    self.stateT = 0.4          -- poised on the brink until the floor is free
+  end
 end
 
 function CruciblePot:update(dt)
   local World = require "src.world"
+  if self.auto and self.state == "idle" then
+    self.autoT = (self.autoT or self.auto) - dt
+    if self.autoT <= 0 then
+      self.autoT = self.auto
+      self:arm()
+      if G.game then
+        G.game:announce("The crucible above is filling.", 2)
+      end
+    end
+  end
   self.stateT = self.stateT - dt
   if self.state == "filling" then
-    self.fill = 1 - math.max(0, self.stateT / FILL_T)
+    self.fill = 1 - math.max(0, self.stateT / (self.fillT or FILL_T))
     if math.floor(G.time * 20) % 5 == 0 then
       World:fx("trail", self.x + U.rand(6, self.w - 6), self.y + 6,
         { color = "hotcore", r = 1, t = 0.3 })
     end
     if self.stateT <= 0 then
       self.state = "tilting"
-      self.stateT = TILT_T
+      self.stateT = self.tiltT or TILT_T
       if G.game then G.game:announce("THE CRUCIBLE TIPS -- get off the floor!", 1.8) end
       if G.Audio then G.Audio.sfx("bosswarn") end
     end
   elseif self.state == "tilting" then
-    self.tilt = 1 - math.max(0, self.stateT / TILT_T)
+    -- ease in: barely moving for the first half, then it goes over. A
+    -- linear tilt reads as a switch; this reads as a decision being made
+    local k = 1 - math.max(0, self.stateT / (self.tiltT or TILT_T))
+    self.tilt = k * k * (3 - 2 * k)
+    -- it starts dribbling before it commits, which is the last warning
+    if k > 0.55 then
+      local lx, ly = self:lip()
+      World:fx("trail", lx + U.rand(-3, 3), ly,
+        { color = "magma", r = 1.5, t = 0.35, vy = 150 })
+      -- it is already spilling: the column under the lip is hot
+      local floorY = ((World.room and World.room.floodRow or 16) + 1) * 16
+      self:scald(World, lx, ly, floorY, dt)
+    end
     if self.stateT <= 0 then
       self.state = "pouring"
       self.stateT = POUR_T
-      World:floodFloor(6)
+      World:floodFloor(self.floodT or 6, math.floor((self.x + self.w / 2) / 16),
+        self.zx0, self.zx1)
       local Cam = require "src.camera"
       Cam.shake(5, 0.6)
       if G.Audio then G.Audio.sfx("quake") end
     end
   elseif self.state == "pouring" then
     self.fill = math.max(0, self.stateT / POUR_T)
-    local px = self.x + self.w / 2
-    World:fx("trail", px + U.rand(-8, 8), self.y + self.h,
-      { color = "magma", r = 2, t = 0.4, vy = 200 })
+    local px, py = self:lip()
+    local floorY = ((World.room and World.room.floodRow or 16) + 1) * 16
+    for _ = 1, 3 do
+      local fy = U.rand(py, floorY)
+      World:fx("trail", px + U.rand(-3, 3), fy,
+        { color = fy > py + 40 and "magma" or "hotcore",
+          r = 2, t = 0.35, vy = 220 })
+    end
+    self:scald(World, px, py, floorY, dt)
     if self.stateT <= 0 then
       self.state = "cooling"
-      self.stateT = COOL_T
+      self.stateT = self.coolT or COOL_T
       self.fill = 0
     end
   elseif self.state == "cooling" or self.state == "broken" then
@@ -1462,6 +1519,36 @@ function CruciblePot:update(dt)
     if self.stateT <= 0 then
       self.state = "idle"
       self.fill = 0
+    end
+  end
+end
+
+-- Where the stream leaves the pot: the spout, carried round by the tilt,
+-- the way anything pours in the world. It used to fall out of the pot's
+-- centre, which reads as a leak rather than a pour.
+function CruciblePot:lip()
+  local cx = self.x + self.w / 2
+  local topY = self.y + 8
+  local a = self.tilt * (self.side == "left" and 0.75 or -0.75)
+  local sp = (self.side == "left") and 1 or -1
+  local rx, ry = sp * (self.w / 2 - 3 + 6), 1     -- the spout, unrotated
+  return cx + rx * math.cos(a) - ry * math.sin(a),
+         topY + rx * math.sin(a) + ry * math.cos(a)
+end
+
+-- The cascade. Molten metal falling four tiles is not scenery: standing
+-- under the spout is not free.
+function CruciblePot:scald(World, lx, ly, floorY, dt)
+  self.scaldT = (self.scaldT or 0) - dt
+  if self.scaldT > 0 then return end
+  self.scaldT = 0.25
+  for _, p in ipairs(World.players or {}) do
+    if not p.dead and not p.downed and not p.idle
+      and U.aabb(lx - 5, ly, 10, math.max(0, floorY - ly), p.x, p.y, p.w, p.h) then
+      p.invuln = 0
+      p:takeDamage(10, lx, { pierceDash = true, lava = true })
+      World:fx("burst", p.x + p.w / 2, p.y + p.h / 2,
+        { color = "hotcore", n = 8, speed = 130 })
     end
   end
 end
@@ -1496,51 +1583,132 @@ end
 
 function CruciblePot:draw()
   local g = love.graphics
-  local cx, cy = self.x + self.w / 2, self.y + self.h / 2
-  local a = self.tilt * (self.side == "left" and 0.7 or -0.7)
-  g.push()
-  g.translate(cx, self.y + 6)
-  g.rotate(a)
-  -- the chain it hangs from
+  local cx = self.x + self.w / 2
+  local topY = self.y + 8
+  local a = self.tilt * (self.side == "left" and 0.75 or -0.75)
+
+  -- the gantry it hangs from: a beam across the ceiling and two chains
   g.setColor(P.dark)
-  g.rectangle("fill", -2, -self.y - 6, 4, self.y + 6)
-  -- the vessel
-  local w2, h2 = self.w / 2, self.h - 8
-  g.setColor(P.shadow)
-  g.polygon("fill", -w2, 0, w2, 0, w2 - 6, h2, -w2 + 6, h2)
-  g.setColor(P.rust)
-  g.polygon("line", -w2, 0, w2, 0, w2 - 6, h2, -w2 + 6, h2)
-  g.setColor(P.maroon[1], P.maroon[2], P.maroon[3], 1)
-  g.rectangle("fill", -w2, -3, self.w, 4)
-  -- what is in it
-  if self.fill > 0.01 then
-    local fh = (h2 - 4) * self.fill
-    g.setColor(P.magma[1], P.magma[2], P.magma[3], 1)
-    g.polygon("fill", -w2 + 3, h2 - fh, w2 - 3, h2 - fh, w2 - 6, h2, -w2 + 6, h2)
-    g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3],
-      0.7 + math.sin(G.time * 8) * 0.3)
-    g.rectangle("fill", -w2 + 3, h2 - fh, self.w - 6, 2)
+  g.rectangle("fill", self.x - 4, self.y - 6, self.w + 8, 5)
+  g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.9)
+  for _, ox in ipairs({ -self.w / 2 + 6, self.w / 2 - 6 }) do
+    g.rectangle("fill", cx + ox - 1, self.y - 2, 2, 10)
   end
-  -- while it can still be shot, say so: a hit meter on the rim
+  -- the trunnion the whole thing pivots on
+  g.setColor(P.rust)
+  g.circle("fill", cx, topY, 4)
+  g.setColor(P.dark)
+  g.circle("fill", cx, topY, 2)
+
+  g.push()
+  g.translate(cx, topY)
+  g.rotate(a)
+
+  local w2 = self.w / 2 - 3
+  local hh = self.h - 14
+  -- A foundry crucible: a deep bucket, narrow at the base, wide at a
+  -- flared rim, banded with iron and slung in a yoke.
+  local lip = w2
+  local base = w2 * 0.52
+  local body = {
+    -lip, 0, lip, 0,                       -- rim
+    base, hh, -base, hh,                   -- base
+  }
+  -- the yoke arms reaching down from the trunnion to the belly
+  g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.95)
+  g.setLineWidth(3)
+  g.line(-lip - 2, hh * 0.45, -lip - 2, 2)
+  g.line(lip + 2, hh * 0.45, lip + 2, 2)
+  g.line(-lip - 2, 2, lip + 2, 2)
+  g.setLineWidth(1)
+
+  -- shell
+  g.setColor(P.shadow)
+  g.polygon("fill", body)
+  g.setColor(P.maroon[1], P.maroon[2], P.maroon[3], 1)
+  g.polygon("fill", -lip + 2, 2, lip - 2, 2, base - 1, hh - 1, -base + 1, hh - 1)
+  -- iron bands
+  g.setColor(P.rust)
+  for _, k in ipairs({ 0.32, 0.62 }) do
+    local hw = lip + (base - lip) * k
+    g.setLineWidth(2)
+    g.line(-hw, hh * k, hw, hh * k)
+  end
+  g.setLineWidth(1)
+  g.polygon("line", body)
+  -- the flared rim, drawn last so it sits proud
+  g.setColor(P.slate)
+  g.rectangle("fill", -lip - 2, -2, lip * 2 + 4, 4)
+  g.setColor(P.rust[1], P.rust[2], P.rust[3], 0.8)
+  g.rectangle("fill", -lip - 2, -2, lip * 2 + 4, 1)
+  -- the pouring spout, on the side it tips toward
+  local sp = (self.side == "left") and 1 or -1
+  g.setColor(P.slate)
+  g.polygon("fill", sp * lip, -2, sp * (lip + 6), 1, sp * lip, 4)
+
+  -- what is in it: a molten surface that stays LEVEL as the pot rotates,
+  -- because the one thing that reads as heavy is liquid that does not
+  -- tilt with its container
+  if self.fill > 0.01 then
+    local surf = hh - (hh - 3) * self.fill
+    local hw = lip + (base - lip) * (surf / hh)
+    g.push()
+    g.rotate(-a)                          -- back to world-level
+    local sway = math.sin(G.time * 4) * 0.6
+    g.setColor(P.magma)
+    g.polygon("fill", -hw, surf + sway, hw, surf + sway,
+      base - 1, hh - 1, -base + 1, hh - 1)
+    g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3],
+      0.75 + math.sin(G.time * 8) * 0.25)
+    g.rectangle("fill", -hw, surf + sway - 1, hw * 2, 2)
+    g.pop()
+    -- heat haze over the mouth
+    g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3], 0.15 * self.fill)
+    g.circle("fill", 0, -4, 6 + math.sin(G.time * 6) * 2)
+  end
+
+  -- while it can still be shot out, say so: a hit meter on the rim
   if self.state == "filling" then
     local frac = self.hp / self.maxhp
     g.setColor(P.dark)
-    g.rectangle("fill", -w2, -10, self.w, 3)
+    g.rectangle("fill", -lip - 2, -9, (lip + 2) * 2, 3)
     g.setColor(P.spark)
-    g.rectangle("fill", -w2, -10, self.w * frac, 3)
+    g.rectangle("fill", -lip - 2, -9, (lip + 2) * 2 * frac, 3)
   end
   if (self.white or 0) > 0 then
     g.setColor(1, 1, 1, math.min(1, self.white * 6))
-    g.polygon("fill", -w2, 0, w2, 0, w2 - 6, h2, -w2 + 6, h2)
+    g.polygon("fill", body)
     self.white = math.max(0, self.white - 0.02)
   end
   g.pop()
+
+  -- the visible rope of lava, drawn from the spout to the floor so the
+  -- picture and the hitbox are the same thing
+  if self.state == "pouring" or (self.state == "tilting" and self.tilt > 0.55) then
+    local lx, ly = self:lip()
+    local World = require "src.world"
+    local floorY = ((World.room and World.room.floodRow or 16) + 1) * 16
+    local wob = math.sin(G.time * 9) * 1.2
+    g.setColor(P.magma[1], P.magma[2], P.magma[3], 0.95)
+    g.polygon("fill", lx - 3, ly, lx + 3, ly,
+      lx + 4 + wob, floorY, lx - 4 + wob, floorY)
+    g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3],
+      0.8 + math.sin(G.time * 14) * 0.2)
+    g.polygon("fill", lx - 1.5, ly, lx + 1.5, ly,
+      lx + 2 + wob, floorY, lx - 2 + wob, floorY)
+    g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3], 0.35)
+    g.ellipse("fill", lx + wob, floorY, 9, 3)
+  end
+
   if self.state == "broken" then
-    g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.8)
-    g.print("X", cx - 2, cy)
+    -- cracked and cold, hanging crooked, dribbling down the wall
+    g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.85)
+    g.line(cx - 6, topY + 10, cx + 2, topY + 18)
+    g.line(cx + 2, topY + 18, cx - 3, topY + 26)
   end
   g.setColor(1, 1, 1, 1)
 end
+
 Entity.register("cruciblepot", function(x, y, parts)
   return CruciblePot.new(x, y, parts)
 end)

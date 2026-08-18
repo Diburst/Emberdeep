@@ -1,10 +1,15 @@
 -- THE CRUCIBLE's foundry floor.
 --
--- floodRow = 16 is the standing row; row 17 below it is the GRATE the
--- pouring pots' lava sits on for six seconds and then drains back
--- through. The two pots (p, q) hang directly over the two big refuge
--- platforms on purpose: players can only aim straight up, so "climb to
--- the safe place and shoot the thing above you" is one motion.
+-- floodRow = 17 is the BASIN: row 17 is open only between cols 10 and 48,
+-- and solid either side, so the middle of the floor sits a tile lower
+-- than its two ends. A pour opens two fronts at the spout that crawl one
+-- tile every half second until they hit that higher ground -- which is
+-- what makes the raised ends worth running to. Row 18 under the basin is
+-- the GRATE the pool drains back down through.
+--
+-- The two pots (p, q) hang directly over the two big shelves on purpose:
+-- players can only aim straight up, so "climb to the safe place and
+-- shoot the thing above you" is one motion.
 --
 -- The three tiles at row 14 cols 29-31 are the centre perch -- the only
 -- refuge under the boss, level with the two existing stubs so a plain
@@ -15,7 +20,7 @@ return {
   zone = "furnace", music = "furnace",
   arena = "crucible",
   mapPos = { x = 12, y = 0, w = 3, h = 1 },
-  floodRow = 16,
+  floodRow = 17,
   map = [[
 ######AAA###################################################
 ######AAA###################################################
@@ -29,12 +34,12 @@ return {
 ##........................................................##
 ##........................................................##
 ##..=====.................................................##
-##........................................................##
+##............t...........................................##
 ##....==========............................==========....##
-##...............===.........===.........===..............##
-##............B...........................................##
-##....1.......B.....t.....................................##
-############################################################
+##........................................................##
+##...............===.........===.........===.........B....##
+##....1..............................................B....##
+##########.......................................###########
 ############################################################
 ############################################################
 ############################################################

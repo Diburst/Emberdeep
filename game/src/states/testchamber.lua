@@ -35,6 +35,13 @@ local ABILITY_SETS = {
                             "heatplating", "lumecore", "cryocoils", "telenet" } },
 }
 
+-- The LINK BLAST is not an "ability" in the ABILITY_SETS sense -- it is
+-- the verb half this game's bosses are built around, and the Crucible is
+-- its exam: nothing else on earth opens that lattice. It was in no set at
+-- all, so the Test Chamber could drop you into a fight that could not be
+-- won and gave you no way to switch it on. Its own row, defaulting ON.
+local LINK_STATES = { { name = "ON", on = true }, { name = "OFF", on = false } }
+
 -- persistent between visits within one app session
 local cfg = {
   coop = false, difficulty = 2,
@@ -42,7 +49,7 @@ local cfg = {
   arena = 1,           -- MATCH BOSS
   scatterhex = true, arclance = true, pulsebloom = true,
   weaponTier = 2, domeTier = 2, hpTier = 2, energyTier = 1,
-  abilities = 3,
+  abilities = 3, link = 1,
 }
 
 local function cycle(v, lo, hi, dir) -- wraps
@@ -101,6 +108,9 @@ function S:enter()
         return cfg.energyTier .. "  (" .. (100 + cfg.energyTier * 20) .. " en)"
       end,
       function(d) cfg.energyTier = U.clamp(cfg.energyTier + d, 0, 4) end),
+    optRow("LINK BLAST", function() return LINK_STATES[cfg.link].name end,
+      function(d) cfg.link = cycle(cfg.link, 1, #LINK_STATES, d) end,
+      "The Crucible's lattice opens to nothing else"),
     optRow("ABILITIES", function() return ABILITY_SETS[cfg.abilities].name end,
       function(d) cfg.abilities = cycle(cfg.abilities, 1, #ABILITY_SETS, d) end,
       "MOBILITY = spark jump + grapple; ALL adds seals, plating, lume"),
@@ -151,6 +161,7 @@ function S:launch()
   for _, f in ipairs(ABILITY_SETS[cfg.abilities].flags) do
     run.flags[f] = true
   end
+  run.flags.linkblast = LINK_STATES[cfg.link].on or nil
 
   G.run = run
   if G.Audio then G.Audio.sfx("teleport") end

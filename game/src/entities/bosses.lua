@@ -1280,7 +1280,16 @@ function Crucible:update(dt)
   self.t = self.t + dt
   self.stateT = self.stateT - dt
   local cx0 = World.w * T / 2
+  -- the floor under the arena's CENTRE, found rather than assumed: the
+  -- Crucible's floor now has a basin in the middle, and a hardcoded
+  -- height left the slam hanging a tile above it
   local floorTopY = World.h * T - 5 * T
+  do
+    local tx = math.floor(cx0 / T)
+    for ty = math.floor(floorTopY / T) - 2, World.h - 1 do
+      if World:isSolid(tx, ty) then floorTopY = ty * T break end
+    end
+  end
 
   if self.state == "intro" then
     if self.stateT <= 0 then self:setState("spiral", 5) end
@@ -1325,6 +1334,9 @@ function Crucible:update(dt)
     if self.ventT <= 0 then
       self.ventT = 11
       self:setState("ventapproach", 1.4)
+      -- the vent blast blows the floor clear on the way down, so the
+      -- five grounded seconds are always five seconds of floor
+      if World.drainFlood then World:drainFlood() end
       if G.Audio then G.Audio.sfx("bosswarn") end
     end
   end
@@ -1346,7 +1358,12 @@ function Crucible:update(dt)
     if self.stateT <= 0 then
       local cx, cy = self:center()
       local lp = self.lockPt
-      local a = math.atan(lp[2] - cy, lp[1] - cx)
+      -- atan2, NOT two-argument math.atan. LÖVE runs LuaJIT, which is
+      -- Lua 5.1: math.atan there takes ONE argument and silently drops
+      -- the second, so the volley left on a bearing derived from dy
+      -- alone and flew nowhere near the player. Every other bearing in
+      -- this codebase uses atan2; this was the one that did not.
+      local a = math.atan2(lp[2] - cy, lp[1] - cx)
       for k = -1, 1 do
         local a2 = a + k * 0.157        -- +/- 9 degrees
         Proj.spawn(World, cx, cy, {
