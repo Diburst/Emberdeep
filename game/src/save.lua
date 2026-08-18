@@ -63,7 +63,7 @@ function Save.newRun(slot, difficulty, coop)
     playtime = 0, scrap = 0, capsules = 0, tanks = 0,
     forge = { boltdriver = 1, scatterhex = 1, arclance = 1, sparkshot = 1,
               dome = 1, hpTier = 0, energyTier = 0 },
-    flags = {}, visited = {},
+    flags = {}, visited = {}, mech = {},
     room = "camp_awake", door = "A",
     checkpoint = { room = "camp_awake", door = "A" },
     players = {

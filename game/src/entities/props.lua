@@ -1713,4 +1713,548 @@ Entity.register("cruciblepot", function(x, y, parts)
   return CruciblePot.new(x, y, parts)
 end)
 
+-- ==================================================================
+-- THE COMPUTE CLUSTER (Crystal Hollows)
+--
+-- Emberdeep's machine room. The zone's puzzles are CIRCUITS: a beam
+-- leaves an emitter, the players move the room to route it, and a node
+-- at the far end closes a gate.
+--
+-- Three props, three verbs, and none of them cares which directions a
+-- player can aim -- so a move to circular aiming later changes nothing
+-- here:
+--
+--   PANEL    heavy reflector on a rail. Only Vess's CHARGE shoves it.
+--   ROTOR    light mirror. Cycles orientation when hit by ANYTHING.
+--   EMITTER  the source. Dormant ones wake to Lu's DOME, for a price.
+--
+-- Nodes LATCH permanently, like a latching pressure plate: solve the
+-- circuit once and the gate stays open. That is friendlier on re-entry
+-- and it keeps the flag a plain progression flag, which is what lets
+-- checkprogress go on proving the run.
+-- ==================================================================
+Props = Props or {}
+
+-- beam directions: 1 right, 2 down, 3 left, 4 up
+local BDX = { 1, 0, -1, 0 }
+local BDY = { 0, 1, 0, -1 }
+-- a mirror maps an incoming direction to an outgoing one
+local MIRROR = {
+  f = { 4, 3, 2, 1 },   -- "/"  right->up  down->left  left->down  up->right
+  b = { 2, 1, 4, 3 },   -- "\\" right->down down->right left->up  up->left
+}
+local DIRNAME = { right = 1, down = 2, left = 3, up = 4 }
+
+local function dirtyBeams()
+  local World = require "src.world"
+  World.beamDirty = true
+end
+
+-- ------------------------------------------------------------------
+-- MECHANISM PERSISTENCE
+--
+-- A solved circuit has to STAY solved. The node latches into
+-- G.run.flags, so the gate it opened does stay open -- but the panel
+-- and the rotor that routed the beam there are plain entities, and
+-- they respawn from the room spec every time the room loads. Walk out
+-- of a solved room and walk back in and the panel is at slot 0 again
+-- and the rotor is turned the wrong way: the gate is open, but the
+-- room in front of you says it is not, and the beam that used to be
+-- pointing somewhere safe is pointing across the floor again.
+--
+-- So every movable beam part writes its position into
+-- G.run.mech[room][tile]. The key is the SPAWN tile, which is fixed
+-- for the life of the room file and unique inside a room, so it
+-- survives a save, a reload, and any amount of moving the part
+-- around. Emitters are deliberately NOT stored: a woken emitter is a
+-- countdown, not a state, and freezing a countdown in the save is how
+-- you get an emitter that has been "on" for three days.
+-- ------------------------------------------------------------------
+-- roomId is passed explicitly by the restore pass, because that pass runs
+-- during World:load -- BEFORE G.run.room is advanced to the room being
+-- loaded. Reading G.run.room there would key every restore against the
+-- room the players just left.
+local function mechRoom(roomId, create)
+  roomId = roomId or (G.run and G.run.room)
+  if not (G.run and roomId) then return nil end
+  if not G.run.mech then
+    if not create then return nil end
+    G.run.mech = {}
+  end
+  local r = G.run.mech[roomId]
+  if not r then
+    if not create then return nil end
+    r = {}
+    G.run.mech[roomId] = r
+  end
+  return r
+end
+
+function Props.mechSave(e, tbl, roomId)
+  if not e.mechKey then return end
+  local room = mechRoom(roomId, true)
+  if room then room[e.mechKey] = tbl end
+end
+
+function Props.mechLoad(e, roomId)
+  if not e.mechKey then return nil end
+  local room = mechRoom(roomId, false)
+  return room and room[e.mechKey] or nil
+end
+
+-- ------------------------------------------------------------------
+-- EMITTER: emitter:<dir>[:dormant[:<seconds>]]
+-- ------------------------------------------------------------------
+local Emitter = Entity.extend()
+function Emitter:init(x, y, parts)
+  Entity.init(self, x + 2, y + 2)
+  self.kind = "prop"
+  self.w, self.h = 12, 12
+  self.beamEmit = true
+  self.dir = DIRNAME[parts[2] or "right"] or 1
+  self.dormant = parts[3] == "dormant"
+  self.wakeFor = tonumber(parts[4]) or 9
+  self.on = not self.dormant
+  self.t = 0
+  self.layer = -1
+  self.lightR = self.on and 26 or 0
+  self.chargeT = 0
+end
+function Emitter:update(dt)
+  self.t = self.t + dt
+  -- The charge is a CHANNEL, not a button. updateCharge below is driven
+  -- by Lu each frame she is holding a dome on this emitter; if she is
+  -- not, chargeHeld goes stale and the channel unwinds -- fast, so
+  -- walking away is an obvious cancel rather than a pause.
+  if self.charging and not self.chargeHeld then self:cancelCharge() end
+  self.chargeHeld = false
+  if self.charging then
+    self.chargeT = math.min(Emitter.CHANNEL, self.chargeT + dt)
+  elseif self.chargeT > 0 then
+    self.chargeT = math.max(0, self.chargeT - dt * 3)
+  end
+  if self.dormant and self.on then
+    self.wakeT = (self.wakeT or 0) - dt
+    if self.wakeT <= 0 then
+      self.on = false
+      self.lightR = 0
+      dirtyBeams()
+      if G.Audio then G.Audio.sfx("domeoff") end
+    end
+  end
+end
+-- ------------------------------------------------------------------
+-- WAKING AN EMITTER IS A TWO-SECOND CHANNEL, AND IT COSTS HALF A BAR.
+--
+-- Lu stands in reach with the dome up and holds it there. The emitter
+-- shakes, the dome comes apart, and the fragments are drawn into the
+-- aperture; two seconds later the machine has a century-old work order
+-- and Lu has half the energy she started with.
+--
+-- Three rules make this a decision instead of a formality:
+--
+--   ONE AT A TIME. A dome overlapping three dormant emitters used to
+--   wake all three for thirty apiece, on the same frame. Now the dome
+--   feeds the NEAREST unlit emitter and nothing else, so a room with
+--   three emitters costs three channels and three walks.
+--
+--   THE COST IS THE DOME. WAKE_COST is half of Lu's base bar and is
+--   drained smoothly across the channel INSTEAD of the dome's normal
+--   upkeep, because the fiction is that the shield itself is being
+--   fed in. Half a bar, exactly, every time -- which is a number the
+--   harness can measure rather than estimate.
+--
+--   IT IS PAYABLE AT BASE CAPACITY. One channel is 50 of 100, so no
+--   circuit in the zone needs an energy upgrade to start; upgrades buy
+--   back the waiting between emitters, not access.
+-- ------------------------------------------------------------------
+Emitter.CHANNEL = 2.0
+Emitter.WAKE_COST = 50           -- half of Lu's base 100
+
+-- Spend the beam. A charged emitter that has DONE its job has to go dark
+-- immediately: the Conductor's beam runs from the floor all the way up
+-- to the station, so leaving it lit after the shield breaks puts a
+-- lethal column exactly where the players now need to stand. The beam is
+-- ammunition, not a lamp.
+function Emitter:expend()
+  if not self.on then return end
+  self.on = false
+  self.wakeT = 0
+  self.lightR = 0
+  dirtyBeams()
+  local World = require "src.world"
+  World:fx("burst", self.x + 6, self.y + 6,
+    { color = "ice", n = 8, speed = 90 })
+  if G.Audio then G.Audio.sfx("domeoff") end
+end
+
+function Emitter:cancelCharge()
+  if not self.charging then return end
+  self.charging = nil
+  self.chargeP = nil
+  if G.Audio then G.Audio.sfx("deny") end
+end
+
+-- called by Lu every frame her dome is on this emitter
+function Emitter:energize(p, dt)
+  if not self.dormant then return false end
+  if self.on then
+    self.wakeT = self.wakeFor      -- topping up a live emitter is free
+    return true
+  end
+  if (p.energy or 0) <= 0 then
+    self:cancelCharge()
+    return false
+  end
+  -- starting costs nothing, but it will not start unless the bar can
+  -- actually finish the job -- half-spending and stalling out is the
+  -- one failure mode that would feel like the game cheated.
+  if not self.charging then
+    if (p.energy or 0) < Emitter.WAKE_COST then
+      if G.game then G.game:announce("Not enough charge in the dome.", 1.5) end
+      if G.Audio then G.Audio.sfx("deny") end
+      return false
+    end
+    self.charging = true
+    self.chargeT = 0
+    self.chargeP = p
+    if G.Audio then G.Audio.sfx("domeon") end
+  end
+  self.chargeHeld = true
+  self.chargeP = p
+
+  local World = require "src.world"
+  local cx, cy = self.x + 6, self.y + 6
+  -- the shield coming apart and being pulled in: fragments spawn on the
+  -- dome's rim and fly at the aperture, faster as the channel closes
+  local prog = self.chargeT / Emitter.CHANNEL
+  self.fragT = (self.fragT or 0) - (dt or 0)
+  if self.fragT <= 0 then
+    self.fragT = 0.05
+    local ang = U.rand(0, math.pi * 2)
+    local r = (p.domeRadius or 36)
+    local fx, fy = p.x + p.w / 2 + math.cos(ang) * r,
+                   p.y + p.h / 2 - 4 + math.sin(ang) * r
+    local d = math.max(1, U.dist(fx, fy, cx, cy))
+    local sp = 110 + prog * 190
+    World:fx("trail", fx, fy, {
+      color = "cyan", r = 1 + prog, t = d / sp,
+      vx = (cx - fx) / d * sp, vy = (cy - fy) / d * sp,
+    })
+  end
+  -- the sound of it, retriggered rather than looped (no loop channel here)
+  self.humT = (self.humT or 0) - (dt or 0)
+  if self.humT <= 0 then
+    self.humT = 0.22
+    if G.Audio then G.Audio.sfx("emcharge", 0.8 + prog * 0.9) end
+  end
+
+  -- drain smoothly, and suspend the dome's own upkeep for the duration
+  p.energy = math.max(0, p.energy - Emitter.WAKE_COST / Emitter.CHANNEL * (dt or 0))
+  p.energyDelay = 0.9
+  p.domeFed = true
+
+  if self.chargeT < Emitter.CHANNEL then return false end
+
+  -- done
+  self.charging = nil
+  self.chargeP = nil
+  self.chargeT = 0
+  self.on = true
+  self.wakeT = self.wakeFor
+  self.lightR = 26
+  dirtyBeams()
+  World:fx("burst", cx, cy, { color = "cyan", n = 18, speed = 130 })
+  local Cam = require "src.camera"
+  Cam.shake(3, 0.2)
+  if G.Audio then G.Audio.sfx("energize") end
+  if not G.run.flags.taught_emitter then
+    G.run.flags.taught_emitter = true
+    if G.game then G.game:announce("The emitter takes the charge.", 2) end
+  end
+  return true
+end
+function Emitter:draw()
+  local g = love.graphics
+  -- GENTLE SHAKING while it is being charged, growing over the channel.
+  -- Sub-pixel at the start and about a pixel and a half at the end, so
+  -- it reads as a machine straining awake and not as a broken sprite.
+  local prog = self.chargeT / Emitter.CHANNEL
+  local sh = 0
+  if self.chargeT > 0 then sh = 0.4 + prog * 1.2 end
+  local ox = sh > 0 and math.sin(G.time * 47) * sh or 0
+  local oy = sh > 0 and math.sin(G.time * 39 + 1.7) * sh * 0.7 or 0
+  g.push()
+  g.translate(ox, oy)
+  local cx, cy = self.x + 6, self.y + 6
+  g.setColor(P.dark)
+  g.rectangle("fill", self.x, self.y, 12, 12, 2, 2)
+  g.setColor(self.on and P.cyan or P.slate)
+  g.rectangle("line", self.x, self.y, 12, 12, 2, 2)
+  -- the aperture, pointing where the beam goes
+  local dx, dy = BDX[self.dir], BDY[self.dir]
+  g.setColor(self.on and P.spark or P.slate)
+  g.rectangle("fill", cx + dx * 4 - 2, cy + dy * 4 - 2, 4, 4)
+  -- the channel meter: a ring that closes as the charge lands
+  if self.chargeT > 0 and not self.on then
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.5 + prog * 0.5)
+    g.arc("line", "open", cx, cy, 10, -math.pi / 2,
+      -math.pi / 2 + prog * math.pi * 2)
+    g.setColor(P.spark[1], P.spark[2], P.spark[3], prog)
+    g.circle("fill", cx, cy, 1 + prog * 3)
+  end
+  if self.on then
+    local pulse = 0.5 + math.sin(G.time * 8) * 0.3
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], pulse)
+    g.circle("line", cx, cy, 7 + pulse * 2)
+  elseif self.dormant then
+    -- a dark emitter says what would wake it
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.25 + math.sin(G.time * 2) * 0.1)
+    g.circle("line", cx, cy, 9)
+  end
+  g.setColor(1, 1, 1, 1)
+  g.pop()
+end
+Entity.register("emitter", function(x, y, parts) return Emitter.new(x, y, parts) end)
+
+-- ------------------------------------------------------------------
+-- PANEL: panel:<rail h|v>:<mirror f|b>:<slots>
+-- Heavy. Only a charge moves it, one slot per shove.
+-- ------------------------------------------------------------------
+local Panel = Entity.extend()
+function Panel:init(x, y, parts)
+  Entity.init(self, x, y)
+  self.kind = "panel"
+  self.w, self.h = 16, 16
+  self.rail = parts[2] or "h"
+  self.mirror = parts[3] or "f"
+  self.slots = tonumber(parts[4]) or 3
+  self.beamMirror = true
+  self.slot = 0
+  self.homeX, self.homeY = x, y
+  self.layer = -1
+end
+function Panel:railStep()
+  return self.rail == "h" and 16 or 0, self.rail == "v" and 16 or 0
+end
+-- Re-enter a room you already solved and the panel is where you left it.
+function Panel:restoreMech(st)
+  local slot = tonumber(st.slot)
+  if not slot or slot < 0 or slot > self.slots then return end
+  local sx, sy = self:railStep()
+  self.slot = slot
+  self.x, self.y = self.homeX + sx * slot, self.homeY + sy * slot
+end
+-- shoved by a charge; dir is the sign of the shove along the rail
+function Panel:shove(dir)
+  local World = require "src.world"
+  -- Weight is the point. An unplated charge is speed, and speed does
+  -- nothing to two hundred kilos on a rail; the BULWARK plate is what
+  -- turns the charge into a shove. genprogress knows this too, so any
+  -- circuit routed by a panel carries `bulwark` as a requirement and
+  -- checkprogress keeps proving the run in the right order.
+  if not (G.run and G.run.flags.bulwark) then
+    if G.game then
+      G.game:announce("Too heavy. A bare charge just rings off it.", 2)
+    end
+    World:fx("spark", self.x + 8, self.y + 8, { color = "slate", n = 6 })
+    if G.Audio then G.Audio.sfx("ramhit") end
+    return false
+  end
+  local sx, sy = self:railStep()
+  local want = self.slot + dir
+  if want < 0 or want > self.slots then
+    World:fx("spark", self.x + 8, self.y + 8, { color = "slate", n = 4 })
+    if G.Audio then G.Audio.sfx("ramhit") end
+    return false
+  end
+  -- it cannot be shoved into the wall either
+  local nx, ny = self.homeX + sx * want, self.homeY + sy * want
+  local tx, ty = math.floor(nx / 16), math.floor(ny / 16)
+  if World:isSolid(tx, ty) then
+    if G.Audio then G.Audio.sfx("ramhit") end
+    return false
+  end
+  self.slot = want
+  self.x, self.y = nx, ny
+  Props.mechSave(self, { slot = self.slot })
+  dirtyBeams()
+  World:fx("burst", self.x + 8, self.y + 8, { color = "silver", n = 8, speed = 90 })
+  local Cam = require "src.camera"
+  Cam.shake(2, 0.15)
+  if G.Audio then G.Audio.sfx("ram") end
+  return true
+end
+function Panel:draw()
+  local g = love.graphics
+  local x, y = self.x, self.y
+  -- the rail it runs on, so the room reads before you touch anything
+  g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.35)
+  local sx, sy = self:railStep()
+  g.rectangle("fill", self.homeX + 7 - (sy > 0 and 0 or 0), self.homeY + 7,
+    sx * self.slots + (sx > 0 and 2 or 2), sy * self.slots + 2)
+  -- the housing
+  g.setColor(P.dark)
+  g.rectangle("fill", x + 1, y + 1, 14, 14, 2, 2)
+  g.setColor(P.silver)
+  g.rectangle("line", x + 1, y + 1, 14, 14, 2, 2)
+  -- the mirror face
+  g.setLineWidth(3)
+  g.setColor(P.ice)
+  if self.mirror == "f" then g.line(x + 3, y + 13, x + 13, y + 3)
+  else g.line(x + 3, y + 3, x + 13, y + 13) end
+  g.setLineWidth(1)
+  g.setColor(1, 1, 1, 1)
+end
+Entity.register("panel", function(x, y, parts) return Panel.new(x, y, parts) end)
+
+-- ------------------------------------------------------------------
+-- ROTOR: rotor[:<mirror f|b>]  -- cycles when hit by anything at all
+-- ------------------------------------------------------------------
+local Rotor = Entity.extend()
+function Rotor:init(x, y, parts)
+  Entity.init(self, x + 2, y + 2)
+  self.kind = "enemy"          -- so shots collide with it
+  self.harmless = true
+  self.touchDmg = 0
+  self.heavy = true            -- never knocked about, never burned
+  self.noKnockback = true
+  self.w, self.h = 12, 12
+  self.mirror = parts[2] or "f"
+  self.beamMirror = true
+  self.rotT = 0
+  self.layer = -1
+end
+function Rotor:update(dt)
+  if self.rotT > 0 then self.rotT = math.max(0, self.rotT - dt) end
+end
+function Rotor:restoreMech(st)
+  if st.mirror == "f" or st.mirror == "b" then self.mirror = st.mirror end
+end
+function Rotor:hurt(dmg, srcx, srcy, opts)
+  if self.rotT > 0 then return false end       -- one turn per hit, not per pellet
+  self.rotT = 0.18
+  self.mirror = self.mirror == "f" and "b" or "f"
+  Props.mechSave(self, { mirror = self.mirror })
+  dirtyBeams()
+  local World = require "src.world"
+  World:fx("spark", self.x + 6, self.y + 6, { color = "ice", n = 6 })
+  if G.Audio then G.Audio.sfx("crack") end
+  return false                                  -- it never takes damage
+end
+function Rotor:draw()
+  local g = love.graphics
+  local x, y = self.x, self.y
+  local wob = self.rotT > 0 and math.sin(self.rotT * 60) * 1.5 or 0
+  g.setColor(P.dark)
+  g.rectangle("fill", x, y, 12, 12, 2, 2)
+  g.setColor(P.violet)
+  g.rectangle("line", x, y, 12, 12, 2, 2)
+  g.setLineWidth(2)
+  g.setColor(P.ice)
+  if self.mirror == "f" then g.line(x + 2 + wob, y + 10, x + 10 + wob, y + 2)
+  else g.line(x + 2 + wob, y + 2, x + 10 + wob, y + 10) end
+  g.setLineWidth(1)
+  g.setColor(1, 1, 1, 1)
+end
+Entity.register("rotor", function(x, y, parts) return Rotor.new(x, y, parts) end)
+
+-- ------------------------------------------------------------------
+-- MIRROR: mirror:<f|b>  -- bolted down. Never moves, never turns.
+--
+-- The Conductor's arena needs a corner: the emitters fire DOWN from
+-- their perches and the beam has to be running along the FLOOR before a
+-- panel can turn it up into a station. A rotor cannot do that job --
+-- rotors cycle when hit by anything at all, so a stray pellet during a
+-- fight would silently un-aim the room. A panel cannot either: it is
+-- the thing the players are supposed to be aiming.
+--
+-- So: a third mirror that is furniture. It reads as bolted hardware
+-- rather than a mechanism, which is the point -- nothing about it
+-- should invite you to try to move it.
+-- ------------------------------------------------------------------
+local Mirror = Entity.extend()
+function Mirror:init(x, y, parts)
+  Entity.init(self, x + 2, y + 2)
+  self.kind = "prop"
+  self.w, self.h = 12, 12
+  self.mirror = parts[2] or "f"
+  self.beamMirror = true
+  self.fixed = true
+  self.layer = -1
+end
+function Mirror:draw()
+  local g = love.graphics
+  local x, y = self.x, self.y
+  -- a heavy plinth, so it reads as furniture and not as a mechanism
+  g.setColor(P.dark)
+  g.rectangle("fill", x - 1, y + 8, 14, 6)
+  g.setColor(P.slate)
+  g.rectangle("fill", x, y, 12, 12, 1, 1)
+  g.rectangle("fill", x - 1, y + 10, 14, 3)
+  g.setLineWidth(2)
+  g.setColor(P.ice)
+  if self.mirror == "f" then g.line(x + 2, y + 10, x + 10, y + 2)
+  else g.line(x + 2, y + 2, x + 10, y + 10) end
+  g.setLineWidth(1)
+  -- rivets: this one is bolted down
+  g.setColor(P.dark)
+  g.circle("fill", x + 1, y + 11, 1)
+  g.circle("fill", x + 11, y + 11, 1)
+  g.setColor(1, 1, 1, 1)
+end
+Entity.register("mirror", function(x, y, parts) return Mirror.new(x, y, parts) end)
+
+-- ------------------------------------------------------------------
+-- NODE: node:<flag>[:<beams needed>]
+-- Latches for good the first time it is satisfied.
+-- ------------------------------------------------------------------
+local Node = Entity.extend()
+function Node:init(x, y, parts)
+  Entity.init(self, x + 2, y + 2)
+  self.kind = "prop"
+  self.w, self.h = 12, 12
+  self.beamNode = true
+  self.flag = parts[2]
+  self.need = tonumber(parts[3]) or 1
+  self.lit = 0
+  self.layer = -1
+  self.latched = G.run and G.run.flags[self.flag] or false
+  if self.latched then self.lightR = 22 end
+end
+function Node:satisfy()
+  if self.latched then return end
+  self.latched = true
+  self.lightR = 22
+  G.run.flags[self.flag] = true
+  local World = require "src.world"
+  World:fx("burst", self.x + 6, self.y + 6, { color = "cyan", n = 20, speed = 130 })
+  if G.game then G.game:announce("Circuit closed.", 1.6) end
+  if G.Audio then G.Audio.sfx("energize") end
+end
+function Node:draw()
+  local g = love.graphics
+  local cx, cy = self.x + 6, self.y + 6
+  g.setColor(P.dark)
+  g.rectangle("fill", self.x, self.y, 12, 12, 2, 2)
+  g.setColor(self.latched and P.cyan or P.slate)
+  g.rectangle("line", self.x, self.y, 12, 12, 2, 2)
+  -- how many beams it wants, and how many it has
+  for i = 1, self.need do
+    local lx = cx - (self.need - 1) * 3 + (i - 1) * 6
+    local on = self.latched or i <= self.lit
+    g.setColor(on and P.spark or P.slate)
+    g.circle("fill", lx, cy, 2)
+  end
+  if self.latched then
+    local pulse = 0.4 + math.sin(G.time * 4) * 0.2
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], pulse)
+    g.circle("line", cx, cy, 9)
+  end
+  g.setColor(1, 1, 1, 1)
+end
+Entity.register("node", function(x, y, parts) return Node.new(x, y, parts) end)
+
+Props.BDX, Props.BDY, Props.MIRROR = BDX, BDY, MIRROR
+
 return true

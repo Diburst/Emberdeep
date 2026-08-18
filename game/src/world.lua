@@ -409,6 +409,77 @@ end
 -- downward, and it is drawn only across the BASIN -- the stretch of the
 -- flood row that is open -- so the raised ends read as stone banks
 -- rather than as more of the same drain.
+-- ------------------------------------------------------------------
+-- CURTAIN GATE
+--
+-- Drawn per tile, but deliberately built so a stacked column reads as
+-- ONE unbroken sheet of light rather than a pile of glowing bricks:
+-- the scanlines are positioned in WORLD space and scroll continuously,
+-- so they run straight through the tile seams, and the edge posts are
+-- only drawn on the tiles that actually end the run.
+-- ------------------------------------------------------------------
+function World:drawCurtainTile(g, px, py, tx, ty)
+  local function curtainAt(ax, ay)
+    if self:tileAt(ax, ay) ~= GATE then return false end
+    if self.gateStyles[idx(ax, ay)] ~= "curtain" then return false end
+    local f = self.gateFlags[idx(ax, ay)]
+    return not (f and G.run and G.run.flags[f])
+  end
+  local up, down = curtainAt(tx, ty - 1), curtainAt(tx, ty + 1)
+  local left, right = curtainAt(tx - 1, ty), curtainAt(tx + 1, ty)
+  -- A curtain hangs across whatever it is blocking, so a run laid out
+  -- left-to-right has to draw as a sheet lying flat and not as three
+  -- unrelated bars standing next to each other. A lone tile is vertical.
+  local vert = (up or down) or not (left or right)
+  local pulse = 0.55 + math.sin(G.time * 5 + (vert and tx or ty) * 0.7) * 0.15
+  local period, speed = 11, 26
+  local phase = (G.time * speed) % period
+
+  g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.20 * pulse)
+  if vert then g.rectangle("fill", px + 1, py, T - 2, T)
+  else g.rectangle("fill", px, py + 1, T, T - 2) end
+
+  if vert then
+    -- the bright core, a narrow column down the middle of the tile
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.55 * pulse)
+    g.rectangle("fill", px + T / 2 - 3, py, 6, T)
+    g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.85 * pulse)
+    g.rectangle("fill", px + T / 2 - 1, py, 2, T)
+    -- scanlines positioned in WORLD space, so they run straight through
+    -- the tile seams and a stacked run reads as one unbroken sheet
+    g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.5)
+    local first = math.floor((py - phase) / period) * period + phase
+    for sy = first, py + T, period do
+      if sy >= py and sy < py + T then
+        g.rectangle("fill", px + 2, sy, T - 4, 1)
+      end
+    end
+  else
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.55 * pulse)
+    g.rectangle("fill", px, py + T / 2 - 3, T, 6)
+    g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.85 * pulse)
+    g.rectangle("fill", px, py + T / 2 - 1, T, 2)
+    g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.5)
+    local first = math.floor((px - phase) / period) * period + phase
+    for sx = first, px + T, period do
+      if sx >= px and sx < px + T then
+        g.rectangle("fill", sx, py + 2, 1, T - 4)
+      end
+    end
+  end
+
+  -- posts cap the ends of the run, so it reads as hardware and not fog
+  g.setColor(P.slate)
+  if vert then
+    if not up then g.rectangle("fill", px + 2, py - 1, T - 4, 3) end
+    if not down then g.rectangle("fill", px + 2, py + T - 2, T - 4, 3) end
+  else
+    if not left then g.rectangle("fill", px - 1, py + 2, 3, T - 4) end
+    if not right then g.rectangle("fill", px + T - 2, py + 2, 3, T - 4) end
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
 function World:drawGrate(g)
   local row = self.room and self.room.floodRow
   if not row then return end
@@ -433,6 +504,160 @@ function World:drawGrate(g)
       g.rectangle("fill", px, gy + 1, T, 4)
     end
   end
+  g.setColor(1, 1, 1, 1)
+end
+
+-- ------------------------------------------------------------------
+-- BEAMS (the Crystal Hollows' circuits)
+--
+-- Traced in TILE space, on change rather than every frame: a beam only
+-- moves when an emitter wakes, a rotor turns or a panel is shoved, and
+-- there is no reason to walk the room sixty times a second to discover
+-- that nothing happened. What IS checked every frame is overlap -- the
+-- things standing in a beam move even when the beam does not.
+--
+-- A beam burns players on the same terms as lava (see LAVA_DMG in
+-- player.lua) and kills any non-heavy enemy it touches, which is what
+-- makes routing one a weapon rather than only a key.
+-- ------------------------------------------------------------------
+local BDX = { 1, 0, -1, 0 }
+local BDY = { 0, 1, 0, -1 }
+local MIRROR = {
+  f = { 4, 3, 2, 1 },
+  b = { 2, 1, 4, 3 },
+}
+local BEAM_STEPS = 240        -- a hard stop; see the visited-set below
+
+function World:beamTileOf(e)
+  return math.floor((e.x + e.w / 2) / T), math.floor((e.y + e.h / 2) / T)
+end
+
+function World:traceBeams()
+  self.beamSegs = {}
+  self.beamDirty = false
+  local mirrors, nodes, sources = {}, {}, {}
+  local function k(tx, ty) return ty * 4096 + tx end
+  for _, e in ipairs(self.entities) do
+    if not e.dead then
+      if e.beamMirror or e.beamNode then
+        local tx, ty = self:beamTileOf(e)
+        mirrors[k(tx, ty)] = e
+      end
+      if e.beamEmit and e.on then sources[#sources + 1] = e end
+      if e.beamNode then nodes[#nodes + 1] = e; e.lit = 0 end
+    end
+  end
+  if #sources == 0 then
+    for _, n in ipairs(nodes) do n.lit = 0 end
+    return
+  end
+
+  -- Each segment records the EMITTER that produced it. Without that, a
+  -- thing struck by a beam has no way to reach back and switch it off --
+  -- which is what the Conductor's shield needs: the beam that shatters
+  -- it must be spent doing so, or it stands in the column afterwards and
+  -- the players cannot get underneath to use the window they just won.
+  for _, src in ipairs(sources) do
+    local tx, ty = self:beamTileOf(src)
+    local dir = src.dir
+    -- A visited (tile, direction) set makes a loop terminate the FIRST
+    -- time it closes rather than after 240 wasted steps -- and a loop is
+    -- easy to build by accident with two facing mirrors.
+    local seen = {}
+    local sx, sy = tx, ty
+    for _ = 1, BEAM_STEPS do
+      local sig = k(tx, ty) * 8 + dir
+      if seen[sig] then break end
+      seen[sig] = true
+      local nx, ny = tx + BDX[dir], ty + BDY[dir]
+      if self:isSolid(nx, ny) then
+        self.beamSegs[#self.beamSegs + 1] =
+          { sx * T + T / 2, sy * T + T / 2, tx * T + T / 2, ty * T + T / 2,
+            src = src }
+        break
+      end
+      local hit = mirrors[k(nx, ny)]
+      if hit and hit.beamNode then
+        hit.lit = (hit.lit or 0) + 1
+        self.beamSegs[#self.beamSegs + 1] =
+          { sx * T + T / 2, sy * T + T / 2, nx * T + T / 2, ny * T + T / 2,
+            src = src }
+        break
+      elseif hit and hit.beamMirror then
+        self.beamSegs[#self.beamSegs + 1] =
+          { sx * T + T / 2, sy * T + T / 2, nx * T + T / 2, ny * T + T / 2,
+            src = src }
+        dir = MIRROR[hit.mirror or "f"][dir]
+        tx, ty = nx, ny
+        sx, sy = nx, ny
+      else
+        tx, ty = nx, ny
+      end
+    end
+  end
+
+  for _, n in ipairs(nodes) do
+    if not n.latched and (n.lit or 0) >= n.need then n:satisfy() end
+  end
+end
+
+function World:updateBeams(dt)
+  if self.beamDirty then self:traceBeams() end
+  local segs = self.beamSegs
+  if not segs or #segs == 0 then return end
+  self.beamBurnT = (self.beamBurnT or 0) - dt
+  local tick = self.beamBurnT <= 0
+  if tick then self.beamBurnT = 0.25 end
+  for _, s in ipairs(segs) do
+    local x0, y0 = math.min(s[1], s[3]) - 3, math.min(s[2], s[4]) - 3
+    local bw, bh = math.abs(s[3] - s[1]) + 6, math.abs(s[4] - s[2]) + 6
+    for _, e in ipairs(self.entities) do
+      if not e.dead and U.aabb(x0, y0, bw, bh, e.x, e.y, e.w, e.h) then
+        if e.kind == "enemy" and not e.heavy and not e.harmless then
+          self:fx("burst", e.x + e.w / 2, e.y + e.h / 2,
+            { color = "cyan", n = 10, speed = 130 })
+          e.hp = 0
+          if e.onDeath then e:onDeath() end
+          e.dead = true
+        elseif e.beamStrike then
+          -- Heavy things are immune to the outright kill above, which
+          -- is correct -- a beam should not delete a boss. But something
+          -- heavy may still want to KNOW it is standing in one. The
+          -- Conductor's shield is the whole reason this hook exists.
+          e:beamStrike(s, dt)
+        end
+      end
+    end
+    if tick then
+      for _, p in ipairs(self.players) do
+        if not p.dead and not p.downed and not p.idle
+          and U.aabb(x0, y0, bw, bh, p.x, p.y, p.w, p.h) then
+          p.invuln = 0
+          p:takeDamage(5, s[1], { pierceDash = true, lava = true })
+          self:fx("burst", p.x + p.w / 2, p.y + p.h / 2,
+            { color = "cyan", n = 8, speed = 120 })
+        end
+      end
+    end
+  end
+end
+
+function World:drawBeams(g)
+  local segs = self.beamSegs
+  if not segs then return end
+  for _, s in ipairs(segs) do
+    local pulse = 0.75 + math.sin(G.time * 12 + s[1] * 0.05) * 0.25
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.35)
+    g.setLineWidth(6)
+    g.line(s[1], s[2], s[3], s[4])
+    g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.9)
+    g.setLineWidth(3)
+    g.line(s[1], s[2], s[3], s[4])
+    g.setColor(P.white[1], P.white[2], P.white[3], pulse)
+    g.setLineWidth(1)
+    g.line(s[1], s[2], s[3], s[4])
+  end
+  g.setLineWidth(1)
   g.setColor(1, 1, 1, 1)
 end
 
@@ -491,10 +716,13 @@ function World:load(roomId, doorChar, keepPlayers)
   self.entities = {}
   self.addQueue = {}
   self.particles = {}
+  self.beamSegs = {}
+  self.beamDirty = true
   self.doors = {}
   self.crumbles = {}
   self.broken = {}
   self.gateFlags = {}
+  self.gateStyles = {}
   self.pendingTransition = nil
   self.bossActive = nil
 
@@ -532,6 +760,14 @@ function World:load(roomId, doorChar, keepPlayers)
         self.tiles[ty][tx] = GATE
         local flag = def.gates and def.gates[ch]
         self.gateFlags[idx(tx, ty)] = flag or ("gate_" .. roomId .. "_" .. ch)
+        -- A CURTAIN is a gate made of light instead of stone. Mechanically
+        -- identical -- solid until its flag is set, gone after -- but it
+        -- reads as part of the circuit that opens it, which is the whole
+        -- point in a zone where the lock, the key and the door are all
+        -- the same beam. `gateStyle = { H = "curtain" }` in the room.
+        if def.gateStyle and def.gateStyle[ch] then
+          self.gateStyles[idx(tx, ty)] = def.gateStyle[ch]
+        end
       else
         -- entity spawn char
         self.tiles[ty][tx] = AIR
@@ -624,6 +860,20 @@ function World:load(roomId, doorChar, keepPlayers)
     else
       error(roomId .. ": unmapped map char '" .. s.ch .. "' at " ..
         s.tx .. "," .. s.ty)
+    end
+  end
+
+  -- Restore movable beam parts to where the players left them. This
+  -- runs over the add queue, before the first frame, so the beam is
+  -- traced through the restored layout and a solved room looks solved
+  -- the instant it draws.
+  if G.run then
+    require "src.entities.props"
+    for _, e in ipairs(self.addQueue) do
+      if e.restoreMech then
+        local st = Props.mechLoad(e, roomId)
+        if st then e:restoreMech(st) end
+      end
     end
   end
 
@@ -825,7 +1075,13 @@ function World:spawnFromSpec(spec, tx, ty)
   local x, y = tx * T, ty * T
   local ent, err = Entity.make(name, x, y, parts)
   if not ent then error((self.room and self.room.id or "?") .. ": " .. err) end
-  if ent ~= true then self:add(ent) end
+  if ent ~= true then
+    -- The spawn tile is the only identity a prop has that survives a
+    -- reload, so it is what mechanism persistence is keyed on. Set it
+    -- for everything; only the parts that implement :restoreMech care.
+    ent.mechKey = tx .. "," .. ty
+    self:add(ent)
+  end
   return ent
 end
 
@@ -843,6 +1099,7 @@ end
 -- ------------------------------------------------------------------
 function World:update(dt)
   self:updateFlood(dt)
+  self:updateBeams(dt)
   -- flush add queue
   for _, e in ipairs(self.addQueue) do
     self.entities[#self.entities + 1] = e
@@ -1213,7 +1470,11 @@ function World:draw()
             g.setColor(1, 1, 1, 1)
           end
         elseif not (flag and G.run and G.run.flags[flag]) then
-          g.draw(set.gate, px, py)
+          if self.gateStyles[idx(tx, ty)] == "curtain" then
+            self:drawCurtainTile(g, px, py, tx, ty)
+          else
+            g.draw(set.gate, px, py)
+          end
         end
       elseif c == ONEWAY then
         g.draw(set.oneway, px, py)
@@ -1241,6 +1502,7 @@ function World:draw()
 
   self:drawGrate(g)
   self:drawFlood(g)
+  self:drawBeams(g)
 
   -- edge-door markers: a soft pulsing chevron pointing out of the room,
   -- so exits read at a glance

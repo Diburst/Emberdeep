@@ -399,6 +399,25 @@ function Player:dashImpact(dt, World)
   local travel = self.vx * dt
   local x0 = math.min(self.x, self.x + travel)
   local bw = self.w + math.abs(travel)
+  -- A REFLECTOR PANEL is the one thing in the game that answers to
+  -- weight and nothing else: no shot moves it, no dome, no standing on
+  -- it. This is what the Bulwark plate is FOR -- the charge stops being
+  -- a dash and becomes a tool.
+  for _, e in ipairs(World.entities) do
+    if e.kind == "panel" and not e.dead and not self.dashHits[e]
+      and U.aabb(x0, self.y, bw, self.h, e.x, e.y, e.w, e.h) then
+      self.dashHits[e] = true
+      local moved = false
+      if e.rail == "h" then
+        moved = e:shove(self.facing)
+      else
+        -- a vertical rail is shoved by where you hit it: high shoves up
+        moved = e:shove(self.y + self.h / 2 < e.y + e.h / 2 and 1 or -1)
+      end
+      self:bounceOff(moved and "light" or "wall", e.x + e.w / 2, e.y + e.h / 2)
+      return
+    end
+  end
   for _, e in ipairs(World.entities) do
     if e.kind == "enemy" and not e.dead and not e.harmless and not self.dashHits[e]
       and U.aabb(x0, self.y, bw, self.h, e.x, e.y, e.w, e.h) then
@@ -727,9 +746,47 @@ function Player:update(dt)
         if G.Audio then G.Audio.sfx("deny") end
       end
     end
+    -- A live dome WAKES a dormant emitter it is touching. This is Lu's
+    -- verb in the Crystal Hollows: the machine room is full of hardware
+    -- that still works and has had nothing to run it for a century.
+    -- Feed the NEAREST dormant emitter in reach, and only that one. The
+    -- old loop energized every emitter the dome overlapped on the same
+    -- frame, so a two-emitter circuit was one button press; now each
+    -- emitter is its own two-second channel and its own half-bar, and
+    -- the room in crys_5 that wants two beams genuinely wants two trips.
+    -- A live emitter is topped up the same way, but for free.
+    self.domeFed = false
     if self.domeActive then
-      self.energy = self.energy - 11 * dt
-      self.energyDelay = 0.9
+      local dcx, dcy = self.x + self.w / 2, self.y + self.h / 2 - 4
+      local best, bestD
+      for _, e in ipairs(World.entities) do
+        if e.beamEmit and e.dormant and not e.dead then
+          local d = U.dist(dcx, dcy, e.x + e.w / 2, e.y + e.h / 2)
+          if d < self.domeRadius + 8 then
+            -- an unlit emitter always outranks a lit one, so standing
+            -- between the two in crys_5 never wastes the channel on the
+            -- one that is already burning
+            local rank = (e.on and 1e4 or 0) + d
+            if not bestD or rank < bestD then best, bestD = e, rank end
+          end
+        end
+      end
+      -- anything else in reach must not keep a stale channel alive
+      for _, e in ipairs(World.entities) do
+        if e.beamEmit and e ~= best and e.cancelCharge then e:cancelCharge() end
+      end
+      if best then best:energize(self, dt) end
+    end
+    if self.domeActive then
+      -- While the dome is being fed into an emitter the emitter is
+      -- already taking WAKE_COST/CHANNEL per second out of the same bar,
+      -- so the ordinary upkeep is suspended. Charging costs exactly half
+      -- a bar and not a drop more, which is what makes it a number the
+      -- harness can hold the game to.
+      if not self.domeFed then
+        self.energy = self.energy - 11 * dt
+        self.energyDelay = 0.9
+      end
       if self.energy <= 0 then
         self.energy = 0
         self.domeActive = false

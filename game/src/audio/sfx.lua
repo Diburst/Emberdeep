@@ -300,6 +300,55 @@ function SFX.buildAll()
       return tri(ph) * env(t, 0.03, d) * 0.5
     end)
   end)()
+  -- The two-second emitter channel. One short grainy draw, retriggered
+  -- every 0.22s and pitched UP as the channel closes -- so the rising
+  -- tone is the progress bar you can hear, and the last tick lands right
+  -- before S.energize fires.
+  S.emcharge = (function()
+    local ph = 0
+    return render(0.2, function(t, d)
+      ph = ph + (260 + t * 260) / RATE
+      return (tri(ph) * 0.55 + noise() * 0.2) * env(t, 0.02, d) * 0.32
+    end)
+  end)()
+  -- THE SHIELD BREAKING. A thud you feel more than hear: a low sine
+  -- falling from 150Hz to almost nothing, with a short bright crack of
+  -- noise laid over the front of it. The low tail is what makes it land
+  -- as an impact rather than a chime -- the Conductor's shell coming off
+  -- is the payoff for a whole cycle of work, and it has to sound like it.
+  S.shieldbreak = (function()
+    local ph, ph2 = 0, 0
+    return render(0.55, function(t, d)
+      ph = ph + (150 - t * 190) / RATE
+      ph2 = ph2 + (900 - t * 700) / RATE
+      local thud = sin(ph) * 0.75 * env(t, 0.002, d)
+      local crack = (noise() * 0.5 + tri(ph2) * 0.3)
+        * math.max(0, 1 - t * 8) * 0.5
+      return (thud + crack) * 0.7
+    end)
+  end)()
+  -- THE WARP. Two halves of one gesture: warpout falls and thins out as
+  -- the body comes apart, warpin rises and gathers as it reassembles.
+  -- Both are square-wave stepped rather than smooth, so they sound like
+  -- something being sampled apart rather than something sliding.
+  S.warpout = (function()
+    local ph = 0
+    return render(0.32, function(t, d)
+      local step = math.floor(t * 22) / 22
+      ph = ph + (760 - step * 1500) / RATE
+      return (sq(ph, 0.35) * 0.5 + noise() * 0.15 * step)
+        * (1 - t / d) * 0.42
+    end)
+  end)()
+  S.warpin = (function()
+    local ph = 0
+    return render(0.36, function(t, d)
+      local step = math.floor(t * 24) / 24
+      ph = ph + (200 + step * 1400) / RATE
+      return (sq(ph, 0.35) * 0.5 + noise() * 0.15 * (1 - step))
+        * math.min(1, t * 6) * (1 - (t / d) * 0.3) * 0.42
+    end)
+  end)()
   S.switch = blip(350, 500, 0.09, 0.5, 0.35)
   S.bosswarn = (function()
     local ph = 0

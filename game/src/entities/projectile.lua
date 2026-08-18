@@ -125,6 +125,47 @@ function Proj:update(dt)
   end
   self.x, self.y = nx, ny
 
+  -- ------------------------------------------------------------
+  -- MIRRORS bend shots, not just beams.
+  --
+  -- A round that leaves a mirror changes SIDES: the Conductor's own
+  -- cache flush is the clearest case -- the only thing that hurts it
+  -- during a flush is its own light, turned back on it off the arena's
+  -- panels. `refracted` is what the boss checks; without it the flush
+  -- would be four seconds of standing still again.
+  -- ------------------------------------------------------------
+  if not self.noRefract then
+    local mtx, mty = math.floor((self.x + self.w / 2) / T),
+                     math.floor((self.y + self.h / 2) / T)
+    if mtx ~= self.lastMTx or mty ~= self.lastMTy then
+      self.lastMTx, self.lastMTy = mtx, mty
+      for _, e in ipairs(World.entities) do
+        if e.beamMirror and not e.dead and e ~= self.lastMirror then
+          local ex, ey = math.floor((e.x + e.w / 2) / T), math.floor((e.y + e.h / 2) / T)
+          if ex == mtx and ey == mty then
+            self.lastMirror = e
+            local sp = math.sqrt(self.vx * self.vx + self.vy * self.vy)
+            -- 1 right, 2 down, 3 left, 4 up -- the same table the beam
+            -- tracer uses, so a shot and a beam bend the same way
+            local dir = math.abs(self.vx) > math.abs(self.vy)
+              and (self.vx > 0 and 1 or 3) or (self.vy > 0 and 2 or 4)
+            local out = (e.mirror == "b") and ({ 2, 1, 4, 3 })[dir]
+                                          or ({ 4, 3, 2, 1 })[dir]
+            local dx = ({ 1, 0, -1, 0 })[out]
+            local dy = ({ 0, 1, 0, -1 })[out]
+            self.vx, self.vy = dx * sp, dy * sp
+            self.grav = 0
+            self.refracted = true
+            if self.side == "enemy" then self.side = "player" end
+            World:fx("spark", self.x + self.w / 2, self.y + self.h / 2,
+              { color = "ice", n = 5 })
+            break
+          end
+        end
+      end
+    end
+  end
+
   -- trail
   self.trailT = self.trailT - dt
   if self.trailT <= 0 then

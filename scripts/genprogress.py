@@ -99,6 +99,15 @@ def target_gives(spec):
         return list(stages[0]["gives"]), list(stages[0]["req"])
     if kind == "teleporter":
         return ["tp_" + parts[1]], []
+    if kind == "node":
+        # A Crystal Hollows circuit node. It latches for good the first
+        # time enough beams land on it, so it is a plain flag source --
+        # but the beams have to be ROUTED there, and the router is a
+        # reflector panel that only Vess's charge can shove. The caller
+        # adds `bulwark` for any node in a room that has a panel in it;
+        # see room_targets. A node fed straight from a fixed emitter
+        # (crys_1) needs nothing but a shot to turn its rotor.
+        return [parts[1]], []
     return [], []
 
 
@@ -120,6 +129,11 @@ def room_targets(room):
                               list(st["req"]), "npc")
             continue
         gives, extra = target_gives(spec)
+        if parts[0] == "node" and any(
+                v.split(":")[0] == "panel" for v in room.key.values()):
+            # this circuit is routed by a reflector panel, and the only
+            # thing in the game that shoves one is a plated charge
+            extra = list(extra) + ["bulwark"]
         if gives and ch in room.spawns:
             out["ent:" + ch] = (room.spawns[ch], gives, extra, spec.split(":")[0])
     return out

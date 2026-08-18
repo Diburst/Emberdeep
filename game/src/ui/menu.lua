@@ -15,6 +15,20 @@ function Menu:init(items, opts)
   self.spacing = opts.spacing or 14
   self.align = opts.align or "center"
   self.width = opts.width or 220
+  -- A scroll WINDOW, so a list can outgrow the screen without either
+  -- clipping silently or forcing every caller to paginate by hand. Only
+  -- maxVisible rows draw, and the window follows the selection.
+  self.maxVisible = opts.maxVisible
+  self.top = 1
+end
+
+-- keep the selection inside the visible window
+function Menu:scrollTo()
+  local n = self.maxVisible
+  if not n or #self.items <= n then self.top = 1 return end
+  if self.sel < self.top then self.top = self.sel end
+  if self.sel > self.top + n - 1 then self.top = self.sel - n + 1 end
+  self.top = math.max(1, math.min(self.top, #self.items - n + 1))
 end
 
 function Menu:labelOf(item)
@@ -35,6 +49,7 @@ function Menu:move(dir)
     self.sel = ((self.sel - 1 + dir) % n) + 1
     if not self:isDisabled(self.items[self.sel]) then break end
   end
+  self:scrollTo()
   if G.Audio then G.Audio.sfx("menumove") end
 end
 
@@ -64,8 +79,23 @@ end
 function Menu:draw()
   local g = love.graphics
   g.setFont(G.fonts.main)
-  for i, item in ipairs(self.items) do
-    local y = self.y + (i - 1) * self.spacing
+  local first, last = 1, #self.items
+  if self.maxVisible and #self.items > self.maxVisible then
+    self:scrollTo()
+    first = self.top
+    last = math.min(#self.items, self.top + self.maxVisible - 1)
+    -- affordances, so a truncated list never looks like the whole list
+    g.setColor(P.slate)
+    if first > 1 then
+      g.printf("^", 0, self.y - self.spacing, G.VW, "center")
+    end
+    if last < #self.items then
+      g.printf("v", 0, self.y + (last - first + 1) * self.spacing, G.VW, "center")
+    end
+  end
+  for i = first, last do
+    local item = self.items[i]
+    local y = self.y + (i - first) * self.spacing
     local label = self:labelOf(item)
     local disabled = self:isDisabled(item)
     if i == self.sel then

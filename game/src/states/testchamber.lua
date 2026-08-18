@@ -28,18 +28,48 @@ local ARENAS = {
   "test_arena",
 }
 
-local ABILITY_SETS = {
-  { name = "NONE", flags = {} },
-  { name = "MOBILITY", flags = { "sparkjump", "grapple" } },
-  { name = "ALL", flags = { "sparkjump", "grapple", "hydroseals",
-                            "heatplating", "lumecore", "cryocoils", "telenet" } },
+-- ------------------------------------------------------------------
+-- MODULES
+--
+-- Built from Items.MODULES, never listed by hand. The hand-written list
+-- that used to live here had gone stale in the worst possible way: it
+-- was missing BULWARK and DRIFT VANES, so the chamber could drop you
+-- into the Conductor's arena -- where the reflector panels answer only
+-- to a plated charge and the outer emitters are up a thermal column --
+-- with no way to switch either on, and therefore no way to win.
+--
+-- Deriving the list means the failure mode is now impossible: a module
+-- marked `ability = true` appears here the moment it exists, and one
+-- that forgets the mark fails tools/testchamber_test.lua.
+-- ------------------------------------------------------------------
+local Items = require "src.items"
+
+local MODULES = {}
+for id, def in pairs(Items.MODULES) do
+  if def.ability then
+    MODULES[#MODULES + 1] = { id = id, name = def.short or def.name }
+  end
+end
+table.sort(MODULES, function(a, b) return a.name < b.name end)
+
+-- Presets, so the common cases stay one keypress. ALL is computed, not
+-- enumerated, which is the whole point.
+local PRESETS = {
+  { name = "ALL", has = function() return true end },
+  { name = "NONE", has = function() return false end },
+  { name = "MOBILITY", has = function(id)
+      return id == "sparkjump" or id == "grapple" or id == "driftvanes"
+    end },
+  { name = "CRYSTAL ZONE", has = function(id)
+      -- exactly what the Hollows and the Conductor require
+      return id == "sparkjump" or id == "grapple" or id == "bulwark"
+        or id == "driftvanes"
+    end },
 }
 
--- The LINK BLAST is not an "ability" in the ABILITY_SETS sense -- it is
+-- The LINK BLAST is not a module -- Maro grants it in camp -- but it is
 -- the verb half this game's bosses are built around, and the Crucible is
--- its exam: nothing else on earth opens that lattice. It was in no set at
--- all, so the Test Chamber could drop you into a fight that could not be
--- won and gave you no way to switch it on. Its own row, defaulting ON.
+-- its exam: nothing else on earth opens that lattice. Its own row.
 local LINK_STATES = { { name = "ON", on = true }, { name = "OFF", on = false } }
 
 -- persistent between visits within one app session
@@ -49,8 +79,17 @@ local cfg = {
   arena = 1,           -- MATCH BOSS
   scatterhex = true, arclance = true, pulsebloom = true,
   weaponTier = 2, domeTier = 2, hpTier = 2, energyTier = 1,
-  abilities = 3, link = 1,
+  preset = 1, link = 1,
+  mods = {},           -- id -> true; filled from the ALL preset below
 }
+
+local function applyPreset(i)
+  cfg.preset = i
+  for _, m in ipairs(MODULES) do
+    cfg.mods[m.id] = PRESETS[i].has(m.id) or nil
+  end
+end
+applyPreset(1)
 
 local function cycle(v, lo, hi, dir) -- wraps
   v = v + dir
@@ -111,13 +150,22 @@ function S:enter()
     optRow("LINK BLAST", function() return LINK_STATES[cfg.link].name end,
       function(d) cfg.link = cycle(cfg.link, 1, #LINK_STATES, d) end,
       "The Crucible's lattice opens to nothing else"),
-    optRow("ABILITIES", function() return ABILITY_SETS[cfg.abilities].name end,
-      function(d) cfg.abilities = cycle(cfg.abilities, 1, #ABILITY_SETS, d) end,
-      "MOBILITY = spark jump + grapple; ALL adds seals, plating, lume"),
-    { label = "ENTER THE CHAMBER", onConfirm = function() S:launch() end },
-    { label = "BACK", onConfirm = function() G.State.pop() end },
+    optRow("MODULE PRESET", function() return PRESETS[cfg.preset].name end,
+      function(d)
+        applyPreset(cycle(cfg.preset, 1, #PRESETS, d))
+      end,
+      "CRYSTAL ZONE = spark jump, grapple, bulwark, drift vanes"),
   }
-  self.list = Menu.new(items, { y = 44, spacing = 13 })
+  -- one row per ability module, generated
+  for _, m in ipairs(MODULES) do
+    items[#items + 1] = optRow("  " .. m.name,
+      function() return cfg.mods[m.id] and "ON" or "OFF" end,
+      function() cfg.mods[m.id] = (not cfg.mods[m.id]) or nil end,
+      Items.MODULES[m.id].desc)
+  end
+  items[#items + 1] = { label = "ENTER THE CHAMBER", onConfirm = function() S:launch() end }
+  items[#items + 1] = { label = "BACK", onConfirm = function() G.State.pop() end }
+  self.list = Menu.new(items, { y = 44, spacing = 11, maxVisible = 16 })
 end
 
 function S:launch()
@@ -158,8 +206,8 @@ function S:launch()
   l.maxenergy = 100 + cfg.energyTier * 20
 
   -- abilities
-  for _, f in ipairs(ABILITY_SETS[cfg.abilities].flags) do
-    run.flags[f] = true
+  for _, m in ipairs(MODULES) do
+    if cfg.mods[m.id] then run.flags[m.id] = true end
   end
   run.flags.linkblast = LINK_STATES[cfg.link].on or nil
 
@@ -194,5 +242,7 @@ end
 S.cfg = cfg
 S.BOSSES = BOSSES
 S.ARENAS = ARENAS
+S.MODULES = MODULES
+S.PRESETS = PRESETS
 
 return S

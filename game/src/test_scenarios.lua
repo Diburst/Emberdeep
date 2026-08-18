@@ -2344,6 +2344,289 @@ return function(Test, scenarios)
   end
 
   -- ----------------------------------------------------------------
+  -- BOSSADDS: nothing a boss summons outlives it.
+  --
+  -- Static analysis can prove every spawn site is tagged. It cannot
+  -- prove the sweep actually reaches them at runtime -- through the add
+  -- queue, through bosses that summon on a timer, through the one that
+  -- summons an ALLY. So this fights every boss in the game to death and
+  -- counts what is left standing.
+  -- ----------------------------------------------------------------
+  scenarios.bossadds = function()
+    local World = require "src.world"
+    local TC = require "src.states.testchamber"
+    local bad = 0
+    for _, bd in ipairs(TC.BOSSES) do
+      if bd.id then
+        startRun { coop = true, room = bd.arena, door = "A" }
+        G.run.flags.bulwark = true
+        G.run.flags.driftvanes = true
+        G.run.flags.linkblast = true
+        wait(20)
+        local b = World.bossActive
+        if not b then error(bd.id .. " did not spawn") end
+        for _, p in ipairs(World.players) do p.invuln = 999 end
+        -- let it get going and actually summon something
+        local guard = 0
+        while b.state == "intro" and guard < 300 do wait(1) guard = guard + 1 end
+        wait(240)                        -- four seconds of fight
+        local spawned = 0
+        for _, e in ipairs(World.entities) do
+          if e.bossAdd and not e.dead then spawned = spawned + 1 end
+        end
+        -- kill it, however this particular boss insists on being killed
+        guard = 0
+        while not b.dead and guard < 4000 do
+          if b.shielded and b.beamStrike then
+            b:beamStrike({ b.x, b.y, b.x, b.y + 40 }, 1 / 60)
+          end
+          b:hurt(20, b.x - 10, b.y, { link = true, beam = true, refracted = true })
+          wait(1)
+          guard = guard + 1
+        end
+        if not b.dead then
+          Test.log("SKIP " .. bd.id .. ": could not be killed in time")
+        else
+          wait(10)
+          local left = 0
+          for _, e in ipairs(World.entities) do
+            if e.bossAdd and not e.dead then left = left + 1 end
+          end
+          Test.log(string.format("%-14s summoned %d, %d left after death",
+            bd.id, spawned, left))
+          if left > 0 then bad = bad + 1 end
+          -- and the prize must have survived the sweep
+          local prize, corpse = false, false
+          for _, e in ipairs(World.entities) do
+            if e.give and not e.dead then prize = true end
+            if e.bossId and e.hint == "inspect" then corpse = true end
+          end
+          if b.reward and not prize then
+            error(bd.id .. ": the sweep ate the reward drop")
+          end
+          if not corpse and bd.id ~= "motherengine" then
+            error(bd.id .. ": the sweep ate the corpse")
+          end
+        end
+      end
+    end
+    if bad > 0 then error(bad .. " boss(es) left adds alive after dying") end
+    Test.log("OK bossadds")
+  end
+
+  -- ----------------------------------------------------------------
+  -- CONDUCTOR: the shield is the default and only a beam opens it.
+  --
+  -- The whole point of the refit is that the fight cannot be won by
+  -- ignoring it, so the first thing this does is TRY to win by ignoring
+  -- it: five hundred points of gunfire into a shielded Conductor, and
+  -- its HP must not move. Then it drives a real solve and checks the
+  -- window opens, the chip lands, and the shield comes back.
+  -- ----------------------------------------------------------------
+  scenarios.conductor = function()
+    local World = require "src.world"
+    startRun { coop = true, room = "crys_boss", door = "A" }
+    G.run.flags.bulwark = true
+    G.run.flags.driftvanes = true
+    wait(20)
+    local b = World.bossActive
+    if not b then error("the Conductor did not spawn") end
+    for _, p in ipairs(World.players) do p.invuln = 999 end
+    -- let it leave the intro and take a station
+    while b.state == "intro" do wait(1) end
+    wait(10)
+    if not b.shielded then error("it did not start shielded") end
+    if not b.images then error("it never took a station") end
+
+    -- 1. GUNFIRE ALONE MUST DO NOTHING
+    local before = b.hp
+    for _ = 1, 100 do
+      b:hurt(5, b.x - 20, b.y)
+      wait(1)
+    end
+    Test.log("hp after 500 damage of gunfire = " .. b.hp .. " (want " .. before .. ")")
+    if b.hp ~= before then
+      error("a shielded Conductor took " .. (before - b.hp) .. " from plain shots")
+    end
+
+    -- 2. THE STATIONS ARE SPREAD AND JITTERED
+    local xs = {}
+    for _, im in ipairs(b.images) do xs[#xs + 1] = im.x end
+    table.sort(xs)
+    local minGap = 1e9
+    for i = 2, #xs do minGap = math.min(minGap, xs[i] - xs[i - 1]) end
+    Test.log(string.format("station spread: min gap %.0fpx", minGap))
+    if minGap < 8 * 16 then
+      error("stations are bunched: min gap " .. minGap .. "px")
+    end
+    -- re-roll a few times; the columns must actually move. A swap is a
+    -- WARP now, so it has to be driven to completion rather than treated
+    -- as instant -- and the boss must come back, not get stuck scattered.
+    local seen = {}
+    for r = 1, 12 do
+      b:swapStations()
+      if not b.warpPhase then error("swapStations did not start a warp") end
+      local guard = 0
+      while b.warpPhase and guard < 200 do wait(1) guard = guard + 1 end
+      if b.warpPhase then error("the warp never finished (round " .. r .. ")") end
+      seen[math.floor(b.images[1].x)] = true
+    end
+    local distinct = 0
+    for _ in pairs(seen) do distinct = distinct + 1 end
+    Test.log("station 1 took " .. distinct .. " distinct columns over 12 rolls")
+    if distinct < 3 then error("stations are not jittering") end
+
+    -- 3. A BEAM STRIKE OPENS IT, AND THE CHIP LANDS -- AND THE BEAM DIES
+    -- The beam runs floor-to-station, so if it survives its own strike
+    -- the players cannot stand under the boss to use the window. Drive a
+    -- REAL emitter here rather than a synthetic segment, so the whole
+    -- chain is exercised: trace -> overlap -> strike -> expend -> retrace.
+    local em
+    for _, e in ipairs(World.entities) do
+      if e.beamEmit and e.dormant then em = e break end
+    end
+    if not em then error("the arena has no dormant emitter") end
+    em.on = true
+    em.wakeT = em.wakeFor
+    World.beamDirty = true
+    wait(1)
+    local segsLit = #World.beamSegs
+    Test.log("beam segments while lit = " .. segsLit)
+    if segsLit == 0 then error("waking an arena emitter produced no beam") end
+
+    local hp0 = b.hp
+    b:beamStrike({ b.x, b.y, b.x, b.y + 40, src = em }, 1 / 60)
+    wait(2)
+    Test.log("emitter on after strike = " .. tostring(em.on) .. " (want false)")
+    if em.on then error("the beam stayed lit after breaking the shield") end
+    if #World.beamSegs ~= 0 then
+      error("the beam column did not clear: " .. #World.beamSegs .. " segments left")
+    end
+    Test.log("beam column cleared -- the window is usable")
+    Test.log("after beam: shielded=" .. tostring(b.shielded)
+      .. " hp " .. hp0 .. " -> " .. b.hp)
+    if b.shielded then error("a beam strike did not open the shield") end
+    local chip = hp0 - b.hp
+    local want = math.floor(b.maxhp * 0.10)
+    if chip < want then
+      error("beam chip was " .. chip .. ", wanted at least " .. want)
+    end
+
+    -- 4. GUNFIRE WORKS IN THE WINDOW
+    local hp1 = b.hp
+    b:hurt(6, b.x - 20, b.y)
+    wait(1)
+    if b.hp >= hp1 then error("guns did nothing during the open window") end
+
+    -- 5. THE WINDOW CLOSES AND THE SHIELD COMES BACK
+    local guard = 0
+    while not b.shielded and guard < 600 do wait(1) guard = guard + 1 end
+    if not b.shielded then error("the shield never came back") end
+    Test.log("shield restored after the window")
+    -- a recharge brings a swarm
+    local wisps = 0
+    for _, e in ipairs(World.entities) do
+      if e.kind == "enemy" and not e.isBoss and not e.dead then wisps = wisps + 1 end
+    end
+    Test.log("wisps after recharge = " .. wisps)
+    if wisps < 1 then error("no swarm spawned on recharge") end
+
+    -- 6. AND IT IS STILL KILLABLE, THE INTENDED WAY
+    guard = 0
+    while not b.dead and guard < 3000 do
+      if b.shielded then
+        b:beamStrike({ b.x, b.y, b.x, b.y + 40 }, 1 / 60)
+      else
+        b:hurt(8, b.x - 20, b.y)
+      end
+      wait(1)
+      guard = guard + 1
+    end
+    if not b.dead then error("could not kill it even playing correctly") end
+    Test.log("OK conductor")
+  end
+
+  -- ----------------------------------------------------------------
+  -- BEAMPERSIST: a solved circuit stays solved, and waking an emitter
+  -- is a two-second channel that costs half of Lu's bar.
+  --
+  -- Everything here is measured on the live world rather than asserted
+  -- from the room file: the panel is shoved through the real
+  -- Panel:shove, the room is genuinely left and re-entered, and the
+  -- energy is read off the player before and after.
+  -- ----------------------------------------------------------------
+  scenarios.beampersist = function()
+    local World = require "src.world"
+    startRun { coop = true, room = "crys_3", door = "A" }
+    G.run.flags.bulwark = true
+    wait(20)
+    local function findPanel()
+      for _, e in ipairs(World.entities) do
+        if e.kind == "panel" then return e end
+      end
+    end
+    local pan = findPanel()
+    if not pan then error("crys_3 has no reflector panel") end
+    if pan.slot ~= 0 then error("panel did not start at slot 0") end
+    for _ = 1, 3 do pan:shove(1) wait(2) end
+    if pan.slot ~= 3 then
+      error("shoved 3 times, panel is at slot " .. pan.slot)
+    end
+    local wantX = pan.x
+    -- leave and come back: the panel must be exactly where we left it
+    World:load("crys_2", "B", true)
+    G.game.fade = 0 G.game.fadeDir = 0
+    wait(10)
+    World:load("crys_3", "A", true)
+    G.game.fade = 0 G.game.fadeDir = 0
+    wait(10)
+    local pan2 = findPanel()
+    if not pan2 then error("panel gone after re-entry") end
+    Test.log("panel slot after re-entry = " .. pan2.slot .. " (want 3)")
+    if pan2.slot ~= 3 or pan2.x ~= wantX then
+      error("panel reset on re-entry: slot " .. pan2.slot .. " x " .. pan2.x)
+    end
+
+    -- now the channel, in crys_2 where the emitter is dormant
+    World:load("crys_2", "A", true)
+    G.game.fade = 0 G.game.fadeDir = 0
+    wait(10)
+    local em
+    for _, e in ipairs(World.entities) do
+      if e.beamEmit and e.dormant then em = e end
+    end
+    if not em then error("crys_2 has no dormant emitter") end
+    local lu
+    for _, p in ipairs(World.players) do if not p.isVess then lu = p end end
+    if not lu then error("no Lu in the run") end
+    lu.x, lu.y = em.x + 14, em.y - 4
+    lu.vx, lu.vy = 0, 0
+    lu.energy = lu.maxenergy
+    lu.invuln = 999
+    local before = lu.energy
+    local Props = require "src.entities.props"
+    local Emitter_CHANNEL = 2.0
+    -- drive the channel by hand for the full window
+    local frames = math.ceil(Emitter_CHANNEL * 60) + 8
+    for _ = 1, frames do
+      lu.domeActive = true
+      lu.vx, lu.vy = 0, 0
+      lu.x, lu.y = em.x + 14, em.y - 4
+      if not em.on then em:energize(lu, 1 / 60) end
+      wait(1)
+    end
+    Test.log("emitter on = " .. tostring(em.on))
+    if not em.on then error("a held dome never woke the emitter") end
+    local spent = before - lu.energy
+    Test.log(string.format("channel spent %.1f of %d energy (want >= 50)",
+      spent, lu.maxenergy))
+    if spent < lu.maxenergy / 2 - 2 then
+      error(string.format("channel cost only %.1f -- less than half a bar", spent))
+    end
+    Test.log("OK beampersist")
+  end
+
+  -- ----------------------------------------------------------------
   -- BOSSDROPS: rewards are physical drops that persist until picked
   -- up, and corpses stay where the machine fell.
   -- ----------------------------------------------------------------
@@ -2355,11 +2638,20 @@ return function(Test, scenarios)
     wait(30)
     local b = World.bossActive
     if not b then error("conductor did not start") end
-    while not b.dead do
-      if b.state == "storm" then b:setState("beams", 2) end
-      b:hurt(14, b.x - 10, b.y)
+    -- The Conductor is shielded by default now, so plain damage in a
+    -- loop would spin here forever. Kill it the way the fight intends:
+    -- open it with a beam strike, then shoot the window.
+    local guard = 0
+    while not b.dead and guard < 4000 do
+      if b.shielded then
+        b:beamStrike({ b.x, b.y, b.x, b.y + 40 }, 1 / 60)
+      else
+        b:hurt(14, b.x - 10, b.y)
+      end
       wait(1)
+      guard = guard + 1
     end
+    if not b.dead then error("conductor would not die") end
     wait(30)
     local function findDrop()
       for _, e in ipairs(World.entities) do

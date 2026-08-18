@@ -47,6 +47,51 @@ function Boss:init(x, y, def)
   self.noKnockback = true
 end
 
+-- ------------------------------------------------------------------
+-- ADDS
+--
+-- Everything a boss puts into the world DURING its fight goes through
+-- here, and Boss:onDeath clears every one of them. A fight that ends
+-- with six of its own slaglings still chasing you around the corpse
+-- reads as a bug, not as difficulty -- and it is worse than untidy in
+-- the arenas whose exit is a door you have to walk to.
+--
+-- The tag is the boss's own id, so nothing else in the room is touched:
+-- enemies placed by the ROOM file are the room's, and the corpse and the
+-- reward drop are spawned by onDeath itself and are deliberately not
+-- tagged. tools/adds_test.lua fails the build if any boss spawns an
+-- enemy without coming through this function.
+-- ------------------------------------------------------------------
+function Boss:addSpawn(e)
+  local World = require "src.world"
+  if not e or e == true then return e end
+  e.bossAdd = self.bossId or true
+  World:add(e)
+  return e
+end
+
+-- Clear them. Called by onDeath, and safe to call twice.
+function Boss:clearAdds()
+  local World = require "src.world"
+  local n = 0
+  local lists = { World.entities, World.addQueue }
+  for _, list in ipairs(lists) do
+    for _, e in ipairs(list or {}) do
+      if e.bossAdd and not e.dead then
+        -- a puff each, so a dozen things vanishing reads as the machine
+        -- losing its grip rather than as a dropped frame
+        local ex = (e.x or 0) + (e.w or 8) / 2
+        local ey = (e.y or 0) + (e.h or 8) / 2
+        World:fx("burst", ex, ey, { color = "violet", n = 6, speed = 90 })
+        e.hp = 0
+        e.dead = true
+        n = n + 1
+      end
+    end
+  end
+  return n
+end
+
 function Boss:onDeath()
   local World = require "src.world"
   local cx, cy = self:center()
@@ -58,6 +103,8 @@ function Boss:onDeath()
   for _, e in ipairs(World.entities) do
     if e.pot and not e.dead then e.dead = true end
   end
+  -- every add this boss put in the room dies with it
+  self:clearAdds()
   Cam.shake(5, 0.8)
   if G.Audio then
     G.Audio.sfx("explode")
@@ -230,7 +277,7 @@ function Bramblemaw:update(dt)
       -- spawn a gnat harasser sometimes
       if U.chance(0.5) then
         local g = Entity.make("gnat", cx + self.facing * 60, self.y - 20)
-        World:add(g)
+        self:addSpawn(g)
       end
     end
     if self.stateT <= 0 then
@@ -858,7 +905,7 @@ function Tideengine:update(dt)
     local floorY = World.h * T - 5 * T - 18
     local v1 = Valve.new(self.x - 90, self.y + 3 * T, self)
     local v2 = Valve.new(self.x + self.w + 76, self.y + 3 * T, self)
-    World:add(v1) World:add(v2)
+    self:addSpawn(v1) self:addSpawn(v2)
     self.valves = { v1, v2 }
     World.waterLine = World.h * T - 40
   end
@@ -958,7 +1005,7 @@ function Tideengine:update(dt)
       for i = 1, 4 do
         local mx = self.x + U.rand(-70, self.w + 70)
         local mine = Entity.make("depthmine", mx, self.y + 30)
-        World:add(mine)
+        self:addSpawn(mine)
       end
       if G.Audio then G.Audio.sfx("shoot2") end
     end
@@ -1101,7 +1148,7 @@ function Slaggolem:update(dt)
           mini.w, mini.h = 8, 7
           mini.maxhp, mini.hp = 8, 8
           mini.drops = { shards = 1 }
-          World:add(mini)
+          self:addSpawn(mini)
         end
       end
       self:setState("hop", U.rand(0.6, 1.2))
@@ -1113,7 +1160,7 @@ function Slaggolem:update(dt)
       -- telegraphed lava columns under each player
       for _, p in ipairs(self:aliveTargets()) do
         local gx = p.x + p.w / 2
-        World:add({
+        self:addSpawn({
           kind = "hazard", x = gx - 12, y = 0, w = 24, h = 0, t = 0,
           dead = false, layer = 4, warned = false,
           update = function(h, dt2)
@@ -1483,7 +1530,7 @@ function Crucible:spewSlag(World, n)
     local e = Entity.make("slagling", cx + U.rand(-52, 52), self.y + self.h - 8)
     if e and e ~= true then
       e.vy = -140 - U.rand(0, 60)
-      World:add(e)
+      self:addSpawn(e)
     end
   end
   World:fx("burst", cx, self.y + self.h, { color = "magma", n = 16, speed = 140 })
@@ -1587,177 +1634,463 @@ end
 Bosses.crucible = Crucible
 
 -- ==================================================================
--- 6. THE CONDUCTOR (Crystal boss)
--- Co-op bonus: after each refraction storm it hangs two resonance
--- BELLS at opposite ends of the arena. Silence both within half a
--- second of each other and the Conductor is stunned for 4s. Optional
--- teamwork -- the fight never requires it, solo is untouched.
+-- 6. THE CONDUCTOR (Crystal boss) -- the scheduler of a dead machine
+--
+-- It is still dispatching work to processors that stopped answering a
+-- century ago, and it will not be told.
+--
+-- THE PROBLEM THIS REFIT SOLVES. The old fight had mechanics but no
+-- reason to use them: :hurt refused damage in exactly one state, a 4.5s
+-- cache flush that ran three times, so for ~90% of the fight the
+-- scheduler was a plain HP sponge. The split, the bus terminals and the
+-- refracted-damage window were all optional efficiencies stacked on a
+-- baseline -- stand still and shoot it -- that already worked. You could
+-- gun it down having engaged with none of it.
+--
+-- So the shield is the DEFAULT now, and the arena's beam circuit is the
+-- only thing that opens it.
+--
+--   SHIELDED    three images, one real, spread across three stations.
+--               Nothing but a beam through the real one does anything.
+--   SHATTERED   four seconds, fully vulnerable. Guns do the real damage;
+--               the circuit's 10% is the opener, not the payload.
+--   RECHARGE    shield back, a swarm of wisps, stations re-rolled.
+--
+-- WHY THE MACHINE GUN IS THE BEST PART. It taxes the exact resource the
+-- solution needs. Every second Lu spends holding the dome against it is
+-- energy that is not going into an emitter, and an emitter costs half
+-- her bar. The fight becomes a budget rather than a reflex test, and it
+-- does that without adding a single button.
+--
+-- WHAT WENT. The cache flush (its damage-window job belongs to the
+-- circuit and its pressure job to the machine gun) and the bus terminals
+-- (a second, redundant stun path). Both were removed rather than left
+-- lying around, because two unrelated "turn its own light back on it"
+-- mechanics in one fight is one too many.
 -- ==================================================================
-local Bell = Entity.extend()
-function Bell:init(x, y, boss, idx)
-  Entity.init(self, x, y)
-  self.kind = "enemy"
-  self.heavy = true
-  self.noKnockback = true
-  self.boss = boss
-  self.idx = idx
-  self.w, self.h = 12, 14
-  self.maxhp = 6
-  self.hp = 6
-  self.touchDmg = 0
-  self.harmless = true
-  self.life = 7
-  self.lightR = 20
-end
-function Bell:update(dt)
-  self.t = (self.t or 0) + dt
-  self.life = self.life - dt
-  if self.life <= 0 or (self.boss and self.boss.dead) then self.dead = true end
-end
-function Bell:onDeath()
-  local World = require "src.world"
-  World:fx("burst", self.x + 6, self.y + 7, { color = "orchid", n = 10 })
-  if G.Audio then G.Audio.sfx("crack") end
-  local b = self.boss
-  if not b or b.dead then return end
-  b.bellBrokeAt = b.bellBrokeAt or {}
-  b.bellBrokeAt[self.idx] = b.t
-  local o = self.idx == 1 and 2 or 1
-  if b.bellBrokeAt[o] and math.abs(b.bellBrokeAt[o] - b.t) <= 0.5 then
-    b.bellBrokeAt = {}
-    b:setState("stunned", 4)
-    b.vx, b.vy = 0, 0
-    if G.game then G.game:announce("The chord lands! The Conductor reels, silenced!", 2.5) end
-    if G.Audio then G.Audio.sfx("bosswarn") end
-  end
-end
-function Bell:draw()
-  local g = love.graphics
-  local cx = self.x + 6
-  local swing = math.sin(G.time * 4 + self.idx) * 2
-  g.setColor(P.slate)
-  g.rectangle("fill", cx - 1, self.y - 6, 2, 6)
-  g.setColor(P.orchid)
-  g.polygon("fill", cx - 6 + swing, self.y + 10, cx + 6 + swing, self.y + 10,
-    cx + 4 + swing, self.y, cx - 4 + swing, self.y)
-  g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.5 + math.sin(G.time * 6) * 0.3)
-  g.circle("fill", cx + swing, self.y + 11, 2)
-  g.setColor(1, 1, 1, 1)
-end
-
 local Prismtyrant = Boss.extend()
+
+-- Every number the fight is balanced on, in one place.
+--
+-- The window is FOUR seconds and not ten because ten is the whole boss:
+-- Bolt Driver at tier 2 is 3 damage on a 0.22s cycle, about 13 dps, so
+-- ten free seconds is ~130 damage. Against 280 that is half the fight
+-- for one solve, and the 10% chip would be decoration. At four seconds
+-- a cycle is worth ~24 chip + ~52 burst, so it takes three or four
+-- solves and lands around two minutes.
+Prismtyrant.MAXHP        = 280
+Prismtyrant.SHATTER_T    = 4.0     -- seconds of vulnerability per solve
+Prismtyrant.BEAM_CHIP    = 0.10    -- fraction of max HP the beam itself does
+Prismtyrant.SWAP_T       = 40      -- seconds between station swaps
+Prismtyrant.JITTER_T     = 3       -- +/- tiles, and the panel rails match it
+Prismtyrant.STATION_X    = { 12, 30, 48 }   -- tile columns, evenly spread
+Prismtyrant.STATION_Y    = 6                -- tile row: low enough to read
+Prismtyrant.SPLIT_COUNT  = 3
+Prismtyrant.SWARM_N      = 4       -- wisps spawned on every recharge
+-- The teleport is a two-phase warp, not a blink. It used to cut from one
+-- station to another in a single frame with a burst at each end, which
+-- reads as a dropped frame rather than as a machine relocating itself.
+-- Out: it flickers and comes apart into its own pixels. In: those pixels
+-- pull back together at the new station.
+Prismtyrant.WARP_OUT     = 0.32
+Prismtyrant.WARP_IN      = 0.36
+Prismtyrant.WARP_CELLS   = 54     -- blocks the body dissolves into
+-- Harmless for now. Set this above zero and the two false images start
+-- punishing a guess instead of only wasting it.
+Prismtyrant.SPLIT_FALSE_DMG = 0
+-- machine gun
+Prismtyrant.MG_EVERY     = 8.0     -- seconds between bursts
+Prismtyrant.MG_TELL      = 0.6     -- telegraph before the first round
+Prismtyrant.MG_LEN       = 1.5     -- seconds of fire
+Prismtyrant.MG_RATE      = 0.11    -- seconds between rounds
+Prismtyrant.MG_DMG       = 2
+Prismtyrant.MG_TRACK     = 1.5     -- radians/sec the stream re-aims
+
 function Prismtyrant:init(x, y)
   Boss.init(self, x, y, { id = "prismtyrant", name = "THE CONDUCTOR",
-    hp = 145, touchDmg = 4, w = 28, h = 34, reward = "module:corekey2" })
+    hp = Prismtyrant.MAXHP, touchDmg = 4, w = 28, h = 34,
+    reward = "module:corekey2" })
   self.homeX, self.homeY = x, y
-  self.stormAt = { 0.75, 0.5, 0.25 }
+  self.shielded = true
+  self.shatterT = 0
+  self.swapT = Prismtyrant.SWAP_T
+  self.mgT = Prismtyrant.MG_EVERY
+  -- thresholds that slam the shield back up mid-window
+  self.restoreAt = { 0.75, 0.5, 0.25 }
+  self.images = nil
 end
+
+-- ------------------------------------------------------------------
+-- stations
+-- ------------------------------------------------------------------
+-- Re-roll which station is real and where each one actually sits. The
+-- jitter is +/- JITTER_T tiles, which is exactly the span of a panel's
+-- rail -- so every cycle asks the players to re-aim, and asks it inside
+-- a window the hardware can just barely satisfy.
+function Prismtyrant:rollStations()
+  local World = require "src.world"
+  local real = love.math.random(1, Prismtyrant.SPLIT_COUNT)
+  self.images = {}
+  for i = 1, Prismtyrant.SPLIT_COUNT do
+    local base = (Prismtyrant.STATION_X[i] or 30) * T
+    local jit = love.math.random(-Prismtyrant.JITTER_T, Prismtyrant.JITTER_T) * T
+    self.images[i] = {
+      x = U.clamp(base + jit - self.w / 2, 2 * T, (World.w - 3) * T - self.w),
+      real = (i == real), t = U.rand(0, 6), station = i,
+    }
+  end
+  self.realImage = real
+  self.homeY = Prismtyrant.STATION_Y * T
+  self.x = self.images[real].x
+end
+
+-- Begin the warp. The stations are NOT rolled here: they are rolled at
+-- the moment the old body finishes coming apart, so the pixels that fly
+-- back together are the first sign of where it went.
+function Prismtyrant:swapStations()
+  if self.warpPhase then return end
+  self.warpPhase = "out"
+  self.warpT = Prismtyrant.WARP_OUT
+  self.swapT = Prismtyrant.SWAP_T
+  if G.Audio then G.Audio.sfx("warpout") end
+end
+
+-- How far through the current warp phase we are, 0..1, and how much the
+-- body should be broken up: 0 whole, 1 fully scattered.
+function Prismtyrant:warpBreak()
+  if not self.warpPhase then return 0 end
+  local dur = self.warpPhase == "out" and Prismtyrant.WARP_OUT
+    or Prismtyrant.WARP_IN
+  local k = 1 - U.clamp((self.warpT or 0) / dur, 0, 1)
+  if self.warpPhase == "in" then k = 1 - k end
+  return k
+end
+
+function Prismtyrant:updateWarp(dt)
+  if not self.warpPhase then return false end
+  local World = require "src.world"
+  self.warpT = self.warpT - dt
+  -- a few motes leaving/arriving, so the dissolve has some depth to it
+  self.warpFx = (self.warpFx or 0) - dt
+  if self.warpFx <= 0 then
+    self.warpFx = 0.04
+    local cx, cy = self:center()
+    local a = U.rand(0, math.pi * 2)
+    local r = 10 + self:warpBreak() * 34
+    World:fx("trail", cx + math.cos(a) * r, cy + math.sin(a) * r,
+      { color = U.choose({ "violet", "ice", "orchid" }), r = 1.5, t = 0.22 })
+  end
+  if self.warpT > 0 then return true end
+  if self.warpPhase == "out" then
+    -- gone. Now decide where it went.
+    self:rollStations()
+    self.warpPhase = "in"
+    self.warpT = Prismtyrant.WARP_IN
+    if G.Audio then G.Audio.sfx("warpin") end
+  else
+    self.warpPhase = nil
+    local cx, cy = self:center()
+    World:fx("burst", cx, cy, { color = "violet", n = 12, speed = 90 })
+  end
+  return true
+end
+
+function Prismtyrant:randomLive(World)
+  local live = {}
+  for _, p in ipairs(World.players) do
+    if not p.dead and not p.downed and not p.idle then live[#live + 1] = p end
+  end
+  if #live == 0 then return nil end
+  return live[love.math.random(1, #live)]
+end
+function Prismtyrant:aliveTargets()
+  local World = require "src.world"
+  local out = {}
+  for _, p in ipairs(World.players) do
+    if not p.dead and not p.downed and not p.idle then out[#out + 1] = p end
+  end
+  return out
+end
+
+-- ------------------------------------------------------------------
+-- the beam strike: the only thing that opens the shield
+-- ------------------------------------------------------------------
+-- Called by World:updateBeams for every beam segment overlapping this
+-- body. Heavy entities are immune to the outright kill a beam does to
+-- small enemies, which is right -- but the Conductor still needs to know
+-- it is standing in one.
+function Prismtyrant:beamStrike(seg, dt)
+  if self.dead or not self.shielded then return end
+  if self.state == "intro" or self.warpPhase then return end
+  -- one strike per beam, not one per frame
+  if (self.strikeLock or 0) > 0 then return end
+  self.strikeLock = 2.5
+  -- SPEND THE BEAM. The beam runs from the arena floor all the way up to
+  -- the station, so a beam that stays lit after it has done its job
+  -- stands in a lethal column exactly where the players now have to go
+  -- to use the window they just paid half a bar for. It is ammunition:
+  -- it fires once, it breaks the shell, it goes out.
+  if seg and seg.src and seg.src.expend then seg.src:expend() end
+  self:shatter()
+end
+
+function Prismtyrant:shatter()
+  local World = require "src.world"
+  self.shielded = false
+  self.shatterT = Prismtyrant.SHATTER_T
+  local chip = math.max(1, math.floor(self.maxhp * Prismtyrant.BEAM_CHIP))
+  local cx, cy = self:center()
+
+  -- THE SHATTER. The moment the whole fight is built around, so it gets
+  -- a moment: the shell's own six prisms are thrown outward from exactly
+  -- where they were orbiting, a white flash, a ring, and a thud you feel
+  -- more than hear. shatterFlash drives the draw side for a third of a
+  -- second, which is long enough to read and short enough not to eat
+  -- into a four-second window.
+  self.shatterFlash = 0.35
+  for i = 0, 5 do
+    local a = self.t * 0.8 + i * math.pi * 2 / 6
+    local px, py = cx + math.cos(a) * 26, cy + math.sin(a) * 21
+    World:fx("burst", px, py, { color = "ice", n = 9, speed = 210 })
+    World:fx("trail", px, py, {
+      color = "ice", r = 3, t = 0.5,
+      vx = math.cos(a) * 150, vy = math.sin(a) * 150 - 40,
+    })
+  end
+  World:fx("burst", cx, cy, { color = "spark", n = 22, speed = 90 })
+  Cam.shake(7, 0.5)
+  if G.Audio then
+    G.Audio.sfx("shieldbreak")
+    G.Audio.sfx("crack")
+  end
+  if G.game then G.game:announce("The shield has been shattered", 2) end
+  -- the chip goes through Entity.hurt so death, flash and the reward
+  -- path all behave exactly as they do for any other damage
+  Entity.hurt(self, chip, cx, cy, { beam = true })
+end
+
+function Prismtyrant:recharge()
+  local World = require "src.world"
+  if self.dead then return end
+  self.shielded = true
+  self.shatterT = 0
+  local cx, cy = self:center()
+  World:fx("burst", cx, cy, { color = "orchid", n = 20, speed = 120 })
+  if G.Audio then G.Audio.sfx("energize") end
+  if G.game then G.game:announce("The shield has recharged", 2) end
+  -- a swarm on every recharge: lingering in the open after a window
+  -- closes has to cost something, and it gives Vess work while Lu's bar
+  -- comes back
+  for i = 1, Prismtyrant.SWARM_N do
+    local a = (i / Prismtyrant.SWARM_N) * math.pi * 2
+    local w = Entity.make("prismwisp",
+      U.clamp(cx + math.cos(a) * 44, 2 * T, (World.w - 3) * T),
+      U.clamp(cy + math.sin(a) * 30, 2 * T, (World.h - 3) * T))
+    if w and w ~= true then self:addSpawn(w) end
+  end
+  -- and the stations move, so the solve you just did is not reusable
+  self:swapStations()
+end
+
+-- ------------------------------------------------------------------
 function Prismtyrant:update(dt)
   local World = require "src.world"
   self.t = self.t + dt
   self.stateT = self.stateT - dt
-  self.y = self.homeY + math.sin(self.t * 1.3) * 10
+  if self.strikeLock then self.strikeLock = math.max(0, self.strikeLock - dt) end
+  if self.tooStrongT then self.tooStrongT = math.max(0, self.tooStrongT - dt) end
+  if self.shatterFlash then
+    self.shatterFlash = self.shatterFlash - dt
+    if self.shatterFlash <= 0 then self.shatterFlash = nil end
+  end
 
   if self.state == "intro" then
-    if self.stateT <= 0 then self:setState("beams", 4) end
+    if self.stateT <= 0 then
+      self:rollStations()
+      self:setState("run", 999)
+    end
     return
   end
 
-  -- refraction storm at hp thresholds
-  local frac = self.hp / self.maxhp
-  if self.stormAt[1] and frac <= self.stormAt[1] then
-    table.remove(self.stormAt, 1)
-    self:setState("storm", 4)
-    G.game:announce("REFRACTION STORM! Get under Lu's dome!", 2.5)
-    if G.Audio then G.Audio.sfx("bosswarn") end
+  if not self.images then self:rollStations() end
+
+  -- MID-WARP the machine is not in the room. It does not shoot, it does
+  -- not track, and it cannot be hit -- beamStrike checks this too, so a
+  -- beam that happens to be burning through the column it left does not
+  -- score a free solve on a body that is not there.
+  if self:updateWarp(dt) then
+    self.y = self.homeY + math.sin(self.t * 1.3) * 8
+    return
   end
 
-  if self.state == "beams" then
-    self.gap = (self.gap or 0) - dt
-    if self.gap <= 0 then
-      self.gap = 1.1
-      local targets = self:aliveTargets()
-      if #targets > 0 then
-        local p = U.choose(targets)
+  -- it hangs at its station and bobs; every position change is a swap
+  self.x = U.approach(self.x, self.images[self.realImage].x, 260 * dt)
+  self.y = self.homeY + math.sin(self.t * 1.3) * 8
+
+  -- ---- shield / window
+  if self.shielded then
+    self.swapT = self.swapT - dt
+    if self.swapT <= 0 then self:swapStations() end
+  else
+    self.shatterT = self.shatterT - dt
+    -- an HP threshold slams the shield back up with part of your prize
+    -- still on the table, which is exactly what makes it felt
+    local frac = self.hp / self.maxhp
+    if self.restoreAt[1] and frac <= self.restoreAt[1] then
+      table.remove(self.restoreAt, 1)
+      if G.Audio then G.Audio.sfx("bosswarn") end
+      self:recharge()
+    elseif self.shatterT <= 0 then
+      self:recharge()
+    end
+  end
+
+  -- ---- machine gun: the reason to hold a dome, and the reason not to
+  self.mgT = self.mgT - dt
+  if self.mgT <= 0 and not self.mgFiring then
+    self.mgFiring = true
+    self.mgPhase = "tell"
+    self.mgPhaseT = Prismtyrant.MG_TELL
+    self.mgTarget = self:randomLive(World)
+    if self.mgTarget then
+      local cx, cy = self:center()
+      local px, py = self.mgTarget:center()
+      self.mgAim = math.atan2(py - cy, px - cx)
+    end
+    if G.Audio then G.Audio.sfx("bosswarn") end
+  end
+  if self.mgFiring then
+    self.mgPhaseT = self.mgPhaseT - dt
+    if self.mgPhase == "tell" then
+      if self.mgPhaseT <= 0 then
+        self.mgPhase = "fire"
+        self.mgPhaseT = Prismtyrant.MG_LEN
+        self.mgGap = 0
+      end
+    else
+      -- the stream re-aims slowly: fast enough that standing still is
+      -- fatal, slow enough that moving across it works
+      local tgt = self.mgTarget
+      if tgt and not tgt.dead and not tgt.downed then
         local cx, cy = self:center()
-        local px, py = p:center()
-        local ang = math.atan2(py - cy, px - cx)
-        for off = -0.18, 0.18, 0.18 do
-          Proj.spawn(World, cx, cy, {
-            side = "enemy", dmg = 3, kind = "shard", size = 5,
-            vx = math.cos(ang + off) * 190, vy = math.sin(ang + off) * 190,
-            life = 2.2,
-          })
-        end
+        local px, py = tgt:center()
+        local want = math.atan2(py - cy, px - cx)
+        local d = (want - (self.mgAim or want) + math.pi * 3) % (math.pi * 2) - math.pi
+        self.mgAim = (self.mgAim or want)
+          + U.clamp(d, -Prismtyrant.MG_TRACK * dt, Prismtyrant.MG_TRACK * dt)
+      end
+      self.mgGap = (self.mgGap or 0) - dt
+      if self.mgGap <= 0 then
+        self.mgGap = Prismtyrant.MG_RATE
+        local cx, cy = self:center()
+        local a = (self.mgAim or 0) + U.rand(-0.035, 0.035)
+        Proj.spawn(World, cx, cy, {
+          side = "enemy", dmg = Prismtyrant.MG_DMG, kind = "shard", size = 3,
+          vx = math.cos(a) * 250, vy = math.sin(a) * 250, life = 2.2,
+        })
         if G.Audio then G.Audio.sfx("shoot4") end
       end
-    end
-    if self.stateT <= 0 then
-      self:setState(U.chance(0.35) and "wisps" or "blink", 1.5)
-    end
-  elseif self.state == "wisps" then
-    if not self.spawned then
-      self.spawned = true
-      for i = 1, 2 do
-        World:add(Entity.make("prismwisp", self.x + U.rand(-50, 50), self.y + U.rand(-20, 20)))
+      if self.mgPhaseT <= 0 then
+        self.mgFiring = nil
+        self.mgPhase = nil
+        self.mgT = Prismtyrant.MG_EVERY
       end
-      if G.Audio then G.Audio.sfx("teleport") end
     end
-    if self.stateT <= 0 then
-      self.spawned = nil
-      self:setState("beams", 4)
-    end
-  elseif self.state == "blink" then
-    if not self.blinked then
-      self.blinked = true
-      World:fx("burst", self:center())
-      self.homeX = U.clamp(self.homeX + U.rand(-90, 90), 60, World.w * T - 90)
-      self.x = self.homeX
-      if G.Audio then G.Audio.sfx("teleport") end
-    end
-    if self.stateT <= 0 then
-      self.blinked = nil
-      self:setState("beams", 4)
-    end
-  elseif self.state == "storm" then
-    self.gap = (self.gap or 0) - dt
-    if self.gap <= 0 then
-      self.gap = 0.12
-      local rx = Cam.x + U.rand(0, G.VW)
-      Proj.spawn(World, rx, Cam.y - 8, {
-        side = "enemy", dmg = 2, kind = "shard", size = 4,
-        vx = U.rand(-20, 20), vy = 200, life = 2.2,
-      })
-    end
-    if self.stateT <= 0 then
-      self:setState("beams", 4)
-      -- co-op bonus: hang the resonance bells after each storm
-      if G.game and G.game.coop and #G.game:activePlayers() >= 2 then
-        local b1 = Bell.new(70, World.h * T - 7 * T, self, 1)
-        local b2 = Bell.new(World.w * T - 82, World.h * T - 7 * T, self, 2)
-        World:add(b1) World:add(b2)
-        if not self.taughtBells then
-          self.taughtBells = true
-          G.game:announce("Two bells ring off-key... silence them TOGETHER.", 3)
+  end
+
+  -- ---- the images keep up a light patter so the room is never quiet
+  self.gap = (self.gap or 0) - dt
+  if self.gap <= 0 then
+    self.gap = 1.4
+    for i, im in ipairs(self.images) do
+      local dmg = im.real and 3 or Prismtyrant.SPLIT_FALSE_DMG
+      if dmg > 0 then
+        local p = self:randomLive(World)
+        if p then
+          local cx, cy = im.x + self.w / 2, self.y + self.h / 2
+          local px, py = p:center()
+          local ang = math.atan2(py - cy, px - cx)
+          Proj.spawn(World, cx, cy, {
+            side = "enemy", dmg = dmg, kind = "shard", size = 4,
+            vx = math.cos(ang) * 170, vy = math.sin(ang) * 170, life = 2.2,
+            harmlessImage = not im.real,
+          })
         end
       end
     end
-  elseif self.state == "stunned" then
-    -- silenced by the chord: helpless and fully vulnerable
-    if self.stateT <= 0 then self:setState("beams", 4) end
   end
 end
+
 function Prismtyrant:hurt(dmg, srcx, srcy, opts)
-  if self.state == "storm" then
-    local World = require "src.world"
+  local World = require "src.world"
+  -- The shield is the default condition and the circuit is the only
+  -- thing that opens it. This is the line that stops the fight being a
+  -- damage race you can win by ignoring the room.
+  if self.shielded and not (opts and opts.beam) then
+    -- One exception, kept deliberately: its OWN light, turned back on it
+    -- off a panel, still gets through for a little. It rewards a player
+    -- who notices what the panels do without ever being enough on its
+    -- own to replace the circuit.
+    if opts and opts.refracted then
+      World:fx("burst", self.x + self.w / 2, self.y + 10,
+        { color = "ice", n = 10, speed = 130 })
+      return Entity.hurt(self, math.max(1, math.floor(dmg * 0.5)), srcx, srcy, opts)
+    end
     World:fx("spark", self.x + self.w / 2, self.y + 8, { color = "orchid", n = 3 })
+    -- Said every time it happens, not once -- but throttled, because a
+    -- scatter volley is five hits in one frame and the line would
+    -- stutter. The clock is the boss's own, so it survives a reload.
+    if (self.tooStrongT or 0) <= 0 then
+      self.tooStrongT = 1.6
+      if G.game then G.game:announce("The shield is too strong", 1.6) end
+    end
     return false
   end
   return Entity.hurt(self, dmg, srcx, srcy, opts)
 end
+
 function Prismtyrant:draw()
   local g = love.graphics
   local cx, cy = self:center()
+
+  -- MID-WARP: the whole set -- real and false alike -- comes apart and
+  -- goes back together. Drawing only the real one would hand the player
+  -- the answer for free every thirty seconds.
+  local wk = self:warpBreak()
+  if self.warpPhase then
+    -- the flicker, hardest at the moment of departure and arrival
+    local flick = (wk < 0.55) and (math.floor(G.time * 34) % 2 == 0)
+    for i, im in ipairs(self.images or {}) do
+      local icx = im.x + self.w / 2
+      if flick then
+        g.setColor(P.violet[1], P.violet[2], P.violet[3], (1 - wk) * 0.8)
+        G.drawSprite("boss_prismtyrant", math.floor(self.t * 5) % 2 + 1,
+          icx, self.y + self.h, { sx = 2.3, sy = 1.5 })
+        g.setColor(1, 1, 1, 1)
+      end
+      self:drawDissolve(g, icx, self.y + self.h / 2, wk)
+    end
+    return
+  end
+
+  -- the false images: same silhouette, no shadow. That is the tell, and
+  -- it is the only one -- the fight is asking you to look, not to react.
+  if self.images then
+    for i, im in ipairs(self.images) do
+      if not im.real then
+        local icx = im.x + self.w / 2
+        g.setColor(P.violet[1], P.violet[2], P.violet[3],
+          0.45 + math.sin(G.time * 5 + i) * 0.15)
+        G.drawSprite("boss_prismtyrant", math.floor(self.t * 5) % 2 + 1,
+          icx, self.y + self.h, { sx = 2.3, sy = 1.5 })
+        g.setColor(1, 1, 1, 1)
+        if self.shielded then self:drawShield(g, icx, self.y + self.h / 2, 0.35) end
+      end
+    end
+    -- and the real one keeps its shadow
+    g.setColor(0, 0, 0, 0.3)
+    g.ellipse("fill", cx, self.y + self.h + 6, 16, 4)
+  end
   -- orbiting shards
   for i = 0, 2 do
     local a = self.t * 1.5 + i * math.pi * 2 / 3
@@ -1768,11 +2101,102 @@ function Prismtyrant:draw()
   end
   G.drawSprite("boss_prismtyrant", math.floor(self.t * 5) % 2 + 1, cx, self.y + self.h,
     { sx = 2.3, sy = 1.5, white = math.max(0, (self.white or 0) * 6) })
-  if self.state == "storm" then
-    local pulse = 0.5 + math.sin(G.time * 10) * 0.4
-    g.setColor(P.spark[1], P.spark[2], P.spark[3], pulse)
-    g.circle("line", cx, cy, 24 + pulse * 6)
+
+  if self.shielded then
+    self:drawShield(g, cx, cy, 1)
+  else
+    -- the break itself: an expanding ring of what the shell used to be
+    if self.shatterFlash then
+      local k = 1 - (self.shatterFlash / 0.35)
+      g.setColor(P.white[1], P.white[2], P.white[3], (1 - k) * 0.8)
+      g.circle("fill", cx, cy, 6 + k * 10)
+      g.setLineWidth(3 - k * 2)
+      g.setColor(P.ice[1], P.ice[2], P.ice[3], 1 - k)
+      g.circle("line", cx, cy, 24 + k * 46)
+      g.setLineWidth(1)
+    end
+    -- unmistakably open: the shell is gone and the seams are lit
+    local pulse = 0.5 + math.sin(G.time * 14) * 0.4
+    g.setColor(P.spark[1], P.spark[2], P.spark[3], pulse * 0.8)
+    g.circle("line", cx, cy, 30 + pulse * 4)
+    -- a countdown arc, so the window is never a guess
+    local frac = U.clamp(self.shatterT / Prismtyrant.SHATTER_T, 0, 1)
+    g.setColor(P.spark)
+    g.arc("line", "open", cx, cy, 34, -math.pi / 2,
+      -math.pi / 2 + frac * math.pi * 2)
   end
+
+  -- the machine gun's telegraph: a line you are given time to leave
+  if self.mgFiring and self.mgPhase == "tell" and self.mgAim then
+    local a = self.mgAim
+    local warn = 0.35 + math.sin(G.time * 22) * 0.25
+    g.setColor(P.orchid[1], P.orchid[2], P.orchid[3], warn)
+    g.setLineWidth(2)
+    g.line(cx, cy, cx + math.cos(a) * 400, cy + math.sin(a) * 400)
+    g.setLineWidth(1)
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
+-- ------------------------------------------------------------------
+-- THE DISSOLVE
+--
+-- No shader and no pixel access to the sprite, so the body is broken
+-- into a fixed grid of blocks that scatter outward on a per-cell bearing
+-- and pull back in on the way home. The bearings come from a hash of the
+-- cell index, NOT from love.math.random: they have to be identical every
+-- frame or the "pixels" boil instead of flying, and identical between
+-- the out and in phases so the thing that reassembles is recognisably
+-- the thing that came apart.
+--
+-- k = 0 is whole, k = 1 is fully scattered.
+-- ------------------------------------------------------------------
+local function cellHash(i, salt)
+  local v = (i * 73856093 + salt * 19349663) % 65536
+  return v / 65536
+end
+
+function Prismtyrant:drawDissolve(g, cx, cy, k)
+  if k <= 0 then return end
+  local cols, rows = 6, 9
+  local bw, bh = self.w + 6, self.h + 6
+  local ease = k * k                      -- slow to let go, then gone
+  for i = 0, Prismtyrant.WARP_CELLS - 1 do
+    local gx = i % cols
+    local gy = math.floor(i / cols) % rows
+    local px = cx - bw / 2 + (gx + 0.5) * (bw / cols)
+    local py = cy - bh / 2 + (gy + 0.5) * (bh / rows)
+    -- outward from the body's centre, with a per-cell twist so it does
+    -- not read as a clean radial burst
+    local ang = math.atan2(py - cy, px - cx) + (cellHash(i, 3) - 0.5) * 1.6
+    local dist = (18 + cellHash(i, 7) * 46) * ease
+    local lag = 0.55 + cellHash(i, 11) * 0.45      -- cells leave at
+    local kk = U.clamp((k - (1 - lag)) / lag, 0, 1) -- different moments
+    local ox, oy = math.cos(ang) * dist * kk, math.sin(ang) * dist * kk - kk * 6
+    local a = 1 - kk * 0.85
+    local col = ({ P.violet, P.orchid, P.ice })[1 + math.floor(cellHash(i, 5) * 3)]
+    g.setColor(col[1], col[2], col[3], a)
+    local sz = 3 - kk
+    g.rectangle("fill", px + ox - sz / 2, py + oy - sz / 2, sz, sz)
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
+-- the shell: a lattice of prisms, obviously solid, obviously a lid
+function Prismtyrant:drawShield(g, cx, cy, alpha)
+  local n = 6
+  for i = 0, n - 1 do
+    local a = self.t * 0.8 + i * math.pi * 2 / n
+    local rx, ry = 26, 21
+    local sx, sy = cx + math.cos(a) * rx, cy + math.sin(a) * ry
+    g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.75 * alpha)
+    g.polygon("fill", sx, sy - 5, sx + 4, sy, sx, sy + 5, sx - 4, sy)
+  end
+  local pulse = 0.22 + math.sin(G.time * 3) * 0.06
+  g.setColor(P.ice[1], P.ice[2], P.ice[3], pulse * alpha)
+  g.ellipse("fill", cx, cy, 28, 23)
+  g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.6 * alpha)
+  g.ellipse("line", cx, cy, 28, 23)
   g.setColor(1, 1, 1, 1)
 end
 Bosses.prismtyrant = Prismtyrant
@@ -2392,7 +2816,7 @@ function Mother:update(dt)
       self.added = true
       local names = { "sentinel", "screamer" }
       for i = 1, 2 do
-        World:add(Entity.make(names[i], self.x + U.rand(-60, 60), self.y + 40))
+        self:addSpawn(Entity.make(names[i], self.x + U.rand(-60, 60), self.y + 40))
       end
       if G.Audio then G.Audio.sfx("teleport") end
     end
@@ -2642,9 +3066,9 @@ function Mycelchoir:spawnNodes(World)
   if self.nodes then return end
   local T2 = 16
   self.nodes = {
-    World:add(ChoirNode.new(6 * T2, 26 * T2 + 6, self, 1)),   -- low, west
-    World:add(ChoirNode.new(3 * T2, 16 * T2, self, 2)),       -- mid, west wall
-    World:add(ChoirNode.new(25 * T2, 8 * T2 + 8, self, 3)),   -- high, east
+    self:addSpawn(ChoirNode.new(6 * T2, 26 * T2 + 6, self, 1)),  -- low, west
+    self:addSpawn(ChoirNode.new(3 * T2, 16 * T2, self, 2)),      -- mid, west wall
+    self:addSpawn(ChoirNode.new(25 * T2, 8 * T2 + 8, self, 3)),  -- high, east
   }
 end
 function Mycelchoir:update(dt)
@@ -2711,7 +3135,7 @@ function Mycelchoir:update(dt)
           if not e.dead and e.kind == "enemy" and e.spitT then flies = flies + 1 end
         end
         if flies < (phase2 and 3 or 2) then
-          World:add(Entity.make("sporefly", self.x + U.rand(-40, 40), self.y + 30))
+          self:addSpawn(Entity.make("sporefly", self.x + U.rand(-40, 40), self.y + 30))
         end
       end
       if G.Audio then G.Audio.sfx("domeon") end
@@ -2971,7 +3395,7 @@ function Maro:update(dt)
   -- Brassa joins at 60% (checked even mid-telegraph)
   if not self.calledBrassa and self.hp < self.maxhp * 0.6 and not self.dead then
     self.calledBrassa = true
-    World:add(Entity.make("keeperbrassa", self.x - 60, self.y - 10))
+    self:addSpawn(Entity.make("keeperbrassa", self.x - 60, self.y - 10))
     if G.game then G.game:announce("Brassa takes the field beside him!", 2.2) end
     if G.Audio then G.Audio.sfx("roar") end
   end

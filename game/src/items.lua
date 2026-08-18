@@ -1,27 +1,37 @@
 -- Item / reward granting.
 local Items = {}
 
+-- `ability = true` marks a module that changes what a bot can DO, as
+-- opposed to a key, a quest item or a collectible. It is not decoration:
+-- the Test Chamber builds its module toggles from this field, so a new
+-- ability that forgets it is a new ability the chamber cannot switch on.
+--
+-- That is not hypothetical. BULWARK and DRIFT VANES were both missing
+-- from every ability set, which meant the Test Chamber could drop you
+-- into the Conductor's arena -- where the panels need a plated charge
+-- and the outer emitters need a thermal column -- with no way to turn
+-- either on, and no way to win. `short` is the name the chamber shows.
 Items.MODULES = {
-  sparkjump = { name = "SPARK JUMP MODULE", desc = "Lu's original leg actuators, home at last. She jumps a full block higher! Vess can WARP to her after she climbs." },
-  grapple = { name = "MAGNE-GRAPPLE", desc = "Vess's factory grapple, back where it belongs. Press DASH near an anchor ring to zip to it!" },
-  heatplating = { name = "HEAT PLATING", desc = "Original caretaker furnace plating, refitted. Both bots endure the deep heat!" },
-  hydroseals = { name = "HYDRO SEALS", desc = "Original hull seals, good as new. Both bots can dive underwater indefinitely!" },
-  telenet = { name = "TELEPORTER KEY", desc = "The old teleporter network is yours to use!" },
+  sparkjump = { ability = true, short = "SPARK JUMP", name = "SPARK JUMP MODULE", desc = "Lu's original leg actuators, home at last. She jumps a full block higher! Vess can WARP to her after she climbs." },
+  grapple = { ability = true, short = "GRAPPLE", name = "MAGNE-GRAPPLE", desc = "Vess's factory grapple, back where it belongs. Press DASH near an anchor ring to zip to it!" },
+  heatplating = { ability = true, short = "HEAT PLATING", name = "HEAT PLATING", desc = "Original caretaker furnace plating, refitted. Both bots endure the deep heat!" },
+  hydroseals = { ability = true, short = "HYDRO SEALS", name = "HYDRO SEALS", desc = "Original hull seals, good as new. Both bots can dive underwater indefinitely!" },
+  telenet = { ability = true, short = "TELEPORTER KEY", name = "TELEPORTER KEY", desc = "The old teleporter network is yours to use!" },
   corekey1 = { name = "CORE KEY FRAGMENT (1/3)", desc = "A piece of the seal on the heart of Emberdeep." },
   corekey2 = { name = "CORE KEY FRAGMENT (2/3)", desc = "A piece of the seal on the heart of Emberdeep." },
   corekey3 = { name = "CORE KEY FRAGMENT (3/3)", desc = "A piece of the seal on the heart of Emberdeep." },
   musicbox = { name = "RUSTED MUSIC BOX", desc = "Tikka's treasure. It still plinks faintly." },
   moldcap = { name = "GIANT MOLDCAP", desc = "A mushroom the size of a hat. Root will love it." },
-  lumecore = { name = "LUME CORE", desc = "Lu's original light assembly! She radiates in the dark, and the Undergrove's deep doors will open to her." },
+  lumecore = { ability = true, short = "LUME CORE", name = "LUME CORE", desc = "Lu's original light assembly! She radiates in the dark, and the Undergrove's deep doors will open to her." },
   ferrocoil = { name = "FERRO'S COIL", desc = "A salvaged induction coil. Ferro has been looking for this." },
-  cryocoils = { name = "CRYO COILS", desc = "Original thermal regulators, restored. Both bots endure the deep-freeze -- the Coldstore will open to you." },
+  cryocoils = { ability = true, short = "CRYO COILS", name = "CRYO COILS", desc = "Original thermal regulators, restored. Both bots endure the deep-freeze -- the Coldstore will open to you." },
   arcplate1 = { name = "ARCHIVE PLATE: THE GREEN WING", desc = "A catalog plate, mis-shelved a century ago. Curator Lock wants it home." },
   arcplate2 = { name = "ARCHIVE PLATE: THE DROWNED WING", desc = "A catalog plate, mis-shelved a century ago. Curator Lock wants it home." },
   arcplate3 = { name = "ARCHIVE PLATE: THE BURNING WING", desc = "A catalog plate, mis-shelved a century ago. Curator Lock wants it home." },
   arcplate4 = { name = "ARCHIVE PLATE: THE SINGING WING", desc = "A catalog plate, mis-shelved a century ago. Curator Lock wants it home." },
-  bulwark = { name = "BULWARK PLATE", desc = "Vess's own forward plate. His CHARGE now carries a shield." },
-  driftvanes = { name = "DRIFT VANES", desc = "Lu's original attitude assembly, recovered from the Sentinel's nest. Hold JUMP while falling and she falls slowly, with full control, for a long way. She can also ride thermal columns upward. Vess can WARP to her across the gaps he cannot jump." },
-  cinderram = { name = "CINDER RAM", desc = "Recovered from VESSEL-8. The CHARGE is an attack now. It damages what it hits, shatters a raised guard outright, and burns a chevron through the dark." },
+  bulwark = { ability = true, short = "BULWARK PLATE", name = "BULWARK PLATE", desc = "Vess's own forward plate. His CHARGE now carries a shield." },
+  driftvanes = { ability = true, short = "DRIFT VANES", name = "DRIFT VANES", desc = "Lu's original attitude assembly, recovered from the Sentinel's nest. Hold JUMP while falling and she falls slowly, with full control, for a long way. She can also ride thermal columns upward. Vess can WARP to her across the gaps he cannot jump." },
+  cinderram = { ability = true, short = "CINDER RAM", name = "CINDER RAM", desc = "Recovered from VESSEL-8. The CHARGE is an attack now. It damages what it hits, shatters a raised guard outright, and burns a chevron through the dark." },
 }
 
 -- spec: "scrap:15" | "weapon:scatterhex" | "module:grapple" | "heal:full"

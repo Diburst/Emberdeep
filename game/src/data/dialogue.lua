@@ -20,8 +20,8 @@ Dialogue.FRAGMENTS = {
     gateHint = "You'll not get far in the Furnace without a grapple line. There's one in the Flooded Works, east past Mosswood." },
   { flag = "corekey2", short = "the Hollows fragment",
     where = "One is in the Crystal Hollows, held by the thing that still calls itself THE CONDUCTOR. Down the same stair, but bear the other way, into the singing dark.",
-    gate = "boss_tideengine",
-    gateHint = "The Hollows stay sealed while the Tide Engine still runs. That's in the Flooded Works. Drown it, and the way opens." },
+    gate = "driftvanes",
+    gateHint = "The Hollows are the city's thinking-place, and it is built upward. You'll not cross it without Lu's vanes -- those are up the Skyroot Spire, in the Sentinel's nest. Take the Spire first. The Hollows will still be there; it has waited a hundred years." },
   { flag = "corekey3", short = "the Spire fragment",
     where = "One is up the Skyroot Spire, with the AERIE SENTINEL. North out of the Mosswood and climb until the wind starts arguing with you." },
 }
@@ -255,6 +255,18 @@ D.sign_furnace = { { script = {
 } } }
 D.sign_crystal = { { script = {
   { who = "sys", text = "CRYSTAL HOLLOWS. The stones sing back when struck. The Conductor is still conducting -- nobody has told it the orchestra left. -- Inks, surveying note 88" },
+} } }
+D.sign_dormant = { { script = {
+  { who = "sys", text = "RACK 12. Idle. Awaiting work order. -- the plate has said this for a hundred years" },
+  { who = "lu", text = "It is not broken. Nobody has asked it for anything." },
+  { who = "lu", text = "My dome will wake one. It costs me to hold it awake, so pick which one." },
+} } }
+D.sign_panel = { { script = {
+  { who = "sys", text = "REFLECTOR, RAIL-MOUNTED. Two hundred kilos. Do not attempt to move by hand." },
+  { who = "vess", text = "Good." },
+} } }
+D.sign_resonance = { { script = {
+  { who = "sys", text = "BUS JUNCTION. Two signals required. A junction with one signal is a junction with none." },
 } } }
 D.sign_bridge = { { script = {
   { who = "sys", text = "Light bridge. The near plate holds the near span. Someone stays behind." },
