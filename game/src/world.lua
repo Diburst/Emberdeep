@@ -1005,7 +1005,8 @@ function World:load(roomId, doorChar, keepPlayers)
   end
 
   -- music
-  if def.music and G.Audio then G.Audio.playMusic(def.music) end
+  local track = self:musicName(def.music)
+  if track and G.Audio then G.Audio.playMusic(track) end
 
   if def.onEnter then def.onEnter(self) end
 end
@@ -1404,6 +1405,7 @@ function World:draw()
   Cam.apply()
 
   -- tiles
+  local frozen = self:zoneFrozen()
   local tx0 = math.max(0, math.floor(Cam.x / T) - 1)
   local ty0 = math.max(0, math.floor(Cam.y / T) - 1)
   local tx1 = math.min(self.w - 1, math.floor((Cam.x + G.VW) / T) + 1)
@@ -1428,6 +1430,21 @@ function World:draw()
         local right = self:tileAt(tx + 1, ty)
         local upHard, dnHard = hard(above), hard(below)
         local lHard, rHard = hard(left), hard(right)
+        -- BLUE ICE. Once the Ember is gone the ground itself changes: a
+        -- cold wash over every solid tile, and a bright rime cap on any
+        -- surface with open air above it -- so the world reads as frozen
+        -- from the silhouette of the floor, not just from a screen tint.
+        if frozen then
+          g.setColor(0.42, 0.60, 0.88, 0.30)
+          g.rectangle("fill", px, py, T, T)
+          if not upHard then
+            g.setColor(0.78, 0.90, 1.0, 0.55)
+            g.rectangle("fill", px, py, T, 2)
+            g.setColor(0.90, 0.97, 1.0, 0.35)
+            g.rectangle("fill", px + ((tx * 5) % 6), py + 2, 3, 1)
+          end
+          g.setColor(1, 1, 1, 1)
+        end
         if upHard and dnHard and lHard and rHard then
           -- fully enclosed: fake ambient occlusion
           g.setColor(0, 0, 0, 0.28)
@@ -1640,15 +1657,18 @@ function World:draw()
     g.setColor(1, 1, 1, 1)
   end
 
-  -- the frozen camp: after the Ember leaves, the cold owns this place
+  -- after the Ember leaves, the cold owns everywhere
   if self:zoneFrozen() then
     g.setColor(0.55, 0.7, 0.95, 0.16)
     g.rectangle("fill", Cam.ox, Cam.oy, G.VW, G.VH)
     g.setColor(1, 1, 1, 1)
   end
 
-  -- darkness overlay (dark rooms: the Undergrove)
-  if self.room and self.room.dark then
+  -- DARKNESS. Dark rooms have always been the Undergrove's; a frozen
+  -- world is dark everywhere, because every lantern in it has gone out.
+  -- This is what makes Lu's lume and the Ember's own aura the way you
+  -- see -- the light you are carrying is the only light there is.
+  if (self.room and self.room.dark) or self:zoneFrozen() then
     self:drawDarkness(g)
   end
 
@@ -1668,9 +1688,29 @@ function World:zoneMended()
     and not self.bossActive
 end
 
+-- THE WHOLE DEEP FREEZES, not just the camp.
+--
+-- This used to be scoped to `zone == "camp"`, because the only frozen
+-- place was the one you stole from. But the Ember was the city's heat --
+-- every district was warm because of it -- so once it leaves the camp
+-- zone in your hands, everything it was keeping alive goes out at once.
+-- camp_frozen is set by World:load the moment you carry it into a
+-- non-camp room, which makes it exactly the right trigger: it fires on
+-- the first step you take away.
+-- MUSIC. Every zone keeps its own theme right up until the Ember comes
+-- loose, and then there is only one piece of music left in the world --
+-- the zones do not get to sound like themselves any more. Everything
+-- that starts zone music asks this, so a boss dying cannot quietly put
+-- the old theme back on over a frozen world.
+function World:musicName(want)
+  if G.run and G.run.flags and G.run.flags.camp_frozen then
+    return "untending"
+  end
+  return want
+end
+
 function World:zoneFrozen()
-  return self.zone == "camp" and G.run and G.run.flags
-    and (G.run.flags.ember_taken or G.run.flags.camp_frozen)
+  return G.run and G.run.flags and G.run.flags.camp_frozen or false
 end
 
 -- ------------------------------------------------------------------

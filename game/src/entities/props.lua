@@ -23,8 +23,7 @@ function SavePoint:init(x, y)
 end
 function SavePoint:interact(p)
   local World = require "src.world"
-  local f = G.run.flags
-  if f.ember_taken or G.run.emberBad or (f.reckoning and not f.ending_done) then
+  if G.Save.sealed() then
     G.game:announce("No lantern will hold. Not while you carry the heart.", 2.5)
     if G.Audio then G.Audio.sfx("menuback") end
     return
@@ -71,6 +70,10 @@ end
 function Checkpoint:update(dt)
   local World = require "src.world"
   if self.lit then return end
+  -- No lantern lights once the Ember is loose. This one used to: it set
+  -- G.run.checkpoint directly rather than going through setCheckpoint,
+  -- so it slipped past the seal every other save surface respected.
+  if G.Save.sealed() then return end
   for _, p in ipairs(World.players) do
     if not p.dead and not p.downed and not p.idle
       and U.dist(self.x, self.y, p.x, p.y) < 20 then

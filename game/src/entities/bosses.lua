@@ -139,7 +139,8 @@ function Boss:onDeath()
     table.insert(G.run.pendingDrops[G.run.room], { x = dx, y = dy, spec = self.reward })
     World:add(Entity.make("reward", dx, dy, { "reward", self.reward }))
   end
-  if World.room.music and G.Audio then G.Audio.playMusic(World.room.music) end
+  local track = World:musicName(World.room.music)
+  if track and G.Audio then G.Audio.playMusic(track) end
   if G.game then
     G.game.linkMeter = 1
     if self.bossId == "motherengine2" then

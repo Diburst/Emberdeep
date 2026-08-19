@@ -235,9 +235,7 @@ function S:update(dt)
       if not p.dead and not p.downed and not p.idle then anyUp = true end
     end
     if not anyUp then
-      local f = G.run.flags
-      if f.ember_taken or G.run.emberBad
-        or (f.reckoning and not f.ending_done) then
+      if G.Save.sealed() then
         -- no checkpoints past the point of no return
         self:reloadLastSave()
       else
@@ -265,6 +263,10 @@ function S:transitionTo(room, door)
 end
 
 function S:setCheckpoint(room, door)
+  -- Sealed runs do not move their checkpoint. Zone changes, teleport pads
+  -- and the warp menu all come through here, and every one of them used
+  -- to keep quietly advancing the respawn point after the theft.
+  if G.Save.sealed() then return end
   G.run.checkpoint = { room = room, door = door }
 end
 
@@ -272,9 +274,7 @@ function S:autosave()
   -- the Ember lockout: from the moment the Reckoning starts until an
   -- ending is written, NOTHING touches the save files. The theft can
   -- never be committed to disk half-done.
-  local f = G.run.flags
-  if f.ember_taken or G.run.emberBad
-    or (f.reckoning and not f.ending_done) then return end
+  if G.Save.sealed() then return end
   self:syncRun()
   if not G.run.slot then return end   -- test chamber runs are ephemeral
   G.Save.writeSlot(G.run.slot, G.run)

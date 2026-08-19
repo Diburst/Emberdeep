@@ -49,6 +49,16 @@ function S:enter()
         G.State.switch(require "src.states.title")
       end,
       hint = "Test chamber runs are never saved.",
+    } or (G.Save.sealed() and {
+      -- The seal reaches the pause menu too. Quitting here throws the run
+      -- away back to the last save -- which is the one from BEFORE the
+      -- theft, and that is the point: you cannot bank this.
+      label = "QUIT TO TITLE (NOTHING IS SAVED)", onConfirm = function()
+        if G.Audio then G.Audio.stopMusic() end
+        G.State.switch(require "src.states.title")
+      end,
+      hint = "No lantern will hold while you carry the heart. Quitting "
+        .. "returns you to the last saved moment.",
     } or {
       label = "SAVE + QUIT TO TITLE", onConfirm = function()
         game:syncRun()
@@ -57,7 +67,7 @@ function S:enter()
         G.State.switch(require "src.states.title")
       end,
       hint = "Progress is saved to your slot. Resume any time.",
-    },
+    }),
   }
   for _, it in ipairs(more) do items[#items + 1] = it end
   -- A scroll window, because test mode adds two rows and the list used

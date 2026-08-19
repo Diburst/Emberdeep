@@ -57,6 +57,30 @@ function Save.saveSettings()
   love.filesystem.write("settings.dat", Ser.pack(s))
 end
 
+-- ==================================================================
+-- THE SEAL
+--
+-- From the moment the Ember comes loose until an ending is written, the
+-- run stops being something you can put down. Nothing writes to disk,
+-- no checkpoint moves, no lantern lights.
+--
+-- The reason is not flavour. A save made after the theft is a save the
+-- player can reload to un-take it, and that turns the one irreversible
+-- decision in the game into a menu option. It has to cost something to
+-- have done it.
+--
+-- Everything that could persist or rewind the run asks this ONE
+-- function. It used to be the same three-part condition copy-pasted into
+-- four files, which is how the checkpoint lantern kept quietly lighting
+-- after the theft while everything around it had been sealed.
+-- ==================================================================
+function Save.sealed()
+  if not G.run then return false end
+  local f = G.run.flags or {}
+  return (f.ember_taken or G.run.emberBad
+    or (f.reckoning and not f.ending_done)) and true or false
+end
+
 function Save.newRun(slot, difficulty, coop)
   local Up = require "src.upgrades"
   return {

@@ -281,6 +281,36 @@ SONGS.cradle = {
 -- figure in A minor that quotes Tikka's music-box motif a fifth down,
 -- at half speed, never resolving. Eight patterns so the loop point does
 -- not announce itself.
+-- THE UNTENDING. The only music left in the world once the Ember is
+-- carried out of the camp. Every zone plays this and nothing else.
+--
+-- Built to be the Coldstore's cradle theme with the warmth taken out of
+-- it: same slow pulse, but the lead sits a minor third lower, the harm
+-- never resolves upward, and the bass holds one note for a whole bar so
+-- there is no forward motion anywhere in it. No drums at all -- nothing
+-- in this world is keeping time any more.
+SONGS.untending = {
+  bpm = 54, echo = 0.72,
+  lead = { duty = 0.125, vol = 0.085, order = { 1, 2, 1, 3, 1, 2 }, patterns = {
+    "A4 -- -- -- -- -- -- -- E4 -- -- -- -- -- -- --",
+    "F4 -- -- -- -- -- -- -- C4 -- -- -- -- -- -- --",
+    "D4 -- -- -- -- -- -- -- E4 -- -- -- -- -- -- --",
+  } },
+  harm = { duty = 0.25, vol = 0.04, order = { 1, 1, 2, 1, 3, 1 }, patterns = {
+    "A3 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+    "F3 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+    "E3 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+  } },
+  bass = { vol = 0.17, order = { 1, 1, 2, 2, 1, 3 }, patterns = {
+    "A1 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+    "F1 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+    "D1 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+  } },
+  drums = { vol = 0.0, order = { 1 }, patterns = {
+    "-- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --",
+  } },
+}
+
 SONGS.scrapyard = {
   bpm = 62, echo = 0.6,
   lead = { duty = 0.125, vol = 0.09, order = { 1, 2, 1, 3, 4, 2, 1, 5 }, patterns = {
