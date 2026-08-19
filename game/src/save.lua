@@ -58,18 +58,21 @@ function Save.saveSettings()
 end
 
 function Save.newRun(slot, difficulty, coop)
+  local Up = require "src.upgrades"
   return {
     slot = slot, difficulty = difficulty or 2, coop = coop or false,
     playtime = 0, scrap = 0, capsules = 0, tanks = 0,
     forge = { boltdriver = 1, scatterhex = 1, arclance = 1, sparkshot = 1,
-              dome = 1, hpTier = 0, energyTier = 0 },
+              dome = 1, repairPulse = 1, hpTier = 0, energyTier = 0 },
     flags = {}, visited = {}, mech = {},
     room = "camp_awake", door = "A",
     checkpoint = { room = "camp_awake", door = "A" },
     players = {
-      { maxhp = 12, hp = 12, weapons = { { id = "boltdriver", xp = 0 } }, curWeapon = 1 },
-      { maxhp = 12, hp = 12, weapons = { { id = "sparkshot", xp = 0 } }, curWeapon = 1,
-        maxenergy = 100 },
+      { maxhp = Up.maxHp(0), hp = Up.maxHp(0),
+        weapons = { { id = "boltdriver", xp = 0 } }, curWeapon = 1 },
+      { maxhp = Up.maxHp(0), hp = Up.maxHp(0),
+        weapons = { { id = "sparkshot", xp = 0 } }, curWeapon = 1,
+        maxenergy = Up.maxEnergy(0) },
     },
   }
 end
@@ -79,8 +82,10 @@ end
 function Save.migrate(data)
   if data.version and data.version >= Save.VERSION then return data end
   local W = require "src.weapons"
+  local Up = require "src.upgrades"
   local forge = { boltdriver = 1, scatterhex = 1, arclance = 1,
-                  sparkshot = 1, dome = 1, hpTier = 0, energyTier = 0 }
+                  sparkshot = 1, dome = 1, repairPulse = 1,
+                  hpTier = 0, energyTier = 0 }
   for _, pl in ipairs(data.players or {}) do
     for _, ws in ipairs(pl.weapons or {}) do
       local def = W.defs[ws.id]
@@ -94,9 +99,15 @@ function Save.migrate(data)
   end
   local p1 = data.players and data.players[1]
   local p2 = data.players and data.players[2]
+  -- Derive the old save's tiers with the ORIGINAL v1 constants (+4 hp,
+  -- +20 energy), not the current ones -- the numbers in that save were
+  -- written under the old economy and re-reading them under the new one
+  -- would silently hand every returning player extra tiers.
   forge.hpTier = math.max(0, math.floor((((p1 and p1.maxhp) or 12) - 12) / 4))
   forge.energyTier = math.max(0,
     math.floor((((p2 and p2.maxenergy) or 100) - 100) / 20))
+  forge.hpTier = math.min(forge.hpTier, Up.MAX.hp)
+  forge.energyTier = math.min(forge.energyTier, Up.MAX.energy)
   data.forge = data.forge or forge
   data.capsules = math.max(data.capsules or 0, forge.hpTier)
   data.tanks = math.max(data.tanks or 0, forge.energyTier)

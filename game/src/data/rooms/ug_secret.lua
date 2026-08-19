@@ -3,7 +3,7 @@
 -- music box among the rest.
 return {
   zone = "undergrove", music = "undergrove",
-  mapPos = { x = 6, y = 3, w = 1, h = 1 },
+  mapPos = { x = 7, y = 3, w = 1, h = 1 },
   dark = 0.75,
   map = [[
 ##############AAA#############

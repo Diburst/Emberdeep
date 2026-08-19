@@ -34,6 +34,14 @@ Items.MODULES = {
   cinderram = { ability = true, short = "CINDER RAM", name = "CINDER RAM", desc = "Recovered from VESSEL-8. The CHARGE is an attack now. It damages what it hits, shatters a raised guard outright, and burns a chevron through the dark." },
 }
 
+-- The ability modules in a fixed display order. Anything marked
+-- `ability = true` belongs here; deriving it means the pause screen and
+-- the Test Chamber cannot fall out of step with the table again.
+Items.ABILITY_ORDER = {
+  "sparkjump", "grapple", "driftvanes", "bulwark", "cinderram",
+  "hydroseals", "heatplating", "cryocoils", "lumecore", "telenet",
+}
+
 -- spec: "scrap:15" | "weapon:scatterhex" | "module:grapple" | "heal:full"
 --       | "bigshard:5"
 function Items.grant(spec, player)

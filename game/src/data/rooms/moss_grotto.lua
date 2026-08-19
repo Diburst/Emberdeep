@@ -1,7 +1,7 @@
 -- generated (v4.1)
 return {
   zone = "mosswood", music = "mosswood",
-  mapPos = { x = 10, y = 1, w = 1, h = 2 },
+  mapPos = { x = 8, y = 1, w = 1, h = 2 },
   map = [[
 #############AAA##############
 #############AAA##############

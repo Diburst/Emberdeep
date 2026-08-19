@@ -992,6 +992,15 @@ function World:load(roomId, doorChar, keepPlayers)
   if G.run then
     G.run.visited[roomId] = true
     G.run.room = roomId
+    -- THE CAMP FREEZES BEHIND YOU. Taking the Ember no longer empties
+    -- Ember Camp on the spot -- everyone gathers to watch instead, which
+    -- is the whole point of the scene. The freeze lands the moment you
+    -- carry it out of the zone, so the keepers are what you find when you
+    -- come back rather than what you walk away from.
+    if G.run.flags.ember_taken and not G.run.flags.camp_frozen
+      and self.zone ~= "camp" then
+      G.run.flags.camp_frozen = true
+    end
     G.run.door = doorChar
   end
 

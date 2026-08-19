@@ -3,7 +3,7 @@
 -- it with it. What is at the bottom now is the carving that says so.
 return {
   zone = "mosswood", music = "mosswood",
-  mapPos = { x = 2, y = 0, w = 1, h = 2 },
+  mapPos = { x = 0, y = 1, w = 1, h = 2 },
   map = [[
 ##############################
 ########.AA.................##

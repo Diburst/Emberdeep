@@ -2,7 +2,7 @@
 return {
   zone = "camp", music = "camp",
   arena = "embercamp",
-  mapPos = { x = 2, y = 0, w = 4, h = 1 },
+  mapPos = { x = 2, y = 2, w = 4, h = 1 },
   hasSave = true,
   gates = { G = "camp_barricade" },
   onEnter = function(World)
@@ -25,7 +25,7 @@ return {
 ##.....................====..=====........................=====...............G#
 ##...........................................................................GG#
 A...DD..........E................................................##.........GGGB
-A...DD1......dM.E..s.....bN.2........Y..eK.......f...iU...5..4...##.....k..GGGGB
+A...DD1......dM.E..s.....bN.2..t.o.p.Y..eK.q.u...f...iU...5..4...##.....k..GGGGB
 ################################################################################
 ################################################################################
 ################################################################################
@@ -50,11 +50,20 @@ A...DD1......dM.E..s.....bN.2........Y..eK.......f...iU...5..4...##.....k..GGGGB
     ["i"] = "npc:vill2:until:camp_frozen",
     ["s"] = "save",
     ["f"] = "npc:ferro:need:ferro_rescued:until:reckoning",
+    -- THE WITNESSES. Everyone who lives in the side rooms comes here the
+    -- moment the Ember comes loose, and stands in the dark watching it
+    -- until the camp finally freezes. Their home-room copies switch off
+    -- on the same flag, so nobody is ever in two places.
+    ["t"] = "npc:tikka:need:camp_witness:until:camp_frozen",
+    ["o"] = "npc:root:need:camp_witness:until:camp_frozen",
+    ["p"] = "npc:inks:need:camp_witness:until:camp_frozen",
+    ["q"] = "npc:vill:need:camp_witness:until:camp_frozen",
+    ["u"] = "npc:jun:need:camp_witness:until:camp_frozen",
   },
   links = {
     A = { "camp_tele", "B" },
     E = { "camp_hut", "A" },
     D = { "camp_awake", "B" },
-    B = { "moss_1", "A" },
+    B = { "stair_junction", "A" },
   },
 }

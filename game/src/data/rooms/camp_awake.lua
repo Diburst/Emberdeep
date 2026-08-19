@@ -4,7 +4,7 @@
 return {
   zone = "camp", music = "camp",
   arena = "campshop",
-  mapPos = { x = 2, y = 1, w = 2, h = 1 },
+  mapPos = { x = 4, y = 3, w = 2, h = 1 },
   map = [[
 ########################################
 ########################################
@@ -26,7 +26,7 @@ return {
 ]],
   key = {
     ["9"] = "chest:ch_shelf:scrap:15",
-    ["j"] = "npc:jun:until:camp_frozen",
+    ["j"] = "npc:jun:until:camp_witness",
     ["W"] = "frozenkeeper:jun",
     ["z"] = "checkpoint",
   },

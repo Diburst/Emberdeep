@@ -1,6 +1,7 @@
 -- The two playable bots: Vess (1, gunner) and Lu (2, operator).
 local Entity = require "src.entities.entity"
 local U = require "src.core.util"
+local Up = require "src.upgrades"
 local P = require "src.assets.palette"
 local PH = require "src.physics"
 local Weapons = require "src.weapons"
@@ -58,6 +59,27 @@ local HITSTOP = 0.06
 local STUN_DUR = 1.2           -- plate alone
 local STUN_DUR_RAM = 1.6       -- with the Cinder Ram
 local RAM_DMG = 6
+
+-- ==================================================================
+-- CARRYING THE EMBER
+--
+-- The Ember is not an item in a menu. It is a thing in your hands: a
+-- shard the size of the bot's chest, bright enough to light a room, hot
+-- enough that nothing living gets close to it. So carrying it costs you
+-- everything a hand is for -- you cannot shoot, you cannot raise the
+-- dome, you cannot charge -- and you walk at three quarters pace under
+-- the weight.
+--
+-- What you get instead is the aura. Anything small that comes near is
+-- simply gone. That trade is the whole point: the carrier stops being a
+-- fighter and becomes a thing to be escorted, which is why the OTHER bot
+-- suddenly matters.
+-- ==================================================================
+local EMBER_SLOW   = 0.75      -- of normal top speed
+local EMBER_AURA_R = 36        -- px; torches anything smaller than a boss
+local EMBER_AURA_DMG = 14      -- per tick, to anything too heavy to torch
+local EMBER_AURA_TICK = 0.3
+local EMBER_LIGHT  = 150
 local GUARD_BREAK_T = 2.0      -- a ram shatters a guard instead of damaging it
 
 -- Vault assist. `vy` is already forced to 0 for the whole dash, so an
@@ -333,8 +355,7 @@ end
 
 -- Lu's dome soaks a hit: costs energy instead of health.
 function Player:domeAbsorb(dmg)
-  local tier = (Weapons.forge() and Weapons.forge().dome) or 1
-  local mult = ({ 2.2, 1.6, 1.0 })[tier] or 2.2
+  local mult = Up.domeDrain()
   self.energy = math.max(0, self.energy - dmg * mult)
   self.energyDelay = 1
   if self.energy <= 0 then
@@ -487,6 +508,7 @@ function Player:update(dt)
   self.repairCd = self.repairCd - dt
   self.dashCd = self.dashCd - dt
   if self.bulwarkT > 0 then self.bulwarkT = self.bulwarkT - dt end
+  self:updateEmber(dt, World)
   if self.bounceT > 0 then self.bounceT = self.bounceT - dt end
   if self.chevT > 0 then self.chevT = self.chevT - dt end
   if self.plateFlashT > 0 then self.plateFlashT = self.plateFlashT - dt end
@@ -535,6 +557,7 @@ function Player:update(dt)
   local waterMode = self.inWater
   local topSpeed = waterMode and BASE.waterSpeed or BASE.runSpeed
   if self.domeActive then topSpeed = topSpeed * 0.55 end
+  if self:hasEmber() then topSpeed = topSpeed * EMBER_SLOW end
   -- icy rooms (the Coldstore): grounded control goes slick
   local icy = self.onGround and not self.inWater
     and World.room and World.room.ice
@@ -692,7 +715,8 @@ function Player:update(dt)
 
   -- ---- Vess dash / grapple
   if self.isVess then
-    if pressed("special") and self.dashCd <= 0 and self.dashT <= 0 then
+    if pressed("special") and self.dashCd <= 0 and self.dashT <= 0
+      and not self:hasEmber() then
       -- try grapple first if module owned and anchor in range
       local anchor = G.run.flags.grapple and self:findAnchor(World)
       if anchor then
@@ -735,7 +759,7 @@ function Player:update(dt)
 
   -- ---- Lu dome + repair
   if not self.isVess then
-    if pressed("special") then
+    if pressed("special") and not self:hasEmber() then
       if self.domeActive then
         self.domeActive = false
         if G.Audio then G.Audio.sfx("domeoff") end
@@ -798,17 +822,20 @@ function Player:update(dt)
         self.energy = math.min(self.maxenergy, self.energy + 13 * dt)
       end
     end
-    -- repair pulse
+    -- REPAIR PULSE. Every number is a forge tier now, read from
+    -- src/upgrades.lua rather than written here -- heal, energy cost,
+    -- cooldown and radius all improve together.
     if pressed("util") and self.repairCd <= 0 then
-      if self.energy >= 25 then
-        self.energy = self.energy - 25
+      local rp = Up.repair()
+      if self.energy >= rp.cost then
+        self.energy = self.energy - rp.cost
         self.energyDelay = 1
-        self.repairCd = 2.2
+        self.repairCd = rp.cd
         if G.Audio then G.Audio.sfx("repair") end
         for _, pl in ipairs(World.players) do
           if not pl.dead and not pl.downed
-            and U.dist(self.x, self.y, pl.x, pl.y) < 52 then
-            pl:heal(4)
+            and U.dist(self.x, self.y, pl.x, pl.y) < rp.radius then
+            pl:heal(rp.heal)
             World:fx("heal", pl.x + pl.w / 2, pl.y)
           end
         end
@@ -1122,7 +1149,102 @@ function Player:aimDir(down)
   return self.facing, 0
 end
 
+-- ------------------------------------------------------------------
+-- THE EMBER
+-- ------------------------------------------------------------------
+-- Which bot is holding it lives in the RUN, not on the player object, so
+-- it survives a room change, a save and a bot swap.
+function Player:hasEmber()
+  return G.run and G.run.emberCarrier == self.idx
+end
+
+function Player:takeEmber()
+  if not G.run then return end
+  G.run.emberCarrier = self.idx
+  G.run.emberT = 0
+end
+
+-- Anything that comes near is torched. Small bodies are simply gone --
+-- the same treatment a beam gives them -- and anything too heavy to
+-- vaporise burns instead, so a boss is discouraged rather than deleted.
+function Player:updateEmber(dt, World)
+  if not self:hasEmber() then
+    self.emberGlow = nil
+    return
+  end
+  G.run.emberT = (G.run.emberT or 0) + dt
+  self.emberGlow = (self.emberGlow or 0) + dt
+  self.lightR = math.max(self.lightR or 0, EMBER_LIGHT)
+
+  self.emberTick = (self.emberTick or 0) - dt
+  local tick = self.emberTick <= 0
+  if tick then self.emberTick = EMBER_AURA_TICK end
+
+  local cx, cy = self.x + self.w / 2, self.y + self.h / 2
+  for _, e in ipairs(World.entities) do
+    if e.kind == "enemy" and not e.dead and not e.harmless then
+      local ex, ey = e.x + e.w / 2, e.y + e.h / 2
+      if U.dist(cx, cy, ex, ey) < EMBER_AURA_R + math.max(e.w, e.h) / 2 then
+        if not e.heavy and not e.isBoss then
+          World:fx("burst", ex, ey, { color = "ember", n = 12, speed = 150 })
+          e.hp = 0
+          if e.onDeath then e:onDeath() end
+          e.dead = true
+          if G.Audio then G.Audio.sfx("hitenemy") end
+        elseif tick then
+          e:hurt(EMBER_AURA_DMG, cx, cy, { ember = true, owner = self })
+          World:fx("spark", ex, ey, { color = "ember", n = 4 })
+        end
+      end
+    end
+  end
+  -- embers coming off it
+  self.emberFx = (self.emberFx or 0) - dt
+  if self.emberFx <= 0 then
+    self.emberFx = 0.05
+    local a = U.rand(0, math.pi * 2)
+    local r = EMBER_AURA_R * U.rand(0.5, 1)
+    World:fx("trail", cx + math.cos(a) * r, cy + math.sin(a) * r,
+      { color = U.choose({ "ember", "gold", "magma" }), r = 2, t = 0.4,
+        vx = U.rand(-8, 8), vy = U.rand(-26, -10) })
+  end
+end
+
+-- The shard itself, held out in front of the chest, and the ring of fire
+-- that keeps the room off you.
+function Player:drawEmber(g)
+  if not self:hasEmber() then return end
+  local cx = self.x + self.w / 2 + self.facing * 5
+  local cy = self.y + self.h / 2 - 1
+  local beat = 0.82 + math.sin(G.time * 3.1) * 0.12
+    + math.sin(G.time * 9.7) * 0.06
+
+  -- the ring: two rotating arcs of fire rather than a plain circle, so it
+  -- reads as burning rather than as a selection marker
+  for i = 0, 1 do
+    local a0 = G.time * (1.4 + i * 0.7) + i * math.pi
+    g.setColor(P.ember[1], P.ember[2], P.ember[3], 0.30 * beat)
+    g.setLineWidth(3)
+    g.arc("line", "open", cx, cy, EMBER_AURA_R, a0, a0 + math.pi * 0.8)
+    g.setLineWidth(1)
+  end
+  g.setColor(P.gold[1], P.gold[2], P.gold[3], 0.16 * beat)
+  g.circle("fill", cx, cy, EMBER_AURA_R * 0.9)
+
+  -- the shard: a tall four-point crystal, white at the core
+  local hh = 11 * beat
+  g.setColor(P.ember)
+  g.polygon("fill", cx, cy - hh, cx + 5, cy, cx, cy + hh * 0.7, cx - 5, cy)
+  g.setColor(P.gold)
+  g.polygon("fill", cx, cy - hh * 0.8, cx + 3, cy, cx, cy + hh * 0.5, cx - 3, cy)
+  g.setColor(1, 1, 1, 0.85 * beat)
+  g.polygon("fill", cx, cy - hh * 0.5, cx + 1.4, cy, cx, cy + hh * 0.3, cx - 1.4, cy)
+  g.setColor(1, 1, 1, 1)
+end
+
 function Player:updateFire(dt, World, slot, down, pressed)
+  -- both hands are full
+  if self:hasEmber() then return end
   local ws = self:curWeaponState()
   if not ws then return end
   local def = Weapons.get(ws.id)
@@ -1340,6 +1462,9 @@ end
 function Player:draw()
   local g = love.graphics
   local World = require "src.world"
+
+  -- the Ember goes UNDER the bot, so the sprite reads as holding it
+  self:drawEmber(g)
 
   -- dome
   if self.domeActive then

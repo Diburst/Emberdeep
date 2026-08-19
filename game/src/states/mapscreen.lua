@@ -30,7 +30,12 @@ local S = { name = "mapscreen", translucent = true }
 
 local ZOOMS = { 4, 6, 8, 12, 18 }
 local PAN_SPEED = 150          -- px/sec at zoom 1; scaled by cell size
-local VIEW = { x = 6, y = 20, w = 468, h = 214 }   -- the framed map area
+-- The framed map area. Its HEIGHT is set by what the footer needs, not
+-- the other way round: four lines of 8px plus their gaps is 37px, and the
+-- old 214 left only 33 -- so the exits line printed over the legend, and
+-- a room box near the bottom edge printed over the room name under it.
+local FOOT_LINES = 4
+local VIEW = { x = 6, y = 20, w = 468, h = 202 }
 
 -- ------------------------------------------------------------------
 -- build the atlas once per open
@@ -513,6 +518,20 @@ function S:draw()
   g.setColor(1, 1, 1, 1)
 end
 
+-- Cut a string to what will actually fit on one line. printf WRAPS, and
+-- a wrapped exits list grows downward into the legend -- which is what it
+-- was doing for any room with more than about four doors.
+local function elide(g, text, maxW)
+  local font = G.fonts.main
+  if font:getWidth(text) <= maxW then return text end
+  local lo, hi = 1, #text
+  while lo < hi do
+    local mid = math.floor((lo + hi + 1) / 2)
+    if font:getWidth(text:sub(1, mid) .. "..") <= maxW then lo = mid else hi = mid - 1 end
+  end
+  return text:sub(1, lo) .. ".."
+end
+
 function S:drawFooter(g)
   local sel = self.sel
   local WM = self.WM
@@ -522,7 +541,12 @@ function S:drawFooter(g)
     g.setColor(accent)
     g.print(sel.id, 8, y)
     g.setColor(P.slate)
-    g.print(WM.ZONE_NAMES[sel.zone] or sel.zone, 8 + 74, y)
+    -- MEASURED, not a fixed 74px column. Room ids run to fourteen
+    -- characters -- "stair_junction" is one -- and at 6px a glyph that is
+    -- 84px, so the zone name was printing straight through the tail of
+    -- the longest names on the map.
+    g.print(WM.ZONE_NAMES[sel.zone] or sel.zone,
+      8 + G.fonts.main:getWidth(sel.id) + 10, y)
     -- what is it attached to? the question the old map could not answer.
     local parts = {}
     for ch, link in pairs(sel.def.links or {}) do
@@ -534,19 +558,21 @@ function S:drawFooter(g)
     end
     table.sort(parts)
     g.setColor(P.silver)
-    g.printf("exits  " .. (#parts > 0 and table.concat(parts, "   ") or "none"),
-      8, y + 9, G.VW - 16, "left")
+    g.print(elide(g, "exits  "
+      .. (#parts > 0 and table.concat(parts, "   ") or "none"), G.VW - 16),
+      8, y + 9)
   else
     g.setColor(P.slate)
     g.print("move the crosshair over a room to see its exits", 8, y)
   end
-  g.setColor(P.slate)
-  g.printf(G.fmtButtons(
-    "ARROWS / D-PAD: pan    [JUMP] zoom in    [FIRE] zoom out    [UTIL] fit    [MAP] close"),
-    0, G.VH - 10, G.VW, "center")
   g.setColor(P.gray)
-  g.printf("gold: save   cyan: teleporter   red: boss   notch: door   dashed: shaft   red: sealed",
-    0, G.VH - 19, G.VW, "center")
+  g.print(elide(g,
+    "gold: save   cyan: teleporter   red: boss   notch: door   dashed: shaft",
+    G.VW - 16), 8, y + 19)
+  g.setColor(P.slate)
+  g.print(elide(g, G.fmtButtons(
+    "ARROWS/D-PAD pan   [JUMP] in   [FIRE] out   [UTIL] fit   [MAP] close"),
+    G.VW - 16), 8, y + 28)
 end
 
 return S

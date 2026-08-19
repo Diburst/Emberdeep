@@ -43,6 +43,7 @@ local ARENAS = {
 -- that forgets the mark fails tools/testchamber_test.lua.
 -- ------------------------------------------------------------------
 local Items = require "src.items"
+local Up = require "src.upgrades"
 
 local MODULES = {}
 for id, def in pairs(Items.MODULES) do
@@ -78,7 +79,7 @@ local cfg = {
   boss = 2,            -- default: Rusted Warden
   arena = 1,           -- MATCH BOSS
   scatterhex = true, arclance = true, pulsebloom = true,
-  weaponTier = 2, domeTier = 2, hpTier = 2, energyTier = 1,
+  weaponTier = 2, domeTier = 2, repairTier = 1, hpTier = 2, energyTier = 1,
   preset = 1, link = 1,
   mods = {},           -- id -> true; filled from the ALL preset below
 }
@@ -138,15 +139,21 @@ function S:enter()
       function(d) cfg.weaponTier = U.clamp(cfg.weaponTier + d, 1, 3) end,
       "Forge level applied to every equipped weapon"),
     optRow("DOME TIER", function() return "Lv" .. cfg.domeTier end,
-      function(d) cfg.domeTier = U.clamp(cfg.domeTier + d, 1, 3) end),
+      function(d) cfg.domeTier = U.clamp(cfg.domeTier + d, 1, Up.MAX.dome) end),
+    optRow("LU: REPAIR PULSE", function()
+        return "Lv" .. cfg.repairTier .. "  (" .. Up.repair(cfg.repairTier).heal .. " hp)"
+      end,
+      function(d)
+        cfg.repairTier = U.clamp(cfg.repairTier + d, 1, Up.MAX.repairPulse)
+      end),
     optRow("HP TIER", function()
-        return cfg.hpTier .. "  (" .. (12 + cfg.hpTier * 4) .. " hp)"
+        return cfg.hpTier .. "  (" .. Up.maxHp(cfg.hpTier) .. " hp)"
       end,
-      function(d) cfg.hpTier = U.clamp(cfg.hpTier + d, 0, 8) end),
+      function(d) cfg.hpTier = U.clamp(cfg.hpTier + d, 0, Up.MAX.hp) end),
     optRow("ENERGY TIER", function()
-        return cfg.energyTier .. "  (" .. (100 + cfg.energyTier * 20) .. " en)"
+        return cfg.energyTier .. "  (" .. Up.maxEnergy(cfg.energyTier) .. " en)"
       end,
-      function(d) cfg.energyTier = U.clamp(cfg.energyTier + d, 0, 4) end),
+      function(d) cfg.energyTier = U.clamp(cfg.energyTier + d, 0, Up.MAX.energy) end),
     optRow("LINK BLAST", function() return LINK_STATES[cfg.link].name end,
       function(d) cfg.link = cycle(cfg.link, 1, #LINK_STATES, d) end,
       "The Crucible's lattice opens to nothing else"),
@@ -197,13 +204,14 @@ function S:launch()
   run.forge = {
     boltdriver = wt, scatterhex = wt, arclance = wt,
     sparkshot = wt, pulsebloom = wt,
-    dome = cfg.domeTier, hpTier = cfg.hpTier, energyTier = cfg.energyTier,
+    dome = cfg.domeTier, repairPulse = cfg.repairTier,
+    hpTier = cfg.hpTier, energyTier = cfg.energyTier,
   }
   for _, pd in ipairs(run.players) do
-    pd.maxhp = 12 + cfg.hpTier * 4
+    pd.maxhp = Up.maxHp(cfg.hpTier)
     pd.hp = pd.maxhp
   end
-  l.maxenergy = 100 + cfg.energyTier * 20
+  l.maxenergy = Up.maxEnergy(cfg.energyTier)
 
   -- abilities
   for _, m in ipairs(MODULES) do

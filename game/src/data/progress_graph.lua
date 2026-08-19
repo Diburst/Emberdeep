@@ -40,7 +40,7 @@ return {
     ["camp_main"] = {
       doors = {
         A = { "camp_tele", "B" },
-        B = { "moss_1", "A" },
+        B = { "stair_junction", "A" },
         D = { "camp_awake", "B" },
         E = { "camp_hut", "A" },
       },
@@ -50,6 +50,7 @@ return {
         ["ent:f"] = { flags = { "ferro_rescued" }, req = {  }, kind = "npc" },
         ["ent:f*2"] = { flags = { "ferro_stage1" }, req = { "ferro_rescued", "ferrocoil" }, kind = "npc" },
         ["ent:k"] = { flags = { "camp_barricade" }, req = { "linkblast" }, kind = "linkcore" },
+        ["ent:u"] = { flags = { "telenet" }, req = { "boss_tideengine" }, kind = "npc" },
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
@@ -61,6 +62,7 @@ return {
         { from = "door:A", to = "ent:f", reqs = { {  } } },
         { from = "door:A", to = "ent:f*2", reqs = { {  } } },
         { from = "door:A", to = "ent:k", reqs = { {  } } },
+        { from = "door:A", to = "ent:u", reqs = { {  } } },
         { from = "door:B", to = "door:A", reqs = { { "camp_barricade" } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
         { from = "door:B", to = "door:D", reqs = { { "camp_barricade" } } },
@@ -70,6 +72,7 @@ return {
         { from = "door:B", to = "ent:f", reqs = { { "camp_barricade" } } },
         { from = "door:B", to = "ent:f*2", reqs = { { "camp_barricade" } } },
         { from = "door:B", to = "ent:k", reqs = { { "camp_barricade" } } },
+        { from = "door:B", to = "ent:u", reqs = { { "camp_barricade" } } },
         { from = "door:D", to = "door:A", reqs = { {  } } },
         { from = "door:D", to = "door:B", reqs = { { "camp_barricade" } } },
         { from = "door:D", to = "door:D", reqs = { {  } } },
@@ -79,6 +82,7 @@ return {
         { from = "door:D", to = "ent:f", reqs = { {  } } },
         { from = "door:D", to = "ent:f*2", reqs = { {  } } },
         { from = "door:D", to = "ent:k", reqs = { {  } } },
+        { from = "door:D", to = "ent:u", reqs = { {  } } },
         { from = "door:E", to = "door:A", reqs = { {  } } },
         { from = "door:E", to = "door:B", reqs = { { "camp_barricade" } } },
         { from = "door:E", to = "door:D", reqs = { {  } } },
@@ -88,6 +92,7 @@ return {
         { from = "door:E", to = "ent:f", reqs = { {  } } },
         { from = "door:E", to = "ent:f*2", reqs = { {  } } },
         { from = "door:E", to = "ent:k", reqs = { {  } } },
+        { from = "door:E", to = "ent:u", reqs = { {  } } },
       },
     },
     ["camp_tele"] = {
@@ -498,7 +503,7 @@ return {
     },
     ["deep_stair_1"] = {
       doors = {
-        A = { "moss_5", "C" },
+        A = { "stair_junction", "C" },
         B = { "deep_stair_2", "A" },
         C = { "furn_1", "A" },
         D = { "crys_1", "A" },
@@ -995,7 +1000,7 @@ return {
     },
     ["moss_1"] = {
       doors = {
-        A = { "camp_main", "B" },
+        A = { "stair_junction", "B" },
         B = { "moss_2", "A" },
         E = { "moss_secret", "A" },
       },
@@ -1088,7 +1093,6 @@ return {
       doors = {
         A = { "moss_4", "B" },
         B = { "moss_boss", "A" },
-        C = { "deep_stair_1", "A" },
         E = { "moss_grotto", "A" },
       },
       gives = {
@@ -1098,25 +1102,16 @@ return {
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "door:B", reqs = { {  } } },
-        { from = "door:A", to = "door:C", reqs = { {  } } },
         { from = "door:A", to = "door:E", reqs = { {  } } },
         { from = "door:A", to = "ent:1", reqs = { { "sparkjump" } } },
         { from = "door:A", to = "ent:9", reqs = { { "sparkjump" } } },
         { from = "door:B", to = "door:A", reqs = { {  } } },
         { from = "door:B", to = "door:B", reqs = { {  } } },
-        { from = "door:B", to = "door:C", reqs = { {  } } },
         { from = "door:B", to = "door:E", reqs = { {  } } },
         { from = "door:B", to = "ent:1", reqs = { { "sparkjump" } } },
         { from = "door:B", to = "ent:9", reqs = { { "sparkjump" } } },
-        { from = "door:C", to = "door:A", reqs = { {  } } },
-        { from = "door:C", to = "door:B", reqs = { {  } } },
-        { from = "door:C", to = "door:C", reqs = { {  } } },
-        { from = "door:C", to = "door:E", reqs = { {  } } },
-        { from = "door:C", to = "ent:1", reqs = { { "sparkjump" } } },
-        { from = "door:C", to = "ent:9", reqs = { { "sparkjump" } } },
         { from = "door:E", to = "door:A", reqs = { {  } } },
         { from = "door:E", to = "door:B", reqs = { {  } } },
-        { from = "door:E", to = "door:C", reqs = { {  } } },
         { from = "door:E", to = "door:E", reqs = { {  } } },
         { from = "door:E", to = "ent:1", reqs = { { "sparkjump" } } },
         { from = "door:E", to = "ent:9", reqs = { { "sparkjump" } } },
@@ -1411,13 +1406,18 @@ return {
     ["sky_boss"] = {
       doors = {
         A = { "sky_4", "B" },
+        B = { "upper_stair", "A" },
       },
       gives = {
         ["ent:t"] = { flags = { "boss_aeriesentinel", "corekey3" }, req = {  }, kind = "boss" },
       },
       edges = {
         { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "door:B", reqs = { { "boss_aeriesentinel", "driftvanes" } } },
         { from = "door:A", to = "ent:t", reqs = { {  } } },
+        { from = "door:B", to = "door:A", reqs = { { "driftvanes" } } },
+        { from = "door:B", to = "door:B", reqs = { { "boss_aeriesentinel" } } },
+        { from = "door:B", to = "ent:t", reqs = { { "driftvanes" } } },
       },
     },
     ["sky_nest"] = {
@@ -1444,6 +1444,34 @@ return {
         { from = "door:A", to = "door:A", reqs = { {  } } },
         { from = "door:A", to = "ent:1", reqs = { {  } } },
         { from = "door:A", to = "ent:2", reqs = { {  } } },
+      },
+    },
+    ["stair_junction"] = {
+      doors = {
+        A = { "camp_main", "B" },
+        B = { "moss_1", "A" },
+        C = { "deep_stair_1", "A" },
+        D = { "upper_stair", "B" },
+      },
+      gives = {
+      },
+      edges = {
+        { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "door:B", reqs = { {  } } },
+        { from = "door:A", to = "door:C", reqs = { { "boss_bramblemaw" } } },
+        { from = "door:A", to = "door:D", reqs = { { "driftvanes" } } },
+        { from = "door:B", to = "door:A", reqs = { {  } } },
+        { from = "door:B", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "door:C", reqs = { { "boss_bramblemaw" } } },
+        { from = "door:B", to = "door:D", reqs = { { "driftvanes" } } },
+        { from = "door:C", to = "door:A", reqs = { {  } } },
+        { from = "door:C", to = "door:B", reqs = { {  } } },
+        { from = "door:C", to = "door:C", reqs = { { "boss_bramblemaw" } } },
+        { from = "door:C", to = "door:D", reqs = { { "driftvanes" } } },
+        { from = "door:D", to = "door:A", reqs = { {  } } },
+        { from = "door:D", to = "door:B", reqs = { {  } } },
+        { from = "door:D", to = "door:C", reqs = { { "boss_bramblemaw" } } },
+        { from = "door:D", to = "door:D", reqs = { {  } } },
       },
     },
     ["ug_1"] = {
@@ -1621,6 +1649,20 @@ return {
         { from = "door:A", to = "ent:1", reqs = { {  } } },
         { from = "door:A", to = "ent:8", reqs = { {  } } },
         { from = "door:A", to = "ent:9", reqs = { {  } } },
+      },
+    },
+    ["upper_stair"] = {
+      doors = {
+        A = { "sky_boss", "B" },
+        B = { "stair_junction", "D" },
+      },
+      gives = {
+      },
+      edges = {
+        { from = "door:A", to = "door:A", reqs = { {  } } },
+        { from = "door:A", to = "door:B", reqs = { {  } } },
+        { from = "door:B", to = "door:A", reqs = { { "driftvanes" } } },
+        { from = "door:B", to = "door:B", reqs = { {  } } },
       },
     },
   },

@@ -2,7 +2,7 @@
 return {
   zone = "scrapyard", music = "scrapyard",
   arena = "scrapyard",
-  mapPos = { x = 0, y = 3, w = 3, h = 1 },
+  mapPos = { x = 0, y = 2, w = 3, h = 1 },
   gates = { G = "bulwark" },
   map = [[
 ############################################################

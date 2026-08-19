@@ -3,6 +3,7 @@ local WM = {}
 
 WM.ROOMS = {
   "camp_awake", "camp_main", "camp_tele", "camp_hut",
+  "stair_junction", "upper_stair",
   "deep_stair_1", "deep_stair_2",
   "moss_1", "moss_2", "moss_3", "moss_4", "moss_5", "moss_well",
   "moss_boss", "moss_secret", "moss_grotto",
@@ -33,17 +34,17 @@ WM.ZONE_NAMES = {
 
 -- map-canvas offsets (in map cells)
 WM.ZONE_OFFSETS = {
-  camp = { x = 6, y = 9 },
+  camp = { x = 8, y = 8 },
   coldstore = { x = 31, y = 13 },
-  core = { x = 31, y = 17 },
+  core = { x = 29, y = 17 },
   cradle = { x = 50, y = 13 },
   crystal = { x = 30, y = 14 },
-  flooded = { x = 27, y = 6 },
+  flooded = { x = 23, y = 6 },
   furnace = { x = 31, y = 10 },
-  mosswood = { x = 12, y = 7 },
-  scrapyard = { x = 24, y = 12 },
-  skyroot = { x = 18, y = 1 },
-  undergrove = { x = 14, y = 14 },
+  mosswood = { x = 11, y = 7 },
+  scrapyard = { x = 23, y = 12 },
+  skyroot = { x = 12, y = 1 },
+  undergrove = { x = 11, y = 14 },
 }
 
 WM.TELEPADS = {

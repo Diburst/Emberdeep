@@ -60,7 +60,9 @@ function S:enter()
     },
   }
   for _, it in ipairs(more) do items[#items + 1] = it end
-  self.list = Menu.new(items, { y = 96, spacing = 16 })
+  -- A scroll window, because test mode adds two rows and the list used
+  -- to run straight through the status readout underneath it.
+  self.list = Menu.new(items, { y = 82, spacing = 14, maxVisible = 6 })
 end
 
 function S:menu(action)
@@ -91,24 +93,43 @@ function S:draw()
 
   self.list:draw()
 
-  -- status readout
-  local y = 190
+  -- STATUS READOUT. Its top is measured from where the list actually
+  -- ends rather than pinned at 190, so adding a menu row can never print
+  -- the menu over the status again.
+  local shown = math.min(#self.list.items, self.list.maxVisible or #self.list.items)
+  -- Measured from the list, then capped: the block below needs 52px and
+  -- the screen is 270 tall, so it may never start below 214 however long
+  -- the menu gets.
+  local y = math.min(self.list.y + shown * self.list.spacing + 12, 214)
   g.setColor(P.slate)
   g.printf("MODULES", 0, y, G.VW, "center")
+  -- Derived from the module table, like the Test Chamber's. The old
+  -- hand-written five here never learned about the Bulwark Plate, the
+  -- Drift Vanes, the Cryo Coils, the Lume Core or the Cinder Ram -- so
+  -- the pause screen quietly told you that half your kit did not exist.
   local mods = {}
-  for _, id in ipairs({ "sparkjump", "grapple", "hydroseals", "heatplating", "telenet" }) do
-    if G.run.flags[id] then mods[#mods + 1] = Items.MODULES[id].name end
+  for _, id in ipairs(Items.ABILITY_ORDER) do
+    if G.run.flags[id] then
+      local d = Items.MODULES[id]
+      mods[#mods + 1] = d.short or d.name
+    end
   end
   local keys = 0
   for i = 1, 3 do if G.run.flags["corekey" .. i] then keys = keys + 1 end end
   g.setColor(P.cyan)
-  g.printf(#mods > 0 and table.concat(mods, "  .  ") or "none yet", 20, y + 11, G.VW - 40, "center")
+  -- two lines of room, which ten short names need
+  -- TWO lines are reserved here. All ten short names come to about 780px
+  -- against a 440px limit, so a full kit wraps -- and the row under it
+  -- has to start below the wrap, not below the first line.
+  g.printf(#mods > 0 and table.concat(mods, " . ") or "none yet",
+    20, y + 10, G.VW - 40, "center")
   g.setColor(P.gold)
   g.printf(string.format("CORE KEYS: %d/3     LIFE CAPSULES: %d     SCRAP: %d",
-    keys, G.run.capsules or 0, G.run.scrap or 0), 0, y + 30, G.VW, "center")
+    keys, G.run.capsules or 0, G.run.scrap or 0), 0, y + 32, G.VW, "center")
   g.setColor(P.slate)
   g.printf("playtime " .. require("src.core.util").formatTime(G.run.playtime or 0)
-    .. "   .   " .. ({ "STORY", "NORMAL", "VETERAN" })[G.run.difficulty], 0, y + 44, G.VW, "center")
+    .. "   .   " .. ({ "STORY", "NORMAL", "VETERAN" })[G.run.difficulty],
+    0, y + 44, G.VW, "center")
   g.setColor(1, 1, 1, 1)
 end
 

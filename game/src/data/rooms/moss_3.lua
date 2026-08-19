@@ -1,7 +1,7 @@
 -- Mosswood shaft: climbs toward the Skyroot high above.
 return {
   zone = "mosswood", music = "mosswood",
-  mapPos = { x = 6, y = 0, w = 1, h = 2 },
+  mapPos = { x = 3, y = 0, w = 1, h = 2 },
   map = [[
 #############CC###############
 #############CC###############

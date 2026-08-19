@@ -1,6 +1,7 @@
 -- Pickups: weapon-energy shards, hearts, scrap, plus map-placed
 -- life capsules / energy tanks (flag-gated, permanent).
 local Entity = require "src.entities.entity"
+local Up = require "src.upgrades"
 local U = require "src.core.util"
 local P = require "src.assets.palette"
 local PH = require "src.physics"
@@ -145,7 +146,8 @@ function Capsule:update(dt)
           if not pl.isVess then pl.energy = pl.maxenergy end
         end
         if G.game then
-          G.game:announce("ENERGY TANK CELL! Brassa can forge it into +20 max energy.", 3)
+          G.game:announce("ENERGY TANK CELL! Brassa can forge it into +"
+            .. Up.EN_PER_TIER .. " max energy.", 3)
         end
       else
         G.run.capsules = (G.run.capsules or 0) + 1
@@ -153,7 +155,8 @@ function Capsule:update(dt)
           if not pl.dead then pl.hp = pl.maxhp end
         end
         if G.game then
-          G.game:announce("LIFE CAPSULE CORE! Brassa can forge it into +4 max HP.", 3)
+          G.game:announce("LIFE CAPSULE CORE! Brassa can forge it into +"
+            .. Up.HP_PER_TIER .. " max HP.", 3)
         end
       end
       if G.Audio then G.Audio.sfx("capsule") end

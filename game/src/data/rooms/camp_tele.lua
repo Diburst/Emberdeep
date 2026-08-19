@@ -1,7 +1,7 @@
 -- The old teleport hub, west of camp. Jun's workshop.
 return {
   zone = "camp", music = "camp",
-  mapPos = { x = 0, y = 0, w = 2, h = 1 },
+  mapPos = { x = 0, y = 2, w = 2, h = 1 },
   hasTeleporter = true,
   map = [[
 ##############################
@@ -25,7 +25,7 @@ return {
   key = {
     ["1"] = "sign:sign_camp_west",
     ["2"] = "chest:chest_camptele:scrap:6",
-    ["j"] = "npc:jun:until:camp_frozen",
+    ["j"] = "npc:jun:until:camp_witness",
     ["W"] = "frozenkeeper:jun",
     ["t"] = "teleporter:camp",
   },

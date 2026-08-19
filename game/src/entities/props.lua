@@ -961,7 +961,21 @@ function Emberlantern:takeSequence()
     { who = "sys", text = "The Ember comes loose like a tooth. For one heartbeat it sits in Vess's hands, small and impossibly heavy -- a city's worth of warm." },
     { fn = function()
       G.run.flags.ember_taken = true
-      G.run.flags.camp_frozen = true
+      -- camp_frozen is NOT set here any more. It is what empties the camp
+      -- and stands the keepers up in its place, and the camp is not
+      -- supposed to empty yet: everyone comes to WATCH. World:load sets
+      -- it the moment you carry the Ember out of the camp zone, which is
+      -- also the moment the line "they watch you carry it away" stops
+      -- being true.
+      G.run.flags.camp_witness = true
+      G.run.emberT = 0
+      -- into the hands of whoever pulled it loose
+      local W2 = require "src.world"
+      local taker = W2.players and W2.players[1]
+      for _, pl in ipairs(W2.players or {}) do
+        if pl.emberTaker then taker = pl end
+      end
+      if taker and taker.takeEmber then taker:takeEmber() end
       if G.Audio then G.Audio.sfx("quake") end
       local Cam = require "src.camera"
       Cam.shake(5, 1.2)
@@ -979,6 +993,8 @@ function Emberlantern:takeSequence()
   G.game:startDialogue(script)
 end
 function Emberlantern:interact(p)
+  local W0 = require "src.world"
+  for _, pl in ipairs(W0.players or {}) do pl.emberTaker = (pl == p) or nil end
   local f = G.run.flags
   if f.ember_taken or f.camp_frozen then
     G.game:startDialogue({ { who = "sys", text = "Dark. Cold. Empty. It only ever held one thing." } })

@@ -4,7 +4,7 @@
 return {
   zone = "camp", music = "camp",
   arena = "camphut",
-  mapPos = { x = 4, y = 1, w = 1, h = 1 },
+  mapPos = { x = 3, y = 3, w = 1, h = 1 },
   map = [[
 ##############################
 ##############################
@@ -24,13 +24,13 @@ return {
 ##############################
 ##############################]],
   key = {
-    ["w"] = "npc:tikka:until:camp_frozen",
+    ["w"] = "npc:tikka:until:camp_witness",
     ["O"] = "frozenkeeper:tikka",
-    ["t"] = "npc:root:until:camp_frozen",
+    ["t"] = "npc:root:until:camp_witness",
     ["P"] = "frozenkeeper:root",
-    ["r"] = "npc:inks:until:camp_frozen",
+    ["r"] = "npc:inks:until:camp_witness",
     ["Q"] = "frozenkeeper:inks",
-    ["x"] = "npc:vill:until:camp_frozen",
+    ["x"] = "npc:vill:until:camp_witness",
     ["R"] = "frozenkeeper:vill",
   },
   links = {

@@ -2,7 +2,7 @@
 return {
   zone = "camp", music = "camp",
   arena = "deepstair",
-  mapPos = { x = 24, y = 1, w = 1, h = 2 },
+  mapPos = { x = 22, y = 2, w = 1, h = 2 },
   gates = { H = "boss_crucible", I = "boss_prismtyrant" },
   map = [[
 ##############################
@@ -42,7 +42,7 @@ return {
 ]],
   key = {},
   links = {
-    A = { "moss_5", "C" },
+    A = { "stair_junction", "C" },
     B = { "deep_stair_2", "A" },
     C = { "furn_1", "A" },
     D = { "crys_1", "A" },

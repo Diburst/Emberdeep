@@ -253,6 +253,11 @@ D.sign_hub = { { script = {
 D.sign_furnace = { { script = {
   { who = "sys", text = "FURNACE DEPTHS. Anchor rings certified for crew transit. The rings outlived the crews." },
 } } }
+D.sign_junction = { { script = {
+  { who = "sys", text = "SERVICE STAIRWELL, MIDDLE LANDING. Down: the deep works. Up: the roof. East: the wood. West: the camp. -- stencilled on the wall, still legible" },
+  { who = "vess", text = "Four ways out of one room. Whoever built this wanted to get anywhere fast." },
+  { who = "lu", text = "The shaft above has a draft. I cannot ride it yet." },
+} } }
 D.sign_crystal = { { script = {
   { who = "sys", text = "CRYSTAL HOLLOWS. The stones sing back when struck. The Conductor is still conducting -- nobody has told it the orchestra left. -- Inks, surveying note 88" },
 } } }
@@ -542,14 +547,26 @@ D.tikka = {
     { who = "tikka", text = "My music box!! You FOUND it! Here -- Papa's old capsule. He'd want the camp's heroes to have it." },
     { set = "quest_tikka_done" },
     { fn = function()
+      -- Tikka's is a GIFT, so it grants the tier as well as the core --
+      -- but it goes through the tier system rather than adding raw hp on
+      -- the side. The old version wrote maxhp directly and left hpTier
+      -- untouched, so the forge's accounting and the bot's actual health
+      -- disagreed from that moment on, and the amount was a hard-coded
+      -- +4 that survived the economy pass.
+      local Up = require "src.upgrades"
       G.run.capsules = (G.run.capsules or 0) + 1
-      for i = 1, 2 do G.run.players[i].maxhp = G.run.players[i].maxhp + 4 end
+      G.run.forge = G.run.forge or {}
+      G.run.forge.hpTier = math.min((G.run.forge.hpTier or 0) + 1, Up.MAX.hp)
+      for i = 1, 2 do
+        G.run.players[i].maxhp = Up.maxHp(G.run.forge.hpTier)
+      end
       local World = require "src.world"
       for _, pl in ipairs(World.players) do
         pl.maxhp = G.run.players[pl.idx].maxhp
         pl.hp = pl.maxhp
       end
-      G.game:announce("LIFE CAPSULE! Max HP +4 for both bots", 3)
+      G.game:announce("LIFE CAPSULE! Max HP +" .. Up.HP_PER_TIER
+        .. " for both bots", 3)
       if G.Audio then G.Audio.sfx("capsule") end
     end },
   } },

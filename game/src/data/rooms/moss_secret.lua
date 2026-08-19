@@ -1,7 +1,7 @@
 -- Hidden grotto off the Mosswood entry.
 return {
   zone = "mosswood", music = "mosswood",
-  mapPos = { x = 3, y = 2, w = 1, h = 1 },
+  mapPos = { x = 7, y = 2, w = 1, h = 1 },
   map = [[
 ##############################
 ##############################

@@ -1,7 +1,7 @@
 -- The approach. The walls hum. Something down here still sings.
 return {
   zone = "undergrove", music = "undergrove",
-  mapPos = { x = 7, y = 2, w = 2, h = 1 },
+  mapPos = { x = 8, y = 2, w = 2, h = 1 },
   dark = 0.85,
   map = [[
 ##############################################

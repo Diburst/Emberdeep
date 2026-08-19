@@ -1,7 +1,7 @@
 -- Mosswood entry: gentle combat introduction.
 return {
   zone = "mosswood", music = "mosswood",
-  mapPos = { x = 0, y = 2, w = 3, h = 1 },
+  mapPos = { x = 5, y = 3, w = 3, h = 1 },
   map = [[
 ############################################################
 ############################################################
@@ -28,7 +28,7 @@ A................h......................g...===...........BB
     ["h"] = "hopper",
   },
   links = {
-    A = { "camp_main", "B" },
+    A = { "stair_junction", "B" },
     B = { "moss_2", "A" },
     E = { "moss_secret", "A" },
   },

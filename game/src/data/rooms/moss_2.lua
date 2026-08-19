@@ -1,7 +1,7 @@
 -- Mosswood: spitters among the roots; the deep well yawns below.
 return {
   zone = "mosswood", music = "mosswood",
-  mapPos = { x = 3, y = 1, w = 3, h = 1 },
+  mapPos = { x = 1, y = 2, w = 3, h = 1 },
   map = [[
 ############################################################
 ############################################################
