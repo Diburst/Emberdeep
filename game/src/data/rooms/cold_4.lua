@@ -2,7 +2,6 @@
 return {
   zone = "coldstore", music = "coldstore",
   mapPos = { x = 10, y = 0, w = 3, h = 1 },
-  hasSave = true,
   map = [[
 ############################################################
 ############################################################
@@ -26,7 +25,7 @@ AA................1...b.......s...............h...r.......BB
     ["b"] = "brazier:c4a",
     ["r"] = "brazier:c4b",
     ["1"] = "sign:sign_office",
-    ["s"] = "save",
+    ["s"] = "checkpoint",
     ["h"] = "shelverbot",
   },
   links = {

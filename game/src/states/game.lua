@@ -189,8 +189,19 @@ function S:update(dt)
     return
   end
 
-  -- test chamber: summon the chosen boss (and again after a wipe)
+  -- TEST CHAMBER: summon the chosen boss (and again after a wipe) --
+  -- UNLESS the room arms it itself. The Archivist is woken by lighting
+  -- the fire in the middle of the Threshold, and auto-starting the
+  -- fight skipped that: you arrived, the boss began, and you were in a
+  -- freezing room with mechanics you had not been given the chance to
+  -- set up. If a prop in the room says it arms this boss, the chamber
+  -- keeps its hands off and lets the player start it the real way.
+  local armedByRoom = false
+  for _, e in ipairs(World.entities or {}) do
+    if e.armBoss and e.armBoss == self.testBoss then armedByRoom = true break end
+  end
   if self.testBoss and G.run.room == self.testBossRoom
+    and not armedByRoom
     and not World.bossActive and not self.respawning
     and not G.run.flags["boss_" .. self.testBoss] then
     self.testBossT = (self.testBossT or 1.2) - dt
@@ -305,10 +316,42 @@ function S:syncRun()
   G.run.coop = self.coop
 end
 
+-- ------------------------------------------------------------------
+-- DEATH REWINDS THE RUN
+-- ------------------------------------------------------------------
+-- It used to move the bots back to the checkpoint and leave everything
+-- else alone: the scrap you picked up on the way to dying, the flags
+-- you set, the chest you opened were all still yours. That makes death
+-- a walk rather than a loss, and it makes the checkpoint the thing you
+-- pass rather than the thing you play toward.
+--
+-- So it RELOADS THE SLOT. Whatever was banked at the last checkpoint is
+-- what you get; everything since is gone.
+--
+-- If there is no slot on disk yet -- a brand-new run that has not
+-- touched a checkpoint -- there is nothing to roll back to, so it falls
+-- through to the old behaviour rather than deleting the run.
 function S:respawnAtCheckpoint()
   self.respawning = true
   self.fadeDir = 1
   self.fadeCb = function()
+    local disk = G.run and G.Save.readSlot(G.run.slot)
+    if disk and disk.checkpoint and not G.Save.sealed() then
+      local slot, coop = G.run.slot, G.run.coop
+      G.run = disk
+      G.run.slot, G.run.coop = slot, coop
+      -- the player objects carry HP, energy and weapons; rebuild them
+      -- from what was banked or the rollback is only half done
+      for i, p in ipairs(self.players) do
+        local pd = G.run.players and G.run.players[i]
+        if pd then
+          p.maxhp = pd.maxhp or p.maxhp
+          p.weapons = pd.weapons or p.weapons
+          p.curWeapon = pd.curWeapon or 1
+          p.maxenergy = pd.maxenergy or p.maxenergy
+        end
+      end
+    end
     local cp = G.run.checkpoint
     for _, p in ipairs(self.players) do
       p.downed = false

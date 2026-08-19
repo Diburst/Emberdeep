@@ -49,7 +49,7 @@ return {
     ["n"] = "anchor",
   },
   links = {
-    A = { "sky_boss", "B" },
+    A = { "sky_boss", "B", req = "boss_aeriesentinel" },
     B = { "stair_junction", "D" },
   },
 }

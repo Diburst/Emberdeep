@@ -88,6 +88,15 @@ def target_gives(spec):
     if kind == "boss":
         return ["boss_" + parts[1]] + BOSS_REWARDS.get(parts[1], []), []
     if kind == "brazier":
+        # `brazier:<id>:kept:<bossid>` -- the Threshold's kept fire is
+        # what ARMS the Archivist now, in place of the tripwire column
+        # it replaced. Waking it is the same event to progression as
+        # crossing the old trigger was, so it has to grant the same
+        # flags or the Cradle behind it reads as unreachable.
+        if len(parts) > 3 and parts[3]:
+            b = parts[3]
+            return (["brazier_" + parts[1], "boss_" + b]
+                    + BOSS_REWARDS.get(b, [])), []
         # A brazier grants its own flag when you can reach it. The
         # CARRY is not modelled as a requirement here on purpose --
         # checkheat.py is the tool that walks the chain against the

@@ -2,7 +2,7 @@
 local WM = {}
 
 WM.ROOMS = {
-  "camp_awake", "camp_main", "camp_tele", "camp_hut",
+  "camp_awake", "camp_main", "camp_hut",
   "stair_junction", "upper_stair",
   "deep_stair_1", "deep_stair_2",
   "moss_1", "moss_2", "moss_3", "moss_4", "moss_5", "moss_well",
@@ -53,7 +53,7 @@ WM.ZONE_OFFSETS = {
 }
 
 WM.TELEPADS = {
-  { id = "camp", room = "camp_tele", door = "B", label = "EMBER CAMP - old hub" },
+  { id = "camp", room = "camp_awake", door = "B", label = "EMBER CAMP - Jun's shop" },
   { id = "flooded", room = "flood_hub", door = "A", label = "FLOODED WORKS - dry deck" },
   { id = "furnace", room = "furn_3", door = "C", label = "FURNACE DEPTHS - cooling station" },
   { id = "crystal", room = "crys_2", door = "C", label = "CRYSTAL HOLLOWS - song chamber" },

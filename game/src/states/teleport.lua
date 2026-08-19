@@ -46,10 +46,18 @@ function S:go(pad)
       require("src.camera").jumpTo(dest.x + 12, dest.y)
       World:fx("burst", dest.x + 12, dest.y + 8, { color = "cyan", n = 12 })
     end
-    game:setCheckpoint(pad.room, G.run.door or "A")
-    G.run.checkpoint = dest and { room = pad.room, x = dest.x + 4, y = dest.y }
-      or { room = pad.room, door = "A" }
-    game:autosave()
+    -- A PAD IS TRANSPORT, NOT A SAVE.
+    --
+    -- It used to move the checkpoint and write the slot, which made the
+    -- whole pad network a save network -- exactly the thing that got
+    -- taken off the pause menu. Progress banks at a lantern you walked
+    -- to, and nowhere else.
+    --
+    -- Moving the checkpoint WITHOUT writing would have been worse than
+    -- either: death re-reads the slot, so the pad's respawn point would
+    -- be silently thrown away the moment it mattered. So it does
+    -- neither, and the pad you arrive at is a way back to the lantern
+    -- rather than a substitute for it.
   end
 end
 

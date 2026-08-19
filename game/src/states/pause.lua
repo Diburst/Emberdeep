@@ -60,13 +60,16 @@ function S:enter()
       hint = "No lantern will hold while you carry the heart. Quitting "
         .. "returns you to the last saved moment.",
     } or {
-      label = "SAVE + QUIT TO TITLE", onConfirm = function()
-        game:syncRun()
-        G.Save.writeSlot(G.run.slot, G.run)
+      -- YOU CANNOT SAVE FROM HERE ANY MORE. Progress is banked at
+      -- checkpoints and nowhere else; a menu that writes the slot means
+      -- the last checkpoint is never the thing you actually return to,
+      -- and every death becomes negotiable.
+      label = "QUIT TO TITLE", onConfirm = function()
         if G.Audio then G.Audio.stopMusic() end
         G.State.switch(require "src.states.title")
       end,
-      hint = "Progress is saved to your slot. Resume any time.",
+      hint = "You resume from your last CHECKPOINT. Anything since then "
+        .. "is lost.",
     }),
   }
   for _, it in ipairs(more) do items[#items + 1] = it end

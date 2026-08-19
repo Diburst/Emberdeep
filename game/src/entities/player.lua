@@ -76,6 +76,50 @@ local RAM_DMG = 6
 -- fighter and becomes a thing to be escorted, which is why the OTHER bot
 -- suddenly matters.
 -- ==================================================================
+-- ------------------------------------------------------------------
+-- ENCASED IN ICE
+-- ------------------------------------------------------------------
+-- The Archivist's indexing beam does not knock you down, it puts you
+-- INSIDE something. A bot in the block cannot move or act and is being
+-- worn away steadily, and the way out is the zone's own verb: the other
+-- bot brings fire and melts it.
+--
+-- SOLO HAS TO HAVE AN ANSWER. The other bot is parked and invulnerable
+-- when you play alone, so a rescue that needs a partner is a death
+-- sentence rather than a mechanic -- the same rule the pin follows.
+-- Mashing breaks the block; it is just far slower than a spark, so in
+-- co-op the fire is always the better answer.
+-- THE I-FRAME WINDOW, ONCE, WHERE EVERY HAZARD CAN SEE IT.
+--
+-- takeDamage grants this much mercy after a hit, so ANY hazard that
+-- claims to tick faster than it is lying: the extra ticks are swallowed
+-- and the hazard runs at IFRAME regardless. The Coldstore's bite told
+-- this lie at 0.5s and the drown told it at 0.9s, and in both cases the
+-- number in the file described a game nobody was playing. A hazard
+-- interval is either IFRAME or a multiple of it.
+local IFRAME     = 1.2
+
+-- WATER. An unsealed bot starts drowning the moment it is in the water,
+-- not when its head goes under: BREATH_MAX is the grace, DROWN_TICK the
+-- interval after that.
+local BREATH_MAX = 3.0
+local DROWN_TICK = IFRAME
+local DROWN_DMG  = 3
+-- SWIMMING IS HARD. A held jump used to lift you steadily, which made
+-- deep water a lift shaft. One stroke per press, with a cooldown, so
+-- crossing water is a thing you fight rather than a thing you hold.
+local STROKE_CD  = 0.34
+
+local ICE_DUR    = 9.0     -- seconds before it gives out on its own
+local ICE_TICK   = 1.3     -- seconds between bites (i-frames are 1.2)
+local ICE_FRAC   = 0.12    -- of max HP per bite
+local ICE_MASH   = 8       -- presses to break out unaided
+-- 2 TILES of actual travel. This was a velocity that got zeroed on the
+-- very next frame by the block below, so the shove moved nobody: a
+-- frozen bot held still. friction is 800px/s^2, so d = v^2/2f and
+-- v = sqrt(32 * 1600) ~= 230.
+local ICE_KNOCK  = 230     -- px/s -> about 2 tiles before it stops
+
 local EMBER_SLOW   = 0.75      -- of normal top speed
 local EMBER_AURA_R = 36        -- px; torches anything smaller than a boss
 local EMBER_AURA_DMG = 14      -- per tick, to anything too heavy to torch
@@ -141,12 +185,19 @@ function Player:init(idx, x, y)
   self.charge = 0
   self.charging = false
   self.hurtT = 0
-  self.breath = 9
+  -- NOT 9. It was a literal here while BREATH_MAX said 3.0 four hundred
+  -- lines up, so the grace before the first drown tick was three times
+  -- what the constant claimed and no amount of tuning the constant
+  -- changed it.
+  self.breath = BREATH_MAX
   self.heat = 12
   -- chill is a 0..1 meter that FILLS, the opposite sense to heat/breath.
   -- It persists across rooms on purpose: a door is not a coat.
   self.chill = 0
   self.chillBite = 0
+  self.icedT = 0
+  self.icedMash = 0
+  self.icedBite = 0
   self.chilledT = 0
 
   -- Vess kit
@@ -260,13 +311,15 @@ function Player:takeDamage(dmg, srcx, opts)
   local mult = ({ 0.5, 1, 1.5 })[G.run.difficulty] or 1
   dmg = math.max(1, math.floor(dmg * mult + 0.5))
   self.hp = self.hp - dmg
-  self.invuln = 1.2
+  self.invuln = IFRAME
   self.hurtT = 0.3
   self.white = 0.12
-  local dir = srcx and U.sign(self.x + self.w / 2 - srcx) or -self.facing
-  if dir == 0 then dir = -self.facing end
-  self.vx = dir * 130
-  self.vy = math.min(self.vy, -120)
+  if not (opts and opts.noKnock) then
+    local dir = srcx and U.sign(self.x + self.w / 2 - srcx) or -self.facing
+    if dir == 0 then dir = -self.facing end
+    self.vx = dir * 130
+    self.vy = math.min(self.vy, -120)
+  end
   Cam.shake(2, 0.18)
   G.Input.rumble(self:controlSlot() or self.idx, 0.7, 0.2)
   if G.Audio then G.Audio.sfx("hurt") end
@@ -279,8 +332,78 @@ function Player:takeDamage(dmg, srcx, opts)
   end
 end
 
+-- `warm` is true when the beam caught you standing in a fire's reach:
+-- the heat does not save you, it just means you are thrown off it first.
+function Player:encase(World, srcx, warm)
+  if self.dead or self.downed or self.idle or self.icedT > 0 then return end
+  self.icedT = ICE_DUR
+  self.icedMash = 0
+  self.icedBite = ICE_TICK
+  self.invuln = 0
+  if warm then
+    local dir = srcx and U.sign(self.x + self.w / 2 - srcx) or -self.facing
+    if dir == 0 then dir = -self.facing end
+    self.x = self.x + dir * 6
+    self.vx = dir * ICE_KNOCK
+    self.vy = -90
+  end
+  World:fx("burst", self.x + self.w / 2, self.y + self.h / 2,
+    { color = "ice", n = 16, speed = 90 })
+  Cam.shake(3, 0.3)
+  if G.Audio then G.Audio.sfx("crack") end
+  if G.game and not G.run.taughtIce then
+    G.run.taughtIce = true
+    G.game:announce("Frozen solid! Bring a spark to melt them out.", 3)
+  end
+end
+
+function Player:thaw(World, byFire)
+  if self.icedT <= 0 then return end
+  self.icedT = 0
+  self.icedMash = 0
+  self.invuln = math.max(self.invuln, 0.8)
+  World:fx("burst", self.x + self.w / 2, self.y + self.h / 2,
+    { color = byFire and "ember" or "ice", n = 14, speed = 110 })
+  if G.Audio then G.Audio.sfx(byFire and "emitter" or "crack") end
+end
+
+function Player:iced() return (self.icedT or 0) > 0 end
+
+-- A slab of ice around the whole bot, cracking as you fight it. The
+-- cracks are the mash meter: without them there is no way to tell being
+-- frozen from being stuck, and no sign that hitting buttons is doing
+-- anything at all.
+function Player:drawIce(g)
+  if (self.icedT or 0) <= 0 then return end
+  local x, y = self.x - 5, self.y - 6
+  local w, h = self.w + 10, self.h + 8
+  local frac = math.min(1, (self.icedMash or 0) / ICE_MASH)
+  local shiver = (self.icedMash or 0) > 0 and math.sin(G.time * 40) * frac or 0
+
+  g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.42)
+  g.rectangle("fill", x + shiver, y, w, h, 3, 3)
+  g.setColor(0.92, 0.98, 1.0, 0.75)
+  g.rectangle("line", x + shiver, y, w, h, 3, 3)
+  -- a highlight down the near face, so it reads as a solid block
+  g.setColor(1, 1, 1, 0.30)
+  g.rectangle("fill", x + shiver + 2, y + 2, 3, h - 4)
+  g.setColor(1, 1, 1, 0.16)
+  g.rectangle("fill", x + shiver + 2, y + 2, w - 4, 2)
+
+  -- CRACKS: one more every press, spreading from the middle
+  local n = math.floor(frac * 5)
+  g.setColor(1, 1, 1, 0.85)
+  for i = 1, n do
+    local sx = x + shiver + 3 + ((i * 37) % math.max(1, w - 6))
+    local sy = y + 3 + ((i * 53) % math.max(1, h - 8))
+    g.line(sx, sy, sx + 3 - (i % 3) * 3, sy + 4)
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
 function Player:goDown()
   self.downed = true
+  self.icedT = 0
   -- a bot on the floor is not holding a flame
   if self:hasSpark() then
     self:dropSpark(require "src.world", nil)
@@ -529,6 +652,67 @@ function Player:update(dt)
     return
   end
 
+  -- ---- encased: no movement, no weapons, only struggling or a friend
+  --
+  -- CHECKED BEFORE `idle`, on purpose. A parked bot that gets frozen used
+  -- to return above this and never tick: its timer never ran, so swapping
+  -- to it handed you a block with the full nine seconds still on it.
+  if self.icedT > 0 then
+    self.icedT = self.icedT - dt
+    -- A BLOCK OF ICE IS STILL A BODY. It falls, and it slides to a stop
+    -- rather than stopping dead -- which is what made the knockback do
+    -- nothing at all: the shove was applied and then zeroed on the very
+    -- next frame, one line down.
+    self.vy = math.min((self.vy or 0) + BASE.gravity * dt, BASE.maxFall)
+    local fr = BASE.friction * dt
+    if self.vx > 0 then self.vx = math.max(0, self.vx - fr)
+    else self.vx = math.min(0, self.vx + fr) end
+    PH.move(self, self.vx * dt, self.vy * dt)
+    if self.onGround then self.vy = 0 end
+    self.anim = "idle"
+    self.domeActive = false
+    self.charging = false
+    if self:hasSpark() then self:dropSpark(World, nil) end
+
+    self.icedBite = self.icedBite - dt
+    if self.icedBite <= 0 then
+      self.icedBite = ICE_TICK
+      self:takeDamage(math.max(1, math.ceil((self.maxhp or 12) * ICE_FRAC)),
+        nil, { pierceDash = true, cold = true })
+    end
+
+    -- A PARTNER WITH FIRE. Touching the block with a spark spends it and
+    -- the ice is gone -- which is the whole reason to be carrying one.
+    for _, q in ipairs(World.players) do
+      if q ~= self and not q.dead and q.hasSpark and q:hasSpark()
+        and U.aabb(self.x - 10, self.y - 10, self.w + 20, self.h + 20,
+                   q.x, q.y, q.w, q.h) then
+        q:dropSpark(World, nil)
+        self:thaw(World, true)
+        return
+      end
+    end
+
+    -- ANY slot counts. A frozen bot with no control slot of its own --
+    -- the parked one in solo -- could never be mashed free at all.
+    for s2 = 1, 2 do
+      if slot == s2 or (slot == nil and s2 == 1) then
+        for _, a2 in ipairs({ "jump", "fire", "special", "util", "dash" }) do
+          if G.Input.pressed(s2, a2) then
+            self.icedMash = self.icedMash + 1
+            World:fx("spark", self.x + self.w / 2, self.y + 2,
+              { color = "ice", n = 4 })
+            if G.Audio then G.Audio.sfx("crack") end
+          end
+        end
+      end
+    end
+    if self.icedMash >= ICE_MASH or self.icedT <= 0 then
+      self:thaw(World, false)
+    end
+    return
+  end
+
   if self.idle then
     -- solo uncontrolled bot: stands still, invulnerable, keeps dome if set
     self:updateIdle(dt, World)
@@ -662,11 +846,20 @@ function Player:update(dt)
   -- a one-pixel margin nobody lands. calibrate enforces >= 4.15.
   if sparkjump then jumpVel = -365 end
 
-  if self.jumpBuf > 0 and (self.coyote > 0 or waterMode) then
+  -- ONE STROKE PER PRESS. In water the jump buffer used to re-fire as
+  -- fast as the buffer refilled, so holding it was a steady lift and a
+  -- deep pool was a lift shaft. A stroke now has a cooldown: you cross
+  -- water by spamming the button, and you feel every metre of it.
+  if self.strokeCd and self.strokeCd > 0 then
+    self.strokeCd = self.strokeCd - dt
+  end
+  local canStroke = not waterMode or (self.strokeCd or 0) <= 0
+  if self.jumpBuf > 0 and (self.coyote > 0 or waterMode) and canStroke then
     self.vy = jumpVel
     self.jumpBuf = 0
     self.coyote = 0
     self.hoverT = 0
+    if waterMode then self.strokeCd = STROKE_CD end
     if G.Audio then G.Audio.sfx("jump") end
     World:fx("puff", self.x + self.w / 2, self.y + self.h)
   end
@@ -741,7 +934,20 @@ function Player:update(dt)
         self.vaultOver = nil
         if G.run.flags.bulwark then
           self.bulwarkT = 0.2 + PLATE_HOLD
-          if G.run.flags.cinderram then self.chevT = 0.32 end
+          if G.run.flags.cinderram then
+            self.chevT = 0.32
+            -- ...and it burns hoarfrost off the floor it crosses. This
+            -- is Vess's job in the Coldstore and it is deliberately a
+            -- HELP rather than a requirement: braziers alone have to be
+            -- enough, or a player who took another route through the
+            -- game arrives at the Threshold with no way to win.
+            if World.frost then
+              local tx = math.floor((self.x + self.w / 2) / T)
+              Cold.frostBurn(World, tx, Cold.RAM_BURN)
+              World:fx("burst", self.x + self.w / 2, self.y + self.h,
+                { color = "ember", n = 8, speed = 90 })
+            end
+          end
         end
         if not self.onGround then self.airDashed = true end
         if G.Audio then
@@ -912,20 +1118,23 @@ function Player:update(dt)
     self:dropSpark(World, "The water takes the spark.")
   end
   self.wasInWater = self.inWater
+  -- WATER IS DEADLY TO A BOT THAT IS NOT SEALED.
+  --
+  -- It used to wait until your HEAD went under and then chip at you.
+  -- These are machines: the moment an unsealed one is in the water the
+  -- clock is running, whether it is wading or swimming, and treading
+  -- water at the surface does not refill anything. HYDRO SEALS are the
+  -- difference between a hazard and a route.
   if self.inWater and not G.run.flags.hydroseals then
-    local headTx = math.floor((self.x + self.w / 2) / T)
-    local headTy = math.floor((self.y + 2) / T)
-    if World:isWater(headTx, headTy) then
-      self.breath = self.breath - dt
-      if self.breath <= 0 then
-        self.breath = 1.2
-        self:takeDamage(2, nil, { pierceDash = true })
-      end
-    else
-      self.breath = math.min(9, self.breath + dt * 4)
+    self.breath = self.breath - dt
+    if self.breath <= 0 then
+      self.breath = DROWN_TICK
+      -- NO KNOCKBACK. Being shoved around by the water you are drowning
+      -- in made the swim unsteerable on top of being lethal.
+      self:takeDamage(DROWN_DMG, nil, { pierceDash = true, noKnock = true })
     end
   else
-    self.breath = 9
+    self.breath = math.min(BREATH_MAX, self.breath + dt * 4)
   end
 
   -- heat rooms
@@ -1276,7 +1485,13 @@ function Player:updateChill(dt, World)
     warm = Cold.heatAt(World, cx, cy) ~= nil
   end
 
-  if cold and not warm then
+  -- STANDING ON HOARFROST is worse than breathing the air, and the
+  -- Coils have nothing to say about it. That is the zone telling you,
+  -- in the one language it has, to get off the ice.
+  local onIce = Cold.onFrost(World, self)
+  if onIce and not warm then
+    self.chill = math.min(Cold.CHILL_MAX, self.chill + Cold.FROST_FILL * dt)
+  elseif cold and not warm then
     local rate = G.run.flags.cryocoils and Cold.FILL_COILED or Cold.FILL_BARE
     self.chill = math.min(Cold.CHILL_MAX, self.chill + rate * dt)
   else
@@ -1355,6 +1570,19 @@ function Player:updateSpark(dt, World)
     return
   end
 
+  -- IT MELTS WHAT YOU WALK OVER. A bot carrying fire across a frozen
+  -- floor leaves a thawed line behind it -- which is the whole reason
+  -- the carry is worth the gun you gave up for it.
+  self.sparkMelt = (self.sparkMelt or 0) - dt
+  if self.sparkMelt <= 0 and World.frost then
+    self.sparkMelt = Cold.SPARK_MELT_T
+    local tx = math.floor((self.x + self.w / 2) / T)
+    if Cold.frostBurn(World, tx, Cold.SPARK_MELT) > 0 then
+      World:fx("spark", self.x + self.w / 2, self.y + self.h,
+        { color = "ember", n = 3 })
+    end
+  end
+
   -- embers coming off the hand
   self.sparkFx = (self.sparkFx or 0) - dt
   if self.sparkFx <= 0 then
@@ -1382,6 +1610,33 @@ function Player:drawSpark(g)
   g.setColor(P.gold)
   g.polygon("fill", cx, cy - hh * 0.6, cx + 1.4, cy + 1, cx, cy + 1.6, cx - 1.4, cy + 1)
   g.setColor(1, 1, 1, 1)
+end
+
+-- ------------------------------------------------------------------
+-- EVERY SHOT CARRIES THE SHOT'S MOMENTUM
+-- ------------------------------------------------------------------
+-- A bot running at full tilt throws further than a bot standing still,
+-- and a bot sprinting backwards throws shorter. It costs one line and
+-- it makes movement matter to every weapon in the game rather than to
+-- none of them.
+--
+-- It goes through ONE function on purpose. updateFire has five spawn
+-- sites -- lance, mortar, radial, pellets, and the ordinary case -- and
+-- adding `+ self.vx` to four of them is exactly the hand-written list
+-- that this project keeps getting wrong. shoot_test asserts that
+-- updateFire contains no bare Proj.spawn at all.
+--
+-- Horizontal is inherited in full. VERTICAL is not: terminal fall is
+-- 300px/s against a bolt's 300, so a full share would point every shot
+-- taken in mid-air at the floor. A third reads as weight without
+-- taking the aim away.
+local MOMENTUM_X = 1.0
+local MOMENTUM_Y = 0.33
+
+function Player:shoot(World, x, y, cfg)
+  cfg.vx = (cfg.vx or 0) + (self.vx or 0) * MOMENTUM_X
+  cfg.vy = (cfg.vy or 0) + (self.vy or 0) * MOMENTUM_Y
+  return Proj.spawn(World, x, y, cfg)
 end
 
 function Player:updateFire(dt, World, slot, down, pressed)
@@ -1417,7 +1672,7 @@ function Player:updateFire(dt, World, slot, down, pressed)
         self.fireCd = def.rate
         local dmg = full and def.dmg[lvl] or def.tapdmg
         local pierce = full and def.pierce[lvl] or 0
-        Proj.spawn(World, mx, my, {
+        self:shoot(World, mx, my, {
           side = "player", dmg = dmg, owner = self,
           vx = dx * def.speed, vy = dy * def.speed,
           kind = "lance", size = full and 6 or 4, pierce = pierce, life = 0.8,
@@ -1437,12 +1692,16 @@ function Player:updateFire(dt, World, slot, down, pressed)
   if down("fire") and self.fireCd <= 0 then
     self.fireCd = rate
     if def.mortar then
-      -- Magnet Mortar: a lobbed shell on a gravity arc
-      Proj.spawn(World, mx, my, {
+      -- Magnet Mortar: a lobbed shell on a gravity arc that bounces off
+      -- what it hits and rolls along what it lands on. Every number is
+      -- in weapons.lua so the weapon can be retuned without reading this.
+      self:shoot(World, mx, my, {
         side = "player", dmg = def.dmg[lvl], owner = self,
         vx = dx * def.speed,
         vy = -195 + math.min(0, dy) * 130,
-        kind = def.visual, size = def.size, gravity = 640, life = 2.4,
+        kind = def.visual, size = def.size, gravity = 640,
+        life = def.life or 2.4, bounces = def.bounces,
+        restitution = def.restitution, rolls = def.rolls,
       })
       self.vx = self.vx - dx * 45
       Cam.shake(0.8, 0.08)
@@ -1452,7 +1711,7 @@ function Player:updateFire(dt, World, slot, down, pressed)
       local cx, cy = self.x + self.w / 2, self.y + self.h / 2 - 2
       for i = 1, n do
         local ang = (i / n) * math.pi * 2 + G.time
-        Proj.spawn(World, cx, cy, {
+        self:shoot(World, cx, cy, {
           side = "player", dmg = def.dmg[lvl], owner = self,
           vx = math.cos(ang) * def.speed, vy = math.sin(ang) * def.speed,
           kind = def.visual, size = def.size, life = def.life,
@@ -1465,7 +1724,7 @@ function Player:updateFire(dt, World, slot, down, pressed)
       for i = 1, n do
         local ang = math.atan2(dy, dx) + U.rand(-def.spread, def.spread)
         local sp = def.speed * U.rand(0.85, 1.15)
-        Proj.spawn(World, mx, my, {
+        self:shoot(World, mx, my, {
           side = "player", dmg = def.dmg[lvl], owner = self,
           vx = math.cos(ang) * sp, vy = math.sin(ang) * sp,
           kind = def.visual, size = def.size, life = def.life,
@@ -1473,7 +1732,7 @@ function Player:updateFire(dt, World, slot, down, pressed)
       end
       self.vx = self.vx - dx * 40
     else
-      Proj.spawn(World, mx, my, {
+      self:shoot(World, mx, my, {
         side = "player", dmg = def.dmg[lvl], owner = self,
         vx = dx * def.speed, vy = dy * def.speed,
         kind = def.visual, size = def.size,
@@ -1608,6 +1867,7 @@ function Player:draw()
   -- the Ember goes UNDER the bot, so the sprite reads as holding it
   self:drawEmber(g)
   self:drawSpark(g)
+  self:drawIce(g)
 
   -- dome
   if self.domeActive then
@@ -1623,15 +1883,23 @@ function Player:draw()
     g.setColor(1, 1, 1, 1)
   end
 
-  -- pinned: a struggle meter, so you know mashing is doing something
+  -- STRUGGLE METERS. Every mash-out in the game shows the same bar in
+  -- the same place, so a player does not have to learn a second
+  -- language for the same verb. The ice used to show only cracks, which
+  -- nobody reads as a meter.
+  local mashFrac
   if self.pinnedT > 0 then
+    mashFrac = math.min(1, self.pinnedMash / (self.pinNeeded or Player.PIN_MASH))
+  elseif (self.icedT or 0) > 0 then
+    mashFrac = math.min(1, (self.icedMash or 0) / ICE_MASH)
+  end
+  if mashFrac then
     local cx = self.x + self.w / 2
     local by = self.y - 10
-    local frac = math.min(1, self.pinnedMash / (self.pinNeeded or Player.PIN_MASH))
     g.setColor(P.black[1], P.black[2], P.black[3], 0.7)
     g.rectangle("fill", cx - 11, by, 22, 4)
     g.setColor(P.gold[1], P.gold[2], P.gold[3], 0.5 + math.sin(G.time * 20) * 0.3)
-    g.rectangle("fill", cx - 10, by + 1, 20 * frac, 2)
+    g.rectangle("fill", cx - 10, by + 1, 20 * mashFrac, 2)
     g.setColor(1, 1, 1, 1)
   end
 
@@ -1802,9 +2070,12 @@ function Player:draw()
   end
 
   -- breath bubbles warning
-  if self.inWater and not G.run.flags.hydroseals and self.breath < 4 then
+  -- the bar is BREATH_MAX wide and shows from the first frame under: the
+  -- meter is the warning now, because the grace is short enough that a
+  -- meter appearing late is a meter you never see
+  if self.inWater and not G.run.flags.hydroseals then
     g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.9)
-    local bw = 14 * (self.breath / 9)
+    local bw = 14 * math.max(0, math.min(1, self.breath / BREATH_MAX))
     g.rectangle("fill", self.x + self.w / 2 - 7, self.y - 8, bw, 2)
     g.setColor(1, 1, 1, 1)
   end

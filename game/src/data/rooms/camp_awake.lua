@@ -18,13 +18,20 @@ return {
 ##.......======.......................##
 ##......A.....................====....##
 ##......A.........................BB..##
-##..........j..W..................BB.z##
+##..........j..W....t...1...2.....BB.z##
 ########################################
 ##....................................##
 ##....................................##
 ########################################
 ]],
+  hasTeleporter = true,
   key = {
+    -- THE EMBERCAMP PAD, moved out of the old hub room and into the
+    -- shop you wake up in. A room whose only job was holding a
+    -- teleporter was a room you walked through, never to.
+    ["t"] = "teleporter:camp",
+    ["1"] = "sign:sign_camp_west",
+    ["2"] = "chest:chest_camptele:scrap:6",
     ["9"] = "chest:ch_shelf:scrap:15",
     ["j"] = "npc:jun:until:camp_witness",
     ["W"] = "frozenkeeper:jun",

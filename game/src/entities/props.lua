@@ -11,50 +11,24 @@ local T = 16
 -- ------------------------------------------------------------------
 -- Save statue
 -- ------------------------------------------------------------------
-local SavePoint = Entity.extend()
-function SavePoint:init(x, y)
-  Entity.init(self, x, y - 8)
-  self.kind = "save"
-  self.w, self.h = 16, 24
-  self.interactable = true
-  self.hint = "save"
-  self.interactRange = 24
-  self.layer = -1
-end
-function SavePoint:interact(p)
-  local World = require "src.world"
-  if G.Save.sealed() then
-    G.game:announce("No lantern will hold. Not while you carry the heart.", 2.5)
-    if G.Audio then G.Audio.sfx("menuback") end
-    return
-  end
-  for _, pl in ipairs(World.players) do
-    if not pl.dead then
-      if pl.downed then pl:revive(1) end
-      pl.hp = pl.maxhp
-      pl.energy = pl.maxenergy
-    end
-  end
-  G.game:setCheckpoint(World.room.id, G.run.door or "A")
-  G.run.door = G.run.door
-  G.game:syncRun()
-  local ok = G.Save.writeSlot(G.run.slot, G.run)
-  G.game:announce(ok and "* Game saved. HP restored. *" or "! Save failed !", 2)
-  if G.Audio then G.Audio.sfx("save") end
-  World:fx("heal", self.x + 8, self.y + 4)
-end
-function SavePoint:draw()
-  local g = love.graphics
-  local World = require "src.world"
-  World.glow(self.x + 8, self.y + 6, 24, require("src.assets.palette").ember,
-    0.5 + math.sin(G.time * 2) * 0.1)
-  G.drawSprite("prop_save", 1, self.x + 8, self.y + self.h)
-  local pulse = 0.5 + math.sin(G.time * 3) * 0.4
-  g.setColor(P.ember[1], P.ember[2], P.ember[3], pulse * 0.6)
-  g.circle("fill", self.x + 8, self.y + 6, 3 + pulse * 2)
-  g.setColor(1, 1, 1, 1)
-end
-Entity.register("save", function(x, y) return SavePoint.new(x, y) end)
+-- ------------------------------------------------------------------
+-- SAVE POINTS ARE RETIRED
+-- ------------------------------------------------------------------
+-- A save lantern and a checkpoint were the same thing wearing two
+-- costumes: both wrote the slot, both moved the respawn. The lantern
+-- also refilled HP, which quietly made every fight afterwards easier
+-- than it was designed to be, and it needed an [INTERACT] that a player
+-- could walk past without noticing.
+--
+-- So there is one of them now, and it is the checkpoint. `save` still
+-- resolves -- an old room file will not crash -- but it builds a
+-- Checkpoint, and checkprops fails on any room that still uses the
+-- spec so they get converted rather than lingering.
+Entity.register("save", function(x, y)
+  local Checkpoint = Entity.registry and Entity.registry["checkpoint"]
+  if Checkpoint then return Checkpoint(x, y, { "checkpoint" }) end
+  return nil
+end)
 
 -- ------------------------------------------------------------------
 -- Checkpoint lantern (auto, silent-ish)
@@ -512,6 +486,17 @@ function Platform:init(x, y, parts)
 end
 function Platform:update(dt)
   local World = require "src.world"
+  -- REDACTED. The Archivist erases a shelf for a few seconds, including
+  -- the one you are standing on. It is an archive; deleting things is
+  -- the only thing it has ever been for.
+  if self.redacted and self.redacted > 0 then
+    self.redacted = self.redacted - dt
+    if self.redacted <= 0 then
+      self.redacted = nil
+      World:fx("spark", self.x + self.w / 2, self.y, { color = "cyan", n = 6 })
+    end
+    return
+  end
   local active = not self.flag or G.run.flags[self.flag]
   local oldX, oldY = self.x, self.y
   if active then
@@ -545,6 +530,18 @@ function Platform:draw()
   local g = love.graphics
   local World = require "src.world"
   local set = G.tiles[World.zone] or G.tiles.camp
+  if self.redacted and self.redacted > 0 then
+    -- the outline of a thing that was here: enough to aim a jump at
+    -- where it will be, not enough to stand on
+    local a = 0.25 + math.sin(G.time * 14) * 0.12
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], a)
+    g.rectangle("line", self.x, self.y, self.w, self.h)
+    for i = 0, 3 do
+      g.rectangle("fill", self.x + 3 + i * 8, self.y + 2, 3, 1)
+    end
+    g.setColor(1, 1, 1, 1)
+    return
+  end
   g.setColor(P.slate)
   g.rectangle("fill", self.x, self.y, self.w, self.h)
   g.setColor(P.silver)
@@ -684,8 +681,11 @@ function Linkcore:hurt(dmg, sx, sy, opts)
   Cam.shake(3, 0.4)
   if G.Audio then G.Audio.sfx("explode") end
   if G.game then
+    -- No write. The shatter lives in G.run.flags, so a death re-reads
+    -- the slot, the core is whole again and can be shattered again --
+    -- nothing is lost that cannot be redone, and the rule that progress
+    -- banks only at a lantern holds without an exception for scenery.
     G.game:announce("The lattice core SHATTERS! A seal releases.", 2.5)
-    G.game:autosave()
   end
   return true
 end
@@ -803,8 +803,9 @@ function Mitehusk:onDeath()
   World:fx("burst", self.x + 6, self.y + 6, { color = "spark", n = 12 })
   if G.Audio then G.Audio.sfx("bigshard") end
   if G.game then
+    -- likewise flag-driven, so likewise no write: die and the husk is
+    -- whole again
     G.game:announce("A glowmite pulls free! It knows the way home.", 2.5)
-    G.game:autosave()
   end
 end
 function Mitehusk:draw()
@@ -960,11 +961,22 @@ function Brazier:init(x, y, parts)
   self.layer = -1
   self.id = parts[2] or "b"
   self.hearth = parts[3] == "hearth"
+  -- KEPT. Lit from the start and it can never go out. The Archivist has
+  -- kept exactly one fire burning in the Threshold for a hundred years,
+  -- which is what "protect this place" means to it -- and it is also why
+  -- it will not put the last one out. Mechanically it is what stops the
+  -- arena ever being a sealed room with no way to make heat: walk in
+  -- from the stair, arrive through the Test Chamber, lose every other
+  -- brazier to it, and there is still fire here.
+  self.kept = parts[3] == "kept"
+  -- ...and the fight starts when you WAKE it, rather than when you
+  -- happen to cross an invisible column.
+  self.armBoss = parts[4]
   self.interactable = true
   self.interactRange = 22
   self.flick = U.rand(0, 6)
   self.litT = 0
-  if self.hearth then Cold.light(self.id) end
+  if self.hearth or self.kept then Cold.light(self.id) end
   self.hint = Cold.isLit(self.id) and "take a spark" or "cold"
 end
 
@@ -973,8 +985,15 @@ function Brazier:lit() return Cold.isLit(self.id) end
 function Brazier:update(dt)
   local World = require "src.world"
   local lit = self:lit()
-  self.heatR = lit and (self.hearth and Cold.HEARTH_R or Cold.BRAZIER_R) or nil
-  self.lightR = lit and (self.hearth and Cold.HEARTH_LIGHT or Cold.BRAZIER_LIGHT) or 0
+  local big = self.hearth
+  self.heatR = lit and (big and Cold.HEARTH_R or Cold.BRAZIER_R) or nil
+  self.lightR = lit and (big and Cold.HEARTH_LIGHT or Cold.BRAZIER_LIGHT) or 0
+  -- A KEPT fire starts lit and nothing else in the world can take it --
+  -- but the Archivist can, and does, because a fight whose whole
+  -- argument is "I will put your lights out" cannot have one light it
+  -- is not allowed to touch. `snuffed` is what marks that it was taken
+  -- deliberately rather than never lit.
+  if self.kept and not lit and not self.snuffed then Cold.light(self.id) end
   if self.litT > 0 then self.litT = self.litT - dt end
   self.hint = lit and "take a spark" or "cold"
   -- re-evaluate once on arrival too: walking back into the room with the
@@ -1020,6 +1039,25 @@ function Brazier:interact(p)
     G.game:startDialogue({ { who = "sys",
       text = "Your hands are already full of fire." } })
     return
+  end
+  -- the fight is armed HERE, on a thing you can see and choose, rather
+  -- than on a tripwire you cross without meaning to
+  if self.armBoss and not G.run.flags["boss_" .. self.armBoss] then
+    local World = require "src.world"
+    if not World.bossActive then
+      local self_ = self
+      G.game:startDialogue({
+        { who = "sys", text = "One fire, kept burning in an empty room for a hundred years. Something above the shelves has been feeding it." },
+        { choice = "Take a spark, or wake what tends it?",
+          yesLabel = "Wake it", noLabel = "Take a spark",
+          yes = { { fn = function()
+            local Bosses = require "src.entities.bosses"
+            Bosses.start(self_.armBoss, World)
+          end } },
+          no = { { fn = function() p:takeSpark() end } } },
+      })
+      return
+    end
   end
   p:takeSpark()
   local World = require "src.world"

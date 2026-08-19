@@ -75,6 +75,11 @@ Cold.SPARK_BURN  = 10.0
 Cold.CARRY_SLOW  = 0.85        -- of top speed
 Cold.SPARK_LIGHT = 64
 Cold.SPARK_R     = 20          -- px reach to light a brazier by walking into it
+-- FIRE IN YOUR HANDS MELTS WHAT YOU WALK OVER. A carrier crossing a
+-- frozen floor leaves a thawed line behind them, which is the point of
+-- carrying it: the spark is not just a key for braziers, it is heat.
+Cold.SPARK_MELT  = 1           -- tiles either side of the carrier
+Cold.SPARK_MELT_T = 0.15       -- seconds between melts
 
 -- Warn the carrier with sound and shrinking flame for the last stretch.
 Cold.SPARK_LOW   = 3.0
@@ -146,6 +151,171 @@ function Cold.checkGates(World)
   end
   G.run.flags[def.flag] = true
   return true
+end
+
+-- ==================================================================
+-- HOARFROST
+-- ==================================================================
+-- Creeping ice that eats a floor a tile at a time. It is the Archivist's
+-- weapon and the Coldstore's exam: the arena does not fill with enemies,
+-- it gets SMALLER, and the only things that push it back are the two
+-- answers the zone has already taught you --
+--
+--   a LIT BRAZIER, which frost will not grow inside (strategic: it is
+--   permanent, and the Archivist snuffing one is what costs you), and
+--   the CINDER RAM, which burns a chevron through it (tactical, and
+--   optional -- a player who took another route must still be able to
+--   win, so braziers alone are sufficient).
+--
+-- Standing on frost is not instant death. It fills your chill at the
+-- BARE rate whatever you are wearing, so the Cryo Coils stop mattering
+-- the moment you are standing on the stuff -- which is the zone saying,
+-- in its own language, that this is worse than its air.
+-- ==================================================================
+Cold.FROST_TICK      = 3.2     -- seconds per tile of growth, per front
+Cold.FROST_TICK_SOLO = 5.4     -- ...with only one bot live. A solo player
+                               -- does sequentially what two do at once.
+Cold.FROST_FILL      = 1 / 1.8 -- chill/sec standing on it, coils or not
+-- 1.5 tiles. It was 2.5, which held so much floor that three braziers
+-- made most of the arena permanently safe and left the Archivist very
+-- little ground it could work with.
+Cold.FROST_BURN_R    = 24      -- px: frost will not grow this near a fire
+Cold.RAM_BURN        = 2       -- tiles either side of a charge
+
+function Cold.frostInit(World, row)
+  World.frost = { row = row, cells = {}, t0 = 0, t1 = 0 }
+end
+
+function Cold.frostAt(World, tx, ty)
+  local f = World.frost
+  if not f or ty ~= f.row then return false end
+  return f.cells[tx] and true or false
+end
+
+-- Is this tile inside the reach of something burning?
+local function nearFire(World, tx, row)
+  local px, py = tx * 16 + 8, row * 16 + 8
+  for _, e in ipairs(World.entities or {}) do
+    if e.heatR and e.heatR > 0 and not e.dead then
+      local ex = e.x + (e.w or 0) / 2
+      local ey = e.y + (e.h or 0) / 2
+      local dx, dy = px - ex, py - ey
+      if dx * dx + dy * dy < (Cold.FROST_BURN_R) ^ 2 then return true end
+    end
+  end
+  return false
+end
+
+function Cold.frostSet(World, tx, on)
+  local f = World.frost
+  if not f then return end
+  if tx < 1 or tx > World.w - 2 then return end
+  f.cells[tx] = on or nil
+end
+
+-- Ice a span outright -- the Archivist planting rime under itself.
+function Cold.frostSeed(World, x0, x1)
+  local f = World.frost
+  if not f then return 0 end
+  local n = 0
+  for tx = math.floor(x0), math.floor(x1) do
+    if not f.cells[tx] and not nearFire(World, tx, f.row) then
+      Cold.frostSet(World, tx, true)
+      n = n + 1
+    end
+  end
+  return n
+end
+
+-- Burn it back. Returns how many tiles actually went.
+function Cold.frostBurn(World, tx, radius)
+  local f = World.frost
+  if not f then return 0 end
+  local n = 0
+  for x = tx - radius, tx + radius do
+    if f.cells[x] then f.cells[x] = nil n = n + 1 end
+  end
+  return n
+end
+
+function Cold.frostCount(World)
+  local f = World.frost
+  if not f then return 0 end
+  local n = 0
+  for _ in pairs(f.cells) do n = n + 1 end
+  return n
+end
+
+-- Two fronts, one per wall, walking inward. A front stalls at a fire
+-- rather than dying: put the brazier out and it starts moving again,
+-- from where it stopped.
+function Cold.frostUpdate(World, dt)
+  local f = World.frost
+  if not f then return end
+  local live = 0
+  for _, p in ipairs(World.players or {}) do
+    if not p.dead and not p.downed and not p.idle then live = live + 1 end
+  end
+  local tick = live <= 1 and Cold.FROST_TICK_SOLO or Cold.FROST_TICK
+
+  -- A front SKIPS a protected tile rather than stalling on it. Stopping
+  -- dead at the first brazier looked right and was badly wrong: the
+  -- fronts parked outside the outer fires and the whole middle of the
+  -- arena never froze at all, so putting a brazier out changed nothing
+  -- and the Archivist's entire escalation was inert. A fire keeps its
+  -- own patch; it does not hold the room behind it.
+  local function advance(from, to, step)
+    for tx = from, to, step do
+      if not f.cells[tx] and not nearFire(World, tx, f.row) then
+        Cold.frostSet(World, tx, true)
+        return true
+      end
+    end
+    return false
+  end
+
+  f.t0 = f.t0 + dt
+  if f.t0 >= tick then
+    f.t0 = 0
+    advance(1, World.w - 2, 1)
+  end
+  f.t1 = f.t1 + dt
+  if f.t1 >= tick then
+    f.t1 = 0
+    advance(World.w - 2, 1, -1)
+  end
+
+  -- a fire lit AFTER the ice arrived clears what it can reach
+  for tx in pairs(f.cells) do
+    if nearFire(World, tx, f.row) then f.cells[tx] = nil end
+  end
+end
+
+-- Is this bot standing on it?
+function Cold.onFrost(World, p)
+  local f = World.frost
+  if not f then return false end
+  local tx = math.floor((p.x + p.w / 2) / 16)
+  local ty = math.floor((p.y + p.h + 2) / 16)
+  return ty == f.row + 1 and f.cells[tx] and true or false
+end
+
+function Cold.frostDraw(World)
+  local f = World.frost
+  if not f then return end
+  local g = love.graphics
+  local y = f.row * 16
+  for tx in pairs(f.cells) do
+    local x = tx * 16
+    g.setColor(0.72, 0.88, 0.98, 0.55)
+    g.rectangle("fill", x, y + 10, 16, 6)
+    g.setColor(0.92, 0.98, 1.0, 0.75)
+    for k = 0, 2 do
+      local h = 2 + ((tx * 7 + k * 5) % 5)
+      g.rectangle("fill", x + 2 + k * 5, y + 10 - h, 1, h)
+    end
+  end
+  g.setColor(1, 1, 1, 1)
 end
 
 return Cold

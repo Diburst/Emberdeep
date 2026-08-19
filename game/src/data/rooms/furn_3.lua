@@ -2,7 +2,6 @@
 return {
   zone = "furnace", music = "furnace",
   mapPos = { x = 3, y = 2, w = 3, h = 1 },
-  hasSave = true,
   hasTeleporter = true,
   map = [[
 ############################################################
@@ -26,7 +25,7 @@ AA....1...s.....t.............w.......w.....e.............BB
   key = {
     ["8"] = "chest:chest_furn3b:scrap:25",
 
-    ["s"] = "save",
+    ["s"] = "checkpoint",
     ["t"] = "teleporter:furnace",
     ["1"] = "sign:sign_depths",
     ["w"] = "welder",

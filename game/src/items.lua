@@ -42,6 +42,15 @@ Items.ABILITY_ORDER = {
   "hydroseals", "heatplating", "cryocoils", "lumecore", "telenet",
 }
 
+-- STOP THE WORLD AND EXPLAIN THE THING.
+--
+-- One door for every "you now have a new verb" moment, so a new grant
+-- site cannot quietly go back to shouting a line across a moving room.
+-- The state freezes the game underneath, dims it, and waits for a press.
+function Items.explain(title, body)
+  G.State.push(require "src.states.acquire", { title = title, body = body })
+end
+
 -- spec: "scrap:15" | "weapon:scatterhex" | "module:grapple" | "heal:full"
 --       | "bigshard:5"
 function Items.grant(spec, player)
@@ -64,16 +73,22 @@ function Items.grant(spec, player)
     end
     target.weapons[#target.weapons + 1] = { id = id, xp = 0 }
     G.run.flags["weapon_" .. id] = true
-    G.game:announce("NEW WEAPON: " .. def.name .. "! (swap with WEAPON SWAP)", 3.5)
-    if G.Audio then G.Audio.sfx("capsule") end
+    -- the overlay plays the pickup sound itself; playing it here too
+    -- fired it twice on the same frame
+    Items.explain("NEW WEAPON: " .. def.name,
+      (def.blurb or "A new way to make a hole in something.")
+      .. "\n\nSwap to it with WEAPON SWAP.")
   elseif kind == "module" then
     local id = parts[2]
     G.run.flags[id] = true
     local m = Items.MODULES[id]
-    if m then
-      G.game:announce("GOT " .. m.name .. " - " .. m.desc, 4.5)
-    end
-    if G.Audio then G.Audio.sfx("capsule") end
+    -- MODULES GET THE OVERLAY TOO -- they are the whole reason it
+    -- exists. This branch used to announce() the description across the
+    -- top of a room that was still moving, which is the exact failure
+    -- the overlay was built to fix; the weapon branch above was wired up
+    -- and this one was left behind.
+    Items.explain(m and m.name or string.upper(id),
+      m and m.desc or "A new module. Its use will become clear.")
   elseif kind == "heal" then
     for _, pl in ipairs(World.players) do
       if not pl.dead then pl.hp = pl.maxhp end

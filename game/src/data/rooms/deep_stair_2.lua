@@ -44,7 +44,7 @@ return {
   links = {
     A = { "deep_stair_1", "B" },
     C = { "core_1", "A" },
-    D = { "flood_boss", "F" },
-    E = { "cold_boss", "C" },
+    D = { "flood_boss", "F", req = "boss_tideengine" },
+    E = { "cold_boss", "C", req = "boss_archivist" },
   },
 }

@@ -81,8 +81,7 @@ D.sign_core = { { script = {
   { who = "sys", text = "The Core seal takes three key fragments: Furnace, Crystal, Skyroot. Below sleeps the heart of Emberdeep. Turn back." },
 } } }
 D.sign_sky_gate = { { script = {
-  { who = "sys", text = "Above: the Skyroot Spire. The climbing locks answer only a spark-jump signature. Lu carries no such module. Yet." },
-  { who = "sys", text = "The way DEEPER into the Mosswood is below -- follow the glowing arrows on the east wall." },
+  { who = "sys", text = "Above: the Skyroot Spire. Sparkjump equipment recommended." },
 } } }
 D.sign_plates = { { script = {
   { who = "sys", text = "Twin latching locks, one per seal. The east plate lies beyond the east seal. Look up." },
@@ -103,7 +102,7 @@ D.sign_warden = { { script = {
   { who = "sys", text = "The old Warden still walks the pump hall. Posted there one night a hundred years ago; nobody ever relieved it. Nobody dares. -- scratched into the wall" },
 } } }
 D.sign_undergrove = { { script = {
-  { who = "sys", text = "The well does not end. It swallows. Light is life down here. -- carved over the arch" },
+  { who = "sys", text = "Light is life" },
 } } }
 -- The bottom of Tikka's well. She is right that she dropped it here, and
 -- it is not here, because the well drains into the Undergrove and takes
@@ -198,7 +197,7 @@ D.sign_roster3 = { { script = {
 } } }
 
 D.sign_dark = { { script = {
-  { who = "sys", text = "DARK WARDS AHEAD. The deep doors open only to a bearer of light. The bulbs remember fire, if struck." },
+  { who = "sys", text = "Light is life" },
 } } }
 D.sign_roothollow = { { script = {
   { who = "sys", text = "ROOT HOLLOW. Waystation of the under-farmers. Deep doors sealed against the lightless dark -- LUME bearers only. The old cores sank with the Flooded Works." },
@@ -254,9 +253,7 @@ D.sign_furnace = { { script = {
   { who = "sys", text = "FURNACE DEPTHS. Anchor rings certified for crew transit. The rings outlived the crews." },
 } } }
 D.sign_junction = { { script = {
-  { who = "sys", text = "SERVICE STAIRWELL, MIDDLE LANDING. Down: the deep works. Up: the roof. East: the wood. West: the camp. -- stencilled on the wall, still legible" },
-  { who = "vess", text = "Four ways out of one room. Whoever built this wanted to get anywhere fast." },
-  { who = "lu", text = "The shaft above has a draft. I cannot ride it yet." },
+  { who = "sys", text = "SERVICE STAIRWELL, MIDDLE LANDING" },
 } } }
 D.sign_crystal = { { script = {
   { who = "sys", text = "CRYSTAL HOLLOWS. The stones sing back when struck. The Conductor is still conducting -- nobody has told it the orchestra left. -- Inks, surveying note 88" },

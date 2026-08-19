@@ -26,6 +26,14 @@ Severity:
 
 Also checks that each one can actually be reached from a door.
 
+NOTHING THAT SAVES OR RESPAWNS BELONGS IN A BOSS ROOM. A checkpoint
+inside an arena writes its own tile as the respawn point, so dying to the
+boss puts you back on its floor with the fight re-armed and whatever
+state the arena was in still set -- and a save lantern lets you bank a
+run mid-fight. The retry loop for a boss is the room BEFORE it. This is
+a hard rule; `cold_boss` shipped with a checkpoint six tiles from the
+door because the room was generated before it was an arena.
+
 ITEMS are audited by a different rule. A capsule or a chest is a static
 hovering object with no physics, so one parked three tiles up a shaft is
 deliberate, not broken -- you jump for it. What is never acceptable is an
@@ -117,20 +125,114 @@ def audit(fname):
     return out
 
 
+def arenas():
+    """Rooms that arm a boss -- by a tripwire column, or by a prop that
+    wakes one (the Threshold's kept brazier)."""
+    import os
+    import re
+    out = set()
+    for fname in glob.glob("src/data/rooms/*.lua"):
+        src = open(fname).read()
+        if re.search(r'"boss:\w+', src) or re.search(r'"brazier:\w+:kept:\w+"', src):
+            out.add(os.path.basename(fname)[:-4])
+    return out
+
+
+def audit_arena(fname, boss_rooms):
+    """No boss room may hold anything that saves or respawns."""
+    import os
+    import re
+    name = os.path.basename(fname)[:-4]
+    if name not in boss_rooms:
+        return []
+    src = open(fname).read()
+    out = []
+    km = re.search(r"key = \{(.*?)\n  \}", src, re.S)
+    if km:
+        for ch, spec in re.findall(r'\["(.)"\]\s*=\s*"([^"]+)"', km.group(1)):
+            kind = spec.split(":")[0]
+            if kind in ("save", "checkpoint"):
+                out.append(("FAIL",
+                    "%s is a BOSS ROOM and holds a %s ('%s'). Dying to the "
+                    "boss would respawn you on its floor with the fight "
+                    "re-armed, and a lantern would let the run be banked "
+                    "mid-fight. Put it in the room before the arena."
+                    % (name, kind, ch)))
+    if "hasSave = true" in src:
+        out.append(("FAIL",
+            "%s is a BOSS ROOM and declares hasSave" % name))
+    return out
+
+
+def audit_checkpoints():
+    """ONE checkpoint per room, THREE per zone, and no `save` spec left.
+
+    A save lantern and a checkpoint were the same thing in two costumes:
+    both wrote the slot, both moved the respawn. The lantern also
+    refilled HP, which quietly made every fight after it easier than it
+    was designed to be. There is one of them now.
+
+    The caps are a pacing rule with teeth: more than one in a room is
+    always an accident, and more than three in a zone means dying costs
+    nothing anywhere in it."""
+    import os
+    import re
+    out = []
+    per_zone = {}
+    for fname in sorted(glob.glob("src/data/rooms/*.lua")):
+        if fname.endswith("test_arena.lua"):
+            continue
+        name = os.path.basename(fname)[:-4]
+        src = open(fname).read()
+        zm = re.search(r'zone = "(\w+)"', src)
+        zone = zm.group(1) if zm else "?"
+        km = re.search(r"key = \{(.*?)\n  \}", src, re.S)
+        saves, cps = [], []
+        if km:
+            for ch, spec in re.findall(r'\["(.)"\]\s*=\s*"([^"]+)"',
+                                       km.group(1)):
+                k = spec.split(":")[0]
+                if k == "save":
+                    saves.append(ch)
+                elif k == "checkpoint":
+                    cps.append(ch)
+        for ch in saves:
+            out.append(("FAIL", "%s still uses the retired `save` spec "
+                        "('%s'). Save points are checkpoints now -- one "
+                        "thing, no HP refill, no [INTERACT]." % (name, ch)))
+        if "hasSave = true" in src:
+            out.append(("FAIL", "%s still declares hasSave" % name))
+        if len(cps) > 1:
+            out.append(("FAIL", "%s has %d checkpoints. One per room."
+                        % (name, len(cps))))
+        if cps:
+            per_zone.setdefault(zone, []).append(name)
+    for zone, names in sorted(per_zone.items()):
+        if len(names) > 3:
+            out.append(("FAIL", "zone %r has %d checkpoints (%s). Three is "
+                        "the cap -- past that, dying costs nothing anywhere "
+                        "in the zone." % (zone, len(names), ", ".join(names))))
+    return out
+
+
 def main():
     rows, n = [], 0
+    boss_rooms = arenas()
+    rows += audit_checkpoints()
     for fname in sorted(glob.glob("src/data/rooms/*.lua")):
         if fname.endswith("test_arena.lua"):
             continue
         n += 1
         rows += audit(fname)
+        rows += audit_arena(fname, boss_rooms)
     order = {"FAIL": 0, "WARN": 1, "NOTE": 2}
     rows.sort(key=lambda r: order[r[0]])
     for sev, msg in rows:
         print("  %-4s %s" % (sev, msg))
     fails = sum(1 for s, _ in rows if s == "FAIL")
     warns = sum(1 for s, _ in rows if s == "WARN")
-    print("%d grounding failures, %d warnings across %d rooms" % (fails, warns, n))
+    print("%d failures, %d warnings across %d rooms (%d boss rooms checked "
+          "for saves)" % (fails, warns, n, len(boss_rooms)))
     return 1 if fails else 0
 
 

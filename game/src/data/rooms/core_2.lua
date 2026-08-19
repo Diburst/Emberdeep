@@ -2,7 +2,6 @@
 return {
   zone = "core", music = "core",
   mapPos = { x = 3, y = 1, w = 3, h = 1 },
-  hasSave = true,
   hasTeleporter = true,
   map = [[
 ############################################################
@@ -28,7 +27,7 @@ AA....1...s..3..t.............m.........q...2..k...GDD....BB
     ["k"] = "linkcore:linkcore_c2",
     ["2"] = "sign:sign_linkcore",
     ["3"] = "sign:log_core2",
-    ["s"] = "save",
+    ["s"] = "checkpoint",
     ["t"] = "teleporter:core",
     ["m"] = "screamer",
     ["q"] = "eliteguard",

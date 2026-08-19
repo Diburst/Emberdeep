@@ -3,7 +3,6 @@ return {
   zone = "coldstore", music = "coldstore",
   mapPos = { x = 3, y = 0, w = 3, h = 1 },
   cold = true, ice = true,
-  hasSave = true,
   hasTeleporter = true,
   map = [[
 ############################################################
@@ -28,7 +27,7 @@ AA......t...s...1...b.........h.............h...r.........BB
     ["b"] = "brazier:c2a",
     ["r"] = "brazier:c2b",
     ["t"] = "teleporter:coldstore",
-    ["s"] = "save",
+    ["s"] = "checkpoint",
     ["1"] = "sign:sign_stacks",
     ["h"] = "shelverbot",
     ["f"] = "frostwisp",

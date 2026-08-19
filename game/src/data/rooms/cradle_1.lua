@@ -3,7 +3,6 @@ return {
   zone = "cradle", music = "cradle",
   mapPos = { x = 0, y = 0, w = 3, h = 1 },
   dark = 0.55,
-  hasSave = true,
   map = [[
 ############################################################
 ############################################################
@@ -32,7 +31,7 @@ AA...s....p...p...p...p...p...r...p...p...p...p...p...k.y.##
     -- ...and the thing he died in front of.
     ["y"] = "terminal:log_cradle",
     ["N"] = "sign:sign_sleepers",
-    ["s"] = "save",
+    ["s"] = "checkpoint",
     ["p"] = "pod",
     ["r"] = "sign:cradle_record",
   },

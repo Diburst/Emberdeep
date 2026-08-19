@@ -1541,6 +1541,8 @@ function World:draw()
 
   self:drawGrate(g)
   self:drawFlood(g)
+  -- HOARFROST, over the floor and under everything that stands on it.
+  if self.frost then require("src.cold").frostDraw(self) end
   self:drawBeams(g)
 
   -- edge-door markers: a soft pulsing chevron pointing out of the room,

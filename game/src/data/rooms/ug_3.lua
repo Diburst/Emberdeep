@@ -3,7 +3,6 @@ return {
   zone = "undergrove", music = "undergrove",
   mapPos = { x = 3, y = 0, w = 1, h = 1 },
   dark = 0.7,
-  hasSave = true,
   hasTeleporter = true,
   gates = { H = "lumecore" },
   map = [[
@@ -27,7 +26,7 @@ AA..................1....H..BB
 ]],
   key = {
     ["t"] = "teleporter:undergrove",
-    ["s"] = "save",
+    ["s"] = "checkpoint",
     ["1"] = "sign:sign_roothollow",
   },
   links = {

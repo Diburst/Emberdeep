@@ -39,6 +39,13 @@ function Proj.energyDart(world, x, y, tx, ty, cfg)
   })
 end
 
+-- A shell landing slower than this settles onto the floor and rolls;
+-- faster and it bounces. ROLL_FRICTION is per second, and ROLL_STOP is
+-- where a roll has run out of road.
+local ROLL_SETTLE  = 150
+local ROLL_FRICTION = 0.9
+local ROLL_STOP    = 24
+
 function Proj:init(x, y, cfg)
   Entity.init(self, x, y)
   self.kind = "proj"
@@ -65,6 +72,15 @@ function Proj:init(x, y, cfg)
   self.layer = 5
   self.trailT = 0
   self.bounces = cfg.bounces or 0
+  -- BOUNCE AND ROLL. `bounces` is how many surfaces a shell survives;
+  -- `restitution` is how much speed it keeps off each one; `rolls` lets
+  -- it settle onto a floor it lands on gently and run along it instead
+  -- of dying there. Rolling does NOT spend a bounce -- a shell that
+  -- rolls the length of a corridor is the whole point of the weapon,
+  -- and charging it per tile would end the roll in three feet.
+  self.restitution = cfg.restitution or 0.5
+  self.rolls = cfg.rolls
+  self.rolling = false
 end
 
 function Proj:update(dt)
@@ -110,20 +126,78 @@ function Proj:update(dt)
   if World:isSolid(tx, ty, self) then
     if self.breaksTiles and World:breakTile(tx, ty) then
       -- continue through broken tile
-    elseif self.bounces > 0 then
-      self.bounces = self.bounces - 1
-      -- crude bounce: flip the dominant axis
-      if math.abs(self.vx) > math.abs(self.vy) then self.vx = -self.vx
-      else self.vy = -self.vy end
-      nx, ny = self.x, self.y
+    elseif self.bounces > 0 or self.rolls then
+      -- WHICH WALL DID IT HIT? The old code flipped whichever axis was
+      -- moving faster, which sends a shell falling onto a floor sideways
+      -- into the wall it never touched. Test the two steps separately.
+      local hx = World:isSolid(math.floor((nx + self.w / 2) / T),
+                               math.floor((self.y + self.h / 2) / T), self)
+      local hy = World:isSolid(math.floor((self.x + self.w / 2) / T),
+                               math.floor((ny + self.h / 2) / T), self)
+      if not hx and not hy then hy = true end     -- clipped a corner
+      local spent = false
+      if hy then
+        -- LANDING. Gently enough and it settles and runs along the floor
+        -- instead of dying on it.
+        if self.rolls and self.vy > 0 and self.vy < ROLL_SETTLE then
+          self.vy = 0
+          self.rolling = true
+        else
+          self.vy = -self.vy * self.restitution
+          spent = true
+          if math.abs(self.vy) < ROLL_SETTLE and self.rolls then
+            self.vy = 0
+            self.rolling = true
+          end
+        end
+        ny = self.y
+      end
+      if hx then
+        self.vx = -self.vx * self.restitution
+        spent = true
+        nx = self.x
+      end
+      if spent then
+        self.bounces = self.bounces - 1
+        World:fx("spark", cx, cy, { color = self.side == "player" and "ember" or "ice",
+          n = 3 })
+        if G.Audio then G.Audio.sfx("crack") end
+      end
+      if self.bounces < 0 and not self.rolling then
+        self.dead = true
+        return
+      end
     else
       World:fx("spark", cx, cy, { color = self.side == "player" and "ember" or "blood",
         angle = math.atan2(-self.vy, -self.vx) })
       self.dead = true
       return
     end
+  elseif self.rolling then
+    -- ran off the end of the floor it was rolling along
+    self.rolling = false
   end
   self.x, self.y = nx, ny
+
+  -- ROLLING. Gravity is held off while it is supported, friction eats
+  -- the roll, and it dies when it finally stops rather than sitting on
+  -- the floor as a permanent trap.
+  if self.rolling then
+    local under = World:isSolid(math.floor((self.x + self.w / 2) / T),
+                                math.floor((self.y + self.h + 1) / T), self)
+    if under then
+      self.vy = 0
+      self.vx = self.vx * (1 - ROLL_FRICTION * dt)
+      if math.abs(self.vx) < ROLL_STOP then
+        World:fx("burst", self.x + self.w / 2, self.y + self.h / 2,
+          { color = "ember", n = 6 })
+        self.dead = true
+        return
+      end
+    else
+      self.rolling = false
+    end
+  end
 
   -- ------------------------------------------------------------
   -- MIRRORS bend shots, not just beams.

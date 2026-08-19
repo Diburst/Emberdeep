@@ -3,7 +3,6 @@ return {
   zone = "camp", music = "camp",
   arena = "embercamp",
   mapPos = { x = 2, y = 2, w = 4, h = 1 },
-  hasSave = true,
   gates = { G = "camp_barricade" },
   onEnter = function(World)
     local f = G.run.flags
@@ -24,8 +23,8 @@ return {
 ##..............................3.....................................######...#
 ##.....................====..=====........................=====...............G#
 ##...........................................................................GG#
-A...DD..........E................................................##.........GGGB
-A...DD1......dM.E..s.....bN.2.OtPoQp.Y..eKRqSu..Vf...iU...5..4...##.....k..GGGGB
+....DD..........E................................................##.........GGGB
+....DD1......dM.E........bN.2.OtPoQp.Y..eKRqSu..Vf...iU...5..4...##.....k..GGGGB
 ################################################################################
 ################################################################################
 ################################################################################
@@ -48,7 +47,6 @@ A...DD1......dM.E..s.....bN.2.OtPoQp.Y..eKRqSu..Vf...iU...5..4...##.....k..GGGGB
     ["d"] = "npc:sol:until:camp_frozen",
     ["b"] = "npc:brassa:until:reckoning:until:camp_frozen",
     ["i"] = "npc:vill2:until:camp_frozen",
-    ["s"] = "save",
     ["f"] = "npc:ferro:need:ferro_rescued:until:reckoning:until:camp_frozen",
     -- THE WITNESSES. Everyone who lives in the side rooms comes here the
     -- moment the Ember comes loose, and stands in the dark watching it
@@ -72,7 +70,6 @@ A...DD1......dM.E..s.....bN.2.OtPoQp.Y..eKRqSu..Vf...iU...5..4...##.....k..GGGGB
     ["V"] = "frozenkeeper:ferro",
   },
   links = {
-    A = { "camp_tele", "B" },
     E = { "camp_hut", "A" },
     D = { "camp_awake", "B" },
     B = { "stair_junction", "A" },

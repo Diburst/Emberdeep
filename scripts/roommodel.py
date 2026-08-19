@@ -71,6 +71,23 @@ GAP_W = 4
 GAP_W_HOVER = 10
 GRAPPLE_R = 6  # 110px rope / 16px tiles
 
+# VESS'S CHARGE, MID-AIR. He has no better jump -- SPARK JUMP and DRIFT
+# VANES are both Lu's -- but he can charge once per airtime, and the
+# charge SUSPENDS GRAVITY: DASH_SPEED 265px/s for dashT 0.2s is 53px of
+# dead-level travel in the middle of a fall.
+#
+# MEASURED, by driving the real Player over a real gap and widening it
+# until he stops landing (tools/dash_test.lua): the charge is worth
+# FOUR extra tiles of level gap over a plain running jump. We model
+# three, following the same convention as GAP_W_HOVER -- which models 10
+# against 12.1 measured -- because a mid-air charge is a commitment and
+# a model that assumes a perfect one will call a room passable that
+# nobody can actually pass.
+#
+# It costs nothing to own: every run has Vess from the first room, so
+# this is baseline reach, not an ability gate.
+DASH_GAP = GAP_W + 3
+
 ALL_ABILITIES = frozenset({"sparkjump", "grapple", "hydroseals",
                            "heatplating", "telenet", "driftvanes"})
 
@@ -354,14 +371,20 @@ class Nav:
                 n = self.land(nx, y)
                 if n:
                     out.add(n)
+        reach = max(self.gap_w, DASH_GAP)
         # jump up onto ledges within jump_h, horizontal reach GAP_W.
         # BONK-HONEST arcs: the engine rises IMMEDIATELY on jump, so the
         # rise must happen in the launch column (path A) or, at most, the
         # first drift column (path C: jump while walking). "Drift far
         # sideways at ground level, then rise at the target" is a lie the
         # ceiling will refute (sky_4's boss door taught us).
+        # ...and the charge extends the horizontal half of a CLIMBING
+        # jump too, not only a level one: rise in the launch column, then
+        # charge dead level onto a ledge much further across than a plain
+        # jump reaches. The rise still has to happen first, which is why
+        # dy is unchanged -- the charge buys distance, never height.
         for dy in range(1, self.jump_h + 1):
-            for dx in range(-self.gap_w, self.gap_w + 1):
+            for dx in range(-reach, reach + 1):
                 nx, ny = x + dx, y - dy
                 if not (0 <= nx < W and 0 <= ny < H and self.is_node(nx, ny)):
                     continue
@@ -381,8 +404,13 @@ class Nav:
                         self.transit.update(path)
                         break
         # jump across gaps at same height: the arc passes just above the
-        # start row, so each crossed cell must be open at y or y-1
-        for dx in range(-self.gap_w, self.gap_w + 1):
+        # start row, so each crossed cell must be open at y or y-1.
+        #
+        # DASH_GAP rather than gap_w: Vess charges mid-air, the charge
+        # holds him level for a fifth of a second, and he is in every
+        # run from the first room. A model that stops at a plain running
+        # jump calls rooms unreachable that are crossed this way daily.
+        for dx in range(-reach, reach + 1):
             if dx == 0:
                 continue
             nx = x + dx

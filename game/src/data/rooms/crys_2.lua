@@ -19,7 +19,6 @@
 return {
   zone = "crystal", music = "crystal",
   mapPos = { x = 3, y = 1, w = 3, h = 1 },
-  hasSave = true,
   hasTeleporter = true,
   gates = { H = "crys_bus2" },
   gateStyle = { H = "curtain" },
@@ -43,7 +42,7 @@ AA......s.....t.....1.........w.............u...H...%EE...BB
 ############################################################
 ]],
   key = {
-    ["s"] = "save",
+    ["s"] = "checkpoint",
     ["t"] = "teleporter:crystal",
     ["w"] = "prismwisp",
     ["u"] = "cryoturret",

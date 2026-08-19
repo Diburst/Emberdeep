@@ -42,11 +42,11 @@ return {
 ]],
   key = {},
   links = {
-    A = { "stair_junction", "C" },
+    A = { "stair_junction", "C", req = "boss_bramblemaw" },
     B = { "deep_stair_2", "A" },
     C = { "furn_1", "A" },
     D = { "crys_1", "A" },
-    E = { "furn_boss", "B" },
-    F = { "crys_boss", "B" },
+    E = { "furn_boss", "B", req = "boss_crucible" },
+    F = { "crys_boss", "B", req = "boss_prismtyrant" },
   },
 }

@@ -41,6 +41,13 @@ W.defs = {
     rate = 0.95, speed = 190, visual = "orb", size = 7,
     dmg = { 8, 12, 16 }, mortar = true, thresholds = { 15, 35 },
     sfx = "shoot2",
+    -- A shell that bounces off the walls and then RUNS along the floor.
+    -- The lifetime is doubled (2.4 -> 4.8) because a roll that expires
+    -- after two seconds is a lob with extra steps; the whole appeal is
+    -- putting a shell somewhere you cannot see and having it arrive.
+    -- Situationally very strong in a corridor, useless in the open --
+    -- which is the trade.
+    life = 4.8, bounces = 3, restitution = 0.45, rolls = true,
   },
 }
 

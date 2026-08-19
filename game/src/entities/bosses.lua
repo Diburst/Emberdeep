@@ -7,6 +7,7 @@ local PH = require "src.physics"
 local Proj = require "src.entities.projectile"
 local Pickup = require "src.entities.pickup"
 local Cam = require "src.camera"
+local Cold = require "src.cold"
 
 local T = 16
 local Bosses = {}
@@ -105,6 +106,9 @@ function Boss:onDeath()
   end
   -- every add this boss put in the room dies with it
   self:clearAdds()
+  -- ...and the ice stops. A dead machine is not still freezing the room
+  -- you have to walk out of.
+  if World.frost then World.frost = nil end
   Cam.shake(5, 0.8)
   if G.Audio then
     G.Audio.sfx("explode")
@@ -355,7 +359,7 @@ local WARDEN_ENRAGE_RANGE = 46   -- px it tries to keep between itself and you
 local Rustwarden = Boss.extend()
 function Rustwarden:init(x, y)
   Boss.init(self, x, y, { id = "rustwarden", name = "RUSTED WARDEN",
-    hp = 105, touchDmg = 3, w = 26, h = 30, reward = "module:hydroseals" })
+    hp = 145, touchDmg = 3, w = 26, h = 30, reward = "module:hydroseals" })
   self.facing = -1
   self.enraged = false      -- the sequence has begun
   self.shieldGone = false   -- the shield has actually left the body
@@ -3184,23 +3188,290 @@ Bosses.mycelchoir = Mycelchoir
 -- stops to RE-SHELVE (its drawer opens). It fights from duty, not
 -- madness: the one subsystem that never broke.
 -- ==================================================================
+-- ==================================================================
+-- THE ARCHIVIST -- the Threshold
+-- ==================================================================
+-- The old fight had the Conductor's disease: `hurt` refused damage
+-- unless `state == "reshelve"`, and reshelve was reachable only through
+-- a one-in-three dice roll off `ride`. So the whole fight was waiting,
+-- and nothing you had learned in the zone was used to reach the window.
+--
+-- THE REFIT TIES IT TO THE VERB.
+--
+--   It does not attack the floor; it FREEZES it. Hoarfrost creeps in
+--   from both walls a tile at a time, and the Archivist plants rime
+--   directly beneath itself. The arena gets smaller instead of busier.
+--
+--   Its plating opens when the floor beneath it is CLEAR OF FROST --
+--   not on a timer. There are exactly two ways to clear ground, and
+--   they are the two the zone spent five rooms teaching: a lit brazier,
+--   which frost will not grow near, and the Cinder Ram, which burns a
+--   chevron through it. The braziers are the strategic answer and the
+--   ram is the tactical one; the ram is NOT required, because a player
+--   who took another route through the game must still be able to win.
+--
+--   At 75%, 50% and 25% it SNUFFS A BRAZIER. It is the only thing in
+--   the game that puts fire out, which is exactly what "protect this
+--   place" means to a machine that has been alone with the order for a
+--   century. Re-lighting one means carrying a spark across an arena
+--   that is closing, with no gun and no shield, while the other bot
+--   keeps it off you. That is the zone's exam, and it is the same
+--   co-op shape as the Ember, one size down.
+--
+--   IT NEVER SNUFFS THE LAST ONE. There has to be a fire left to take a
+--   spark from, or the arena is a soft-lock with a boss in it.
+--
+-- COSTED. Bolt Driver at tier 2 is 3 damage on a 0.22s cycle, about
+-- 13.6 dps. MAXHP 200 over an OPEN_T of 5s is ~68 damage a window, so
+-- roughly three clean solves -- two minutes, matching the Crucible and
+-- the Conductor. Change MAXHP and OPEN_T together; archivist_test
+-- prints the solve count rather than asserting my arithmetic.
+-- ==================================================================
+local ARCH = {
+  -- IT IS NEVER INVULNERABLE. The old fight refused damage outright
+  -- unless the plating was open, which meant most of a two-minute fight
+  -- was spent shooting something that ignored you -- the exact
+  -- complaint the refit was supposed to answer, arrived at from the
+  -- other direction. Plating now REDUCES damage instead of refusing it,
+  -- and the HP is raised to match so the fight is the same length.
+  -- archivist_test prints time-to-kill at several trigger uptimes;
+  -- change MAXHP and SHIELD_MULT together and read the numbers.
+  MAXHP     = 420,
+  SHIELD_MULT = 0.4,  -- of your damage while the plating is shut
+  OPEN_T    = 5.0,    -- seconds of open plating once the floor is clear
+  RIME_SPAN = 5,      -- tiles of floor it ices beneath itself
+  RIME_CD   = 4.5,    -- seconds between rime castings
+  REDACT_T  = 3.0,    -- seconds a platform stays erased
+  REDACT_CD = 9.0,
+  RAIL_SPD  = 95,
+  BEAM_DMG  = 5,
+  -- Half-width of the freezing column, in px. Was 12; doubled, so it is
+  -- a thing you have to dodge rather than a thing that misses you by
+  -- default.
+  BEAM_HALFW = 24,
+  LOB_DMG   = 3,
+  THRESHOLDS = { 0.75, 0.50, 0.25 },
+  -- THE DIVE. It does not reach out and pinch a fire from the ceiling:
+  -- it drops on the thing. Half a second of warning, a fall, a blast of
+  -- frost, and then two seconds hanging there with its plating open
+  -- while it drags itself back up -- which is the only time the fight
+  -- GIVES you a window instead of making you earn one.
+  SNUFF_CD    = 20.0,   -- seconds between dives, minimum
+  DIVE_WARN   = 1.0,   -- a full second to read it and move
+  DIVE_G      = 1500,
+  DIVE_OPEN   = 2.0,    -- vulnerable, at the bottom
+  DIVE_RISE   = 90,     -- px/s back to the rail
+  BLAST_R     = 60,     -- the frost that comes off the impact
+  BLAST_DMG   = 6,
+  SQUISH_DMG  = 18,     -- directly underneath. Do not be there.
+  BLAST_FROST = 6,      -- tiles of floor iced either side of the impact
+}
+Bosses.ARCH = ARCH
+
 local Archivist = Boss.extend()
 function Archivist:init(x, y)
   Boss.init(self, x, y, { id = "archivist", name = "THE ARCHIVIST",
-    hp = 170, touchDmg = 4, w = 40, h = 26, reward = "weapon:magnetmortar" })
+    hp = ARCH.MAXHP, touchDmg = 4, w = 40, h = 26,
+    reward = "weapon:magnetmortar" })
   self.railY = y
   self.dir = 1
+  self.openT = 0
+  -- the floor the ice eats. The room declares it, the way a flooding
+  -- room declares `floodRow` -- deriving it from geometry guesses, and
+  -- a guess here freezes a row nobody stands on.
+  local World = require "src.world"
+  Cold.frostInit(World, (World.room and World.room.frostRow)
+    or (World.h - 6))
+  self.rimeT = 2.0
+  self.redactT = ARCH.REDACT_CD
+  self.nextThreshold = 1
+  self.snuffT = ARCH.SNUFF_CD * 0.6   -- the first one comes early
 end
+
+-- The floor row it stands over, and the span of it that has to be clear.
+function Archivist:span(World)
+  local cx = self.x + self.w / 2
+  local half = math.floor(ARCH.RIME_SPAN / 2)
+  local tx = math.floor(cx / T)
+  return math.max(1, tx - half), math.min(World.w - 2, tx + half)
+end
+
+-- IT WILL NOT HANG WHERE IT CANNOT WORK.
+--
+-- Its rime span is five tiles and a lit brazier holds frost off two and
+-- a half either side, so a boss centred exactly over a fire can never
+-- ice the ground beneath itself -- floorClear() stays true, the plating
+-- never shuts, and the whole fight collapses into "stand on the brazier
+-- and shoot". Since it tracks the nearest bot along the rail, standing
+-- on a fire is all that takes, and standing on a fire is the obvious
+-- thing to do.
+--
+-- So it declines to park there. It slides to the nearest column where
+-- its rime can actually bite, which reads exactly as it should: it will
+-- come near your fire, but it will not hold station over it.
+function Archivist:workableX(World, want)
+  local half = math.floor(ARCH.RIME_SPAN / 2)
+  local function biteable(bx)
+    local tx = math.floor((bx + self.w / 2) / T)
+    for t = tx - half, tx + half do
+      if t >= 1 and t <= World.w - 2 then
+        local px, py = t * T + 8, (World.frost and World.frost.row or 0) * T + 8
+        local blocked = false
+        for _, e in ipairs(World.entities) do
+          if e.heatR and e.heatR > 0 and not e.dead then
+            local dx = px - (e.x + (e.w or 0) / 2)
+            local dy = py - (e.y + (e.h or 0) / 2)
+            if dx * dx + dy * dy < Cold.FROST_BURN_R ^ 2 then blocked = true break end
+          end
+        end
+        if not blocked then return true end
+      end
+    end
+    return false
+  end
+  if biteable(want) then return want end
+  for step = 1, 8 do
+    local a2, b2 = want - step * T, want + step * T
+    if biteable(a2) then return a2 end
+    if biteable(b2) then return b2 end
+  end
+  return want
+end
+
+function Archivist:floorClear(World)
+  local f = World.frost
+  if not f then return true end
+  local x0, x1 = self:span(World)
+  for tx = x0, x1 do
+    if f.cells[tx] then return false end
+  end
+  return true
+end
+
+-- IT IS ONLY VULNERABLE WITH CLEAR GROUND UNDER IT. Not on a timer, not
+-- on a dice roll -- on the one thing the player controls.
+-- IT ALWAYS TAKES DAMAGE. Shut plating is a discount, not a refusal --
+-- so a player who never solves the floor still wins eventually, and a
+-- player who does wins two and a half times faster.
 function Archivist:hurt(dmg, sx, sy, opts)
   local World = require "src.world"
-  if self.state ~= "reshelve" then
+  if self.openT <= 0 then
     World:fx("spark", self.x + self.w / 2, self.y + self.h / 2,
       { color = "ice", n = 3 })
     if G.Audio then G.Audio.sfx("crack") end
-    return false
+    dmg = math.max(1, dmg * ARCH.SHIELD_MULT)
   end
   return Boss.hurt(self, dmg, sx, sy, opts)
 end
+
+-- The only thing in the game that puts fire out.
+--
+-- IT WILL TAKE THE LAST ONE. That used to be forbidden -- an arena with
+-- no fire in it read as a soft-lock -- but it is not one: the door back
+-- to the deep stacks is open, cold_5's braziers are still burning, and
+-- a run that loses every light in here loses the FIGHT, not the save.
+-- Making the last fire safe made the last stretch of the fight safe
+-- too, and this is the one boss whose whole argument is that it will
+-- put your lights out if you stop feeding them.
+function Archivist:pickBrazier(World)
+  local lit = {}
+  for _, e in ipairs(World.entities) do
+    if e.id and e.lit and e:lit() and not e.hearth then lit[#lit + 1] = e end
+  end
+  if #lit == 0 then return nil end
+  -- the one nearest a bot, because taking the fire they are standing
+  -- next to is what makes it feel like it is coming for you
+  local px = World.players[1] and (World.players[1].x) or self.x
+  local p = World:nearestPlayer(self:center())
+  if p then px = p.x end
+  local best
+  for _, e in ipairs(lit) do
+    if not best or math.abs(e.x - px) < math.abs(best.x - px) then best = e end
+  end
+  return best
+end
+
+function Archivist:beginDive(World, target)
+  self.diveTarget = target
+  -- centre the body on the brazier, and pick an approach speed from the
+  -- distance so it ALWAYS arrives inside the telegraph. A fixed speed
+  -- meant a dive started from the far wall came down beside the fire
+  -- and put nothing out.
+  local W2 = World.w * T
+  self.diveX = U.clamp(target.x + 6 - self.w / 2, 40, W2 - 40 - self.w)
+  self.diveSpd = math.max(220, math.abs(self.diveX - self.x)
+    / ARCH.DIVE_WARN * 1.25)
+  self.diveWarn = ARCH.DIVE_WARN
+  self.diving = nil
+  self.vy = 0
+  self.openT = 0
+  self:setState("dive", 8)
+  Cam.shake(2, 0.3)
+  if G.Audio then G.Audio.sfx("bosswarn") end
+  if G.game and not self.taughtDive then
+    self.taughtDive = true
+    G.game:announce("It is coming DOWN on the fire -- get out from under it!", 3)
+  end
+end
+
+-- Draw the shadow of where it is about to land, for the whole second.
+function Archivist:diveMarkX() return self.diveX end
+
+function Archivist:landDive(World)
+  local cx, cy = self:center()
+  local floorY = self.y + self.h
+
+  -- SQUISHED. Directly underneath is the worst place in the room.
+  --
+  -- THE DOME DOES NOT HELP HERE, deliberately. Lu's shield turns the
+  -- indexing beam aside because a beam is the kind of thing a shield is
+  -- for; several tons of archive coming down on your head is not. So
+  -- there is no domeActive check anywhere in this function -- the answer
+  -- to the dive is to not be under it, which is what the telegraph is
+  -- a full second long for.
+  for _, p in ipairs(World.players) do
+    if not p.dead and not p.downed and not p.idle then
+      local pcx = p.x + p.w / 2
+      local under = pcx > self.x - 4 and pcx < self.x + self.w + 4
+        and p.y + p.h > self.y
+      if under then
+        p.invuln = 0
+        p:takeDamage(ARCH.SQUISH_DMG, cx, { pierceDash = true })
+      else
+        local d = U.dist(pcx, p.y + p.h / 2, cx, floorY)
+        if d < ARCH.BLAST_R then
+          p.invuln = 0
+          p:takeDamage(ARCH.BLAST_DMG, cx, { pierceDash = true, cold = true })
+          p.vx = p.vx + U.sign(pcx - cx) * 120
+        end
+      end
+    end
+  end
+
+  -- the fire goes out, and the ice takes the ground it was holding
+  local b = self.diveTarget
+  if b and b.lit and b:lit() then
+    G.run.flags[Cold.flagFor(b.id)] = nil
+    b.heatR = nil
+    b.lightR = 0
+    b.snuffed = true
+    if G.game then
+      G.game:announce("The fire is out. Carry a spark back to it.", 2.6)
+    end
+  end
+  local tx = math.floor(cx / T)
+  Cold.frostSeed(World, tx - ARCH.BLAST_FROST, tx + ARCH.BLAST_FROST)
+
+  World:fx("burst", cx, floorY - 4, { color = "ice", n = 26, speed = 150 })
+  Cam.shake(7, 0.6)
+  if G.Audio then G.Audio.sfx("explode") end
+
+  -- ...and now it is stuck on the floor, open, for two seconds
+  self.openT = ARCH.DIVE_OPEN
+  self.diving = nil
+  self.rising = true
+end
+
 function Archivist:update(dt)
   local World = require "src.world"
   self.t = self.t + dt
@@ -3213,20 +3484,156 @@ function Archivist:update(dt)
     return
   end
 
+  -- the floor closes whatever else is happening
+  Cold.frostUpdate(World, dt)
+
+  -- THE WINDOW. Clear ground under it opens the plating, and it stays
+  -- open for OPEN_T even if the ice comes back -- so a solve you earned
+  -- is a solve you keep.
+  --
+  -- THE DIVE OWNS ITS OWN WINDOW. This block used to run during a dive
+  -- too, decrementing openT TWICE on the same frame -- so the two
+  -- seconds it hangs there stunned were really one -- and it could
+  -- re-open mid-fall off floorClear(). While it is diving, the dive's
+  -- clock is the only one running.
+  if self.state == "dive" then       -- handled in the dive branch below
+  elseif self.openT > 0 then
+    self.openT = self.openT - dt
+    if self.openT <= 0 then
+      self.plateShut = 0.4
+      if G.Audio then G.Audio.sfx("switch") end
+    end
+  elseif self:floorClear(World) then
+    self.openT = ARCH.OPEN_T
+    Cam.shake(2, 0.25)
+    if G.Audio then G.Audio.sfx("shieldbreak") end
+    if not self.taughtOpen and G.game then
+      self.taughtOpen = true
+      G.game:announce("Clear ground beneath it -- the plating is OPEN!", 3)
+    end
+  end
+  if self.plateShut and self.plateShut > 0 then
+    self.plateShut = self.plateShut - dt
+  end
+
+  -- THE DIVE. On a hard clock, and again at each health threshold --
+  -- so it comes for your fires whether or not you are winning.
+  self.snuffT = self.snuffT - dt
+  local frac = self.hp / self.maxhp
+  local threshold = self.nextThreshold <= #ARCH.THRESHOLDS
+    and frac <= ARCH.THRESHOLDS[self.nextThreshold]
+  if self.state ~= "dive" and (self.snuffT <= 0 or threshold) then
+    if threshold then self.nextThreshold = self.nextThreshold + 1 end
+    local target = self:pickBrazier(World)
+    if target then
+      self.snuffT = ARCH.SNUFF_CD
+      self:beginDive(World, target)
+    else
+      self.snuffT = 4   -- nothing left to take; look again shortly
+    end
+  end
+
+  if self.state == "dive" then
+    if self.diveWarn and self.diveWarn > 0 then
+      -- IT ONLY EVER COMES DOWN ON A FIRE. The telegraph is the boss
+      -- sliding into place above the brazier and hanging there shaking,
+      -- so "get out from under it" is a thing you can actually read --
+      -- and the drop does not begin until it is genuinely lined up.
+      self.diveWarn = self.diveWarn - dt
+      self.x = U.approach(self.x, self.diveX, self.diveSpd * dt)
+      self.y = self.railY + math.sin(G.time * 30) * 2
+      if self.diveWarn <= 0 then
+        self.diveWarn = nil
+        self.x = self.diveX          -- exactly over it, never beside it
+        self.diving = true
+        self.vy = 0
+      end
+    elseif self.diving then
+      -- STRAIGHT THROUGH THE SHELVES. It weighs what it weighs; a
+      -- one-way ledge is not going to hold it, and stopping on one
+      -- would leave the fire lit and the boss parked in mid-air. So the
+      -- fall tests SOLID tiles only and ignores `=` entirely, which
+      -- PH.move cannot do.
+      self.vy = (self.vy or 0) + ARCH.DIVE_G * dt
+      local step = self.vy * dt
+      local feetX0 = math.floor((self.x + 4) / T)
+      local feetX1 = math.floor((self.x + self.w - 4) / T)
+      local landed = false
+      local ny = self.y + step
+      local fy = math.floor((ny + self.h) / T)
+      for tx2 = feetX0, feetX1 do
+        if World:isSolid(tx2, fy, self) then landed = true break end
+      end
+      if landed then
+        self.y = fy * T - self.h
+        self.vy = 0
+        self:landDive(World)
+      else
+        self.y = ny
+      end
+    elseif self.rising then
+      if self.openT > 0 then
+        self.y = self.y + math.sin(G.time * 18) * 0.4   -- straining
+      else
+        self.y = U.approach(self.y, self.railY, ARCH.DIVE_RISE * dt)
+        if math.abs(self.y - self.railY) < 2 then
+          self.y = self.railY
+          self.rising = nil
+          self:setState("ride", 1.6)
+        end
+      end
+    end
+    if self.openT > 0 then self.openT = self.openT - dt end
+    return
+  end
+
   local p = World:nearestPlayer(self:center())
 
+  -- RIME: it ices the floor beneath itself. This is the attack; the
+  -- crates and the beam are only what keeps you honest while you deal
+  -- with it.
+  self.rimeT = self.rimeT - dt
+  if self.rimeT <= 0 then
+    self.rimeT = ARCH.RIME_CD / frenzy
+    local x0, x1 = self:span(World)
+    local n = Cold.frostSeed(World, x0, x1)
+    if n > 0 then
+      World:fx("burst", self.x + self.w / 2, self.y + self.h + 10,
+        { color = "ice", n = 10, speed = 70 })
+      if G.Audio then G.Audio.sfx("crack") end
+    end
+  end
+
+  -- REDACT: a platform is erased for a few seconds, including one you
+  -- are standing on. It is an archive; deleting things is what it does.
+  self.redactT = self.redactT - dt
+  if self.redactT <= 0 then
+    self.redactT = ARCH.REDACT_CD
+    local best
+    for _, e in ipairs(World.entities) do
+      if e.kind == "plat" and not e.redacted then
+        if not best or (p and math.abs(e.x - p.x) < math.abs(best.x - p.x)) then
+          best = e
+        end
+      end
+    end
+    if best then
+      best.redacted = ARCH.REDACT_T
+      World:fx("burst", best.x + (best.w or 16) / 2, best.y,
+        { color = "cyan", n = 10 })
+      if G.Audio then G.Audio.sfx("linkcharge") end
+    end
+  end
+
   if self.state == "ride" then
-    -- track the nearest player along the rail
     if p then
       local tx = U.clamp(p.x + p.w / 2 - self.w / 2, minX, maxX)
-      self.x = U.approach(self.x, tx, 95 * frenzy * dt)
+      tx = U.clamp(self:workableX(World, tx), minX, maxX)
+      self.x = U.approach(self.x, tx, ARCH.RAIL_SPD * frenzy * dt)
     end
     self.y = self.railY + math.sin(self.t * 2) * 3
     if self.stateT <= 0 then
-      local roll = U.rand(0, 1)
-      if roll < 0.34 then self:setState("sweep", 2.1)
-      elseif roll < 0.67 then self:setState("barrage", 2.4)
-      else self:setState("slam", 3.5) end
+      self:setState(U.chance(0.5) and "sweep" or "barrage", 2.2)
     end
   elseif self.state == "sweep" then
     -- indexing beam: telegraph, then a vertical scan column
@@ -3241,7 +3648,7 @@ function Archivist:update(dt)
       if G.Audio then G.Audio.sfx("linkshot") end
       for _, pl in ipairs(World.players) do
         if not pl.dead and not pl.downed and not pl.idle
-          and math.abs(pl.x + pl.w / 2 - self.beamX) < 12 then
+          and math.abs(pl.x + pl.w / 2 - self.beamX) < ARCH.BEAM_HALFW then
           local blocked = false
           for _, q in ipairs(World.players) do
             if q.domeActive then
@@ -3253,7 +3660,14 @@ function Archivist:update(dt)
               end
             end
           end
-          if not blocked then pl:takeDamage(5, self.x) end
+          if not blocked then
+            -- ENCASED, not merely hurt. And standing next to a fire does
+            -- not save you -- it just means you get thrown off it first.
+            local warm = Cold.heatAt(World, pl.x + pl.w / 2,
+                                     pl.y + pl.h / 2) ~= nil
+            pl:takeDamage(ARCH.BEAM_DMG, self.x)
+            pl:encase(World, self.beamX, warm)
+          end
         end
       end
     end
@@ -3272,77 +3686,15 @@ function Archivist:update(dt)
       local px = p.x + p.w / 2 + U.rand(-24, 24)
       local dx = px - cx
       Proj.spawn(World, cx, cy + 8, {
-        side = "enemy", dmg = 3, kind = "orb", size = 6,
+        side = "enemy", dmg = ARCH.LOB_DMG, kind = "orb", size = 6,
         vx = U.clamp(dx * 1.0, -150, 150), vy = 40,
         gravity = 320, life = 3,
       })
       if G.Audio then G.Audio.sfx("shoot2") end
     end
     if self.stateT <= 0 then self:setState("ride", 2 / frenzy) end
-  elseif self.state == "slam" then
-    -- vault-slam: telegraph, drop, shockwave, winch back up
-    if self.phaseT == 0 then
-      self.phaseT = 1
-      self.slamWarn = 0.8
-      if G.Audio then G.Audio.sfx("bosswarn") end
-    end
-    if self.slamWarn and self.slamWarn > 0 then
-      self.slamWarn = self.slamWarn - dt
-      self.y = self.railY - math.sin(G.time * 20) * 2
-    elseif not self.slammed then
-      self.vy = (self.vy or 0) + 900 * dt
-      PH.move(self, 0, self.vy * dt)
-      if self.onGround then
-        self.slammed = true
-        self.vy = 0
-        Cam.shake(6, 0.5)
-        if G.Audio then G.Audio.sfx("explode") end
-        local cx = self.x + self.w / 2
-        for _, dir in ipairs({ -1, 1 }) do
-          Proj.spawn(World, cx + dir * (self.w / 2 + 4), self.y + self.h - 4, {
-            side = "enemy", dmg = 3, kind = "spark", size = 6,
-            vx = dir * 170, vy = 0, life = 1.1,
-          })
-        end
-      end
-    else
-      -- winch home
-      self.y = U.approach(self.y, self.railY, 70 * dt)
-      if math.abs(self.y - self.railY) < 2 then
-        self.slammed = nil
-        self:setState("reshelve", 3.6)
-        if G.Audio then G.Audio.sfx("switch") end
-        if not self.taughtShelve and G.game then
-          self.taughtShelve = true
-          G.game:announce("The drawer is OPEN -- it can be wounded while it re-shelves!", 3)
-        end
-      end
-    end
-    if self.stateT <= 0 and not self.slammed and not (self.slamWarn and self.slamWarn > 0) then
-      -- fell into a pit-free arena: force recovery
-      self.y = self.railY
-      self.slammed = nil
-      self:setState("reshelve", 3.6)
-    end
-  elseif self.state == "reshelve" then
-    -- drawer open: the only damage window
-    self.y = self.railY + math.sin(self.t * 6) * 1.5
-    if self.stateT <= 0 then self:setState("ride", 2.2 / frenzy) end
   end
 end
--- IT DIES. It does not yield, it does not assess you, and it does not
--- give you permission to walk past it.
---
--- The old version survived its own defeat and narrated the reveal --
--- three lines of a machine deciding you were worthy. That was the last
--- thing in this zone explaining itself out loud, and it was also a
--- misreading of its own epitaph: "the only one of us that never broke."
--- A machine that never broke does not negotiate at the end. It runs out.
---
--- So there is no onDeath override any more: it falls, it leaves a
--- corpse on the floor of the doorway it held for a century, and what it
--- was doing there is something you work out AFTERWARDS, in the room
--- behind it, from a body and a terminal. Nobody says it to you.
 function Archivist:draw()
   local g = love.graphics
   local cx = self.x + self.w / 2
@@ -3354,22 +3706,46 @@ function Archivist:draw()
   -- body: scaled shelver chassis
   G.drawSprite("boss_archivist", math.floor(self.t * 3) % 2 + 1, cx, self.y + self.h,
     { sx = 2.0, sy = 1.2, white = math.max(0, (self.white or 0) * 6) })
-  -- the drawer (open while re-shelving)
-  if self.state == "reshelve" then
+  -- THE PLATING, open. `reshelve` was deleted in the refit and this
+  -- still keyed on it, so the one piece of art that tells you the boss
+  -- is vulnerable had not drawn since.
+  if (self.openT or 0) > 0 then
     local pulse = 0.6 + math.sin(G.time * 8) * 0.3
     g.setColor(P.gold[1], P.gold[2], P.gold[3], pulse)
     g.rectangle("fill", cx - 10, self.y + self.h - 8, 20, 8)
     g.setColor(P.ice)
     g.rectangle("line", cx - 10, self.y + self.h - 8, 20, 8)
   end
-  -- beam telegraph / fire
+
+  -- THE BEAM. It comes out of the machine and it stops at the floor --
+  -- it used to be drawn from y=0 to y=4096, a column across the whole
+  -- screen with no source and no end. And it is drawn at the width it
+  -- actually hits at: the art was 8px of telegraph and 5px of beam
+  -- against a hitbox of BEAM_HALFW, so it caught you well outside
+  -- anything you could see.
   if self.state == "sweep" and self.beamX then
+    local World = require "src.world"
+    local top = self.y + self.h - 2
+    local row = (World.frost and World.frost.row)
+      or (World.room and World.room.frostRow) or (World.h - 6)
+    local bottom = (row + 1) * T
+    local hw = ARCH.BEAM_HALFW
     if not self.beamFired then
-      g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.3 + math.sin(G.time * 14) * 0.2)
-      g.rectangle("fill", self.beamX - 8, 0, 16, 4096)
+      g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.22 + math.sin(G.time * 14) * 0.12)
+      g.rectangle("fill", self.beamX - hw, top, hw * 2, bottom - top)
+      -- the edges, so the width it will hit at is legible
+      g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.7)
+      g.rectangle("fill", self.beamX - hw, top, 1, bottom - top)
+      g.rectangle("fill", self.beamX + hw - 1, top, 1, bottom - top)
     else
-      g.setColor(P.white[1], P.white[2], P.white[3], 0.8)
-      g.rectangle("fill", self.beamX - 5, 0, 10, 4096)
+      g.setColor(P.white[1], P.white[2], P.white[3], 0.85)
+      g.rectangle("fill", self.beamX - hw, top, hw * 2, bottom - top)
+      g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.9)
+      g.rectangle("fill", self.beamX - hw - 2, top, 2, bottom - top)
+      g.rectangle("fill", self.beamX + hw, top, 2, bottom - top)
+      -- where it lands
+      g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.5)
+      g.ellipse("fill", self.beamX, bottom, hw + 6, 4)
     end
   end
   g.setColor(1, 1, 1, 1)
@@ -3922,7 +4298,10 @@ local PLACE = {
   mycelchoir = function(World) return World.w * T / 2 - 14, 56 end,
   -- EIGHT starts on the far side of its room, between you and nothing
   vessel8 = function(World) return World.w * T - 110, World.h * T - 96 end,
-  archivist = function(World) return World.w * T / 2 - 20, 44 end,
+  -- The camera clamps at roomH - VH = 82 in a 22-row arena, so anything
+  -- above y=82 is off-screen while you are standing on the floor. The
+  -- rail was at 44: you fought a boss you could not see.
+  archivist = function(World) return World.w * T / 2 - 20, 100 end,
 }
 
 -- One-line epitaphs: every boss is a repair the Mender made without
