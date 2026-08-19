@@ -574,6 +574,41 @@ function S:draw()
     love.graphics.draw(G.vignette, 0, 0, 0, 2, 2)
   end
 
+  -- THE COLD, at the edges of the screen.
+  -- The Coldstore's gate is the air, not a door, and this is how the air
+  -- says so: you walk in without Cryo Coils and the frame starts closing
+  -- in white. Driven by the WORST of the two bots, because either of
+  -- them going down is your problem.
+  do
+    local Cold = require "src.cold"
+    local worst = 0
+    for _, p in ipairs(self.players or {}) do
+      if not p.dead and (p.chill or 0) > worst then worst = p.chill end
+    end
+    if worst > 0.05 then
+      local g = love.graphics
+      local a = (worst / Cold.CHILL_MAX) ^ 1.6
+      local band = 10 + 46 * a
+      -- four soft edges rather than one flat wash: a full-screen tint
+      -- would grey the room out, and you still have to be able to see
+      -- the floor you are running for.
+      for i = 0, 5 do
+        local t = i / 5
+        g.setColor(0.86, 0.95, 1.0, 0.16 * a * (1 - t))
+        local d = band * t
+        g.rectangle("fill", 0, d, G.VW, band / 5)
+        g.rectangle("fill", 0, G.VH - d - band / 5, G.VW, band / 5)
+        g.rectangle("fill", d, 0, band / 5, G.VH)
+        g.rectangle("fill", G.VW - d - band / 5, 0, band / 5, G.VH)
+      end
+      if worst >= Cold.CHILL_MAX then
+        g.setColor(0.86, 0.95, 1.0, 0.10 + math.sin(G.time * 9) * 0.06)
+        g.rectangle("fill", 0, 0, G.VW, G.VH)
+      end
+      g.setColor(1, 1, 1, 1)
+    end
+  end
+
   -- link charge beam warning
   if self.linkState then
     local v, l = self.players[1], self.players[2]

@@ -2076,24 +2076,68 @@ return function(Test, scenarios)
     local function fail(msg) fails = fails + 1 Test.log("FAIL " .. msg) end
     local World = require "src.world"
 
-    -- 1. cold rooms chip hp without cryocoils
+    -- 1. cold air is lethal without the coils.
+    -- NOTE the sense of `chill` inverted with the refit: it used to be a
+    -- countdown from 12 seconds of warmth, so `chill = 0.6` here meant
+    -- "about to freeze". It is a 0..1 meter that FILLS now, so this sets
+    -- it to empty and lets the room do the work.
     startRun { coop = true, room = "cold_2", door = "A" }
     wait(30)
+    local Cold = require "src.cold"
     local p1 = G.game.players[1]
-    p1.chill = 0.6
+    p1.chill = 0
     local hp0 = p1.hp
-    wait(90)
-    Test.log("cold chip: hp " .. hp0 .. " -> " .. p1.hp .. " (want lower)")
-    if p1.hp >= hp0 then fail("cold room did not chill") end
+    wait(60 * 4)
+    Test.log(string.format("no coils, 4s: chill %.2f, hp %d -> %d (want lower)",
+      p1.chill, hp0, p1.hp))
+    if p1.hp >= hp0 then fail("cold air did not bite without cryocoils") end
 
-    -- 2. cryocoils stop the chip
+    -- 2. the coils are NOT immunity. They are a longer breath, and the
+    -- distinction matters: the old chill made a coiled bot untouchable in
+    -- the Coldstore, which meant the zone's own verb stopped applying to
+    -- anyone equipped to be there.
     G.run.flags.cryocoils = true
     p1.hp = p1.maxhp
-    p1.chill = 0.6
+    p1.chill = 0
     local hp1 = p1.hp
-    wait(200)
-    Test.log("cryocoils: hp " .. hp1 .. " -> " .. p1.hp .. " (want equal)")
-    if p1.hp < hp1 then fail("cryocoils did not protect") end
+    wait(60 * 4)
+    Test.log(string.format("coils, 4s: chill %.2f, hp %d -> %d (want equal, "
+      .. "meter still rising)", p1.chill, hp1, p1.hp))
+    if p1.hp < hp1 then fail("cryocoils did not buy time") end
+    if p1.chill <= 0 then
+      fail("cryocoils froze the meter -- that is immunity, not protection")
+    end
+
+    -- 2b. THE VERB. Fire is spread by carrying it and by nothing else, so
+    -- drive the real prop: walk a spark into cold_2's first brazier and
+    -- watch it take, stay lit, and drain the meter.
+    local brz
+    for _, e in ipairs(World.entities) do
+      if e.id == "c2a" then brz = e break end
+    end
+    if not brz then fail("no brazier c2a in cold_2") else
+      if brz:lit() then fail("c2a starts lit -- nothing has carried fire yet") end
+      p1.x, p1.y = brz.x - 60, brz.y + 8
+      p1.vx, p1.vy = 0, 0
+      p1.chill = 0.9
+      p1:takeSpark()
+      wait(10)
+      if not p1:hasSpark() then fail("could not take a spark") end
+      -- walk into it
+      for _ = 1, 90 do
+        p1.x = p1.x + 1
+        wait(1)
+        if brz:lit() then break end
+      end
+      Test.log("brazier c2a lit: " .. tostring(brz:lit())
+        .. ", flag " .. tostring(G.run.flags[Cold.flagFor("c2a")]))
+      if not brz:lit() then fail("carrying a spark into a brazier did not light it") end
+      if p1:hasSpark() then fail("lighting it did not consume the spark") end
+      local c0 = p1.chill
+      wait(45)
+      Test.log(string.format("standing in it: chill %.2f -> %.2f", c0, p1.chill))
+      if p1.chill >= c0 then fail("a lit brazier did not drain the meter") end
+    end
 
     -- 3. icy floors: momentum survives with no input
     Test.log("room.ice=" .. tostring(World.room.ice))

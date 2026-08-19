@@ -4,6 +4,11 @@ return {
   mapPos = { x = 13, y = 0, w = 3, h = 1 },
   cold = true, ice = true,
   gates = { G = "thaw_cold5", H = "cradle_found" },
+  -- THE FALSE WALL. "The index says DOOR. The wall says wall." It opens
+  -- to the zone's own work rather than to four plates fetched from four
+  -- other zones: carry fire the whole way into the deep stacks, light
+  -- both braziers, and the ice lets go of it.
+  braziergate = { flag = "cradle_found", need = { "c5a", "c5b" } },
   map = [[
 ############################################################
 ############################################################
@@ -16,7 +21,7 @@ return {
 ##............=======...................G...........H.....##
 ##......................................G...........H.....##
 AA......................................G...........H.....BB
-AA..........m.....h.....m.......2...w...G...T.......H.....BB
+AA..........m...b.h.....m...r...2...w...G...T.......H.....BB
 ############################################################
 ############################################################
 ############################################################
@@ -24,6 +29,8 @@ AA..........m.....h.....m.......2...w...G...T.......H.....BB
 ############################################################
 ]],
   key = {
+    ["b"] = "brazier:c5a",
+    ["r"] = "brazier:c5b",
     ["w"] = "thawplate:thaw_cold5",
     ["T"] = "tank:tank_cold",
     ["2"] = "sign:sign_falsewall",

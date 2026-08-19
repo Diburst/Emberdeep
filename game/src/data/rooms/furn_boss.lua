@@ -19,7 +19,7 @@
 return {
   zone = "furnace", music = "furnace",
   arena = "crucible",
-  mapPos = { x = 12, y = 0, w = 3, h = 1 },
+  mapPos = { x = 14, y = 3, w = 3, h = 1 },
   floodRow = 17,
   map = [[
 ######AAA###################################################

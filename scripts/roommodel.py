@@ -29,10 +29,38 @@ these numbers must be re-measured.
 import re
 from collections import deque
 
-DOORS = set("ABCDEF")
-LIQ = set("~L")
-SPIKES = set("^v<>")
-GATES = set("GHIJ")
+# ------------------------------------------------------------------
+# THE ROOM ALPHABET HAS EXACTLY ONE OWNER: src/world.lua.
+#
+# These sets used to be typed out here, and in checkkeys.py, and in
+# genscrap.py, and in load_test.lua. Four copies of one fact, each
+# correct right up until the engine gains a tile char -- at which point
+# they go stale silently and the guards stop guarding the newest
+# character. `c` (crumble), `C` (a door letter) and `L` (lava) have each
+# been keyed to an entity that then never spawned.
+#
+# So they are read out of the engine now, and checkchars.py enforces
+# that nobody writes a second copy.
+# ------------------------------------------------------------------
+def _alphabet(path="src/world.lua"):
+    src = open(path).read()
+    m = re.search(r"local CHAR_TILE = \{(.*?)\n\}", src, re.S)
+    tiles = dict(re.findall(r'\["(.)"\]\s*=\s*(\w+)', m.group(1)))
+
+    def cs(var):
+        mm = re.search(r"local %s = \{(.*?)\}" % var, src, re.S)
+        return set(re.findall(r"(\w)\s*=\s*true", mm.group(1)))
+
+    return tiles, cs("DOOR_CHARS"), cs("GATE_CHARS")
+
+
+TILE_KIND, DOORS, GATES = _alphabet()
+TILES = set(TILE_KIND)
+LIQ = set(c for c, k in TILE_KIND.items() if k in ("WATER", "LAVA"))
+SPIKES = set(c for c, k in TILE_KIND.items() if k.startswith("SPIKE"))
+OPENABLE = set(c for c, k in TILE_KIND.items() if k in ("BREAK", "CRUMBLE"))
+# every character a room map may hold that is NOT free for an entity
+RESERVED = TILES | DOORS | GATES
 JUMP_H = 3
 JUMP_H_SPARK = 4
 GAP_W = 4
@@ -68,7 +96,7 @@ class Room:
         self.doors = {}
         self.spawns = {}        # entity char -> [(x, y)]
         self.updraft = {}       # (x, y) -> column base y, for every cell
-        tile = set("#.%c=~L") | SPIKES | GATES | DOORS
+        tile = RESERVED
         for y in range(self.H):
             for x in range(self.W):
                 ch = g[y][x]
@@ -118,7 +146,7 @@ def parse_room(fname):
     H, W = len(rows), len(rows[0])
     # record entity spawn positions BEFORE the liquid-settle pass: the
     # engine collects spawns first too (an underwater chest still spawns)
-    tile = set("#.%c=~L") | SPIKES | GATES | DOORS
+    tile = RESERVED
     pre_spawns = {}
     for y in range(H):
         for x in range(W):
@@ -163,6 +191,18 @@ def parse_room(fname):
     hot = "hot = true" in src
     cold = "cold = true" in src
     room = Room(name, g, gates, key, links, hot, cold, door_req)
+    # THE COLDSTORE'S FALSE WALL. A gate that opens to the zone's own
+    # work rather than to a flag fetched somewhere else:
+    #   braziergate = { flag = "cradle_found", need = { "c5a", "c5b" } }
+    room.braziergate = None
+    bg = re.search(r'braziergate\s*=\s*\{(.*?)\}\s*,?\s*\n', src, re.S)
+    if bg:
+        body = bg.group(1)
+        fm = re.search(r'flag\s*=\s*"([^"]+)"', body)
+        need = re.findall(r'"([^"]+)"', body.split("need", 1)[1]) \
+            if "need" in body else []
+        if fm:
+            room.braziergate = (fm.group(1), need)
     room.spawns = pre_spawns
     room.build_updrafts()
     return room

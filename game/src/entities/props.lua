@@ -931,6 +931,257 @@ end
 Entity.register("pod", function(x, y, parts) return Pod.new(x, y, parts) end)
 
 -- ------------------------------------------------------------------
+-- BRAZIER: brazier:<id>[:hearth]
+-- ------------------------------------------------------------------
+-- The Coldstore's only safe ground. A lit brazier drains chill, and it
+-- stays lit for the rest of the run -- lighting one is permanent
+-- progress, exactly like opening a shortcut, and the chain of them
+-- behind you is both your route forward and your way back.
+--
+-- LIGHTING ONE. Fire only. Walk into it carrying a spark and it takes.
+-- Nothing else in the game lights it: not the Cinder Ram, not a charged
+-- lance, not a dome. That is deliberate and it is the reason the spark
+-- carry exists at all -- if a charge lit braziers, carrying fire would
+-- be decoration and this zone would be a corridor with a status effect
+-- in it.
+--
+-- `:hearth` marks the one flame the archive never let go out. It is lit
+-- from the start, it cannot be taken from, and every other brazier in
+-- the zone descends from it.
+--
+-- The lit state lives in G.run.flags via src/cold.lua, NOT on the prop,
+-- so it survives leaving the room, swapping bots, saving and reloading.
+local Cold = require "src.cold"
+local Brazier = Entity.extend()
+function Brazier:init(x, y, parts)
+  Entity.init(self, x + 2, y - 8)
+  self.kind = "prop"
+  self.w, self.h = 12, 24
+  self.layer = -1
+  self.id = parts[2] or "b"
+  self.hearth = parts[3] == "hearth"
+  self.interactable = true
+  self.interactRange = 22
+  self.flick = U.rand(0, 6)
+  self.litT = 0
+  if self.hearth then Cold.light(self.id) end
+  self.hint = Cold.isLit(self.id) and "take a spark" or "cold"
+end
+
+function Brazier:lit() return Cold.isLit(self.id) end
+
+function Brazier:update(dt)
+  local World = require "src.world"
+  local lit = self:lit()
+  self.heatR = lit and (self.hearth and Cold.HEARTH_R or Cold.BRAZIER_R) or nil
+  self.lightR = lit and (self.hearth and Cold.HEARTH_LIGHT or Cold.BRAZIER_LIGHT) or 0
+  if self.litT > 0 then self.litT = self.litT - dt end
+  self.hint = lit and "take a spark" or "cold"
+  -- re-evaluate once on arrival too: walking back into the room with the
+  -- chain already complete must open the gate, not require a re-light
+  if not self.gateChecked then
+    self.gateChecked = true
+    Cold.checkGates(World)
+  end
+
+  -- WALKING INTO IT WITH FIRE IS ENOUGH. There is no button here: a
+  -- carrier cannot shoot or shield, their hands are full, and asking
+  -- them to also press interact at the end of a timed crossing turns a
+  -- clean arrival into a fumble.
+  if lit then return end
+  for _, p in ipairs(World.players or {}) do
+    if not p.dead and p.hasSpark and p:hasSpark()
+      and U.aabb(self.x - Cold.SPARK_R, self.y - Cold.SPARK_R,
+                 self.w + Cold.SPARK_R * 2, self.h + Cold.SPARK_R * 2,
+                 p.x, p.y, p.w, p.h) then
+      Cold.light(self.id)
+      p:dropSpark(nil, nil)
+      self.litT = 0.9
+      World:fx("burst", self.x + 6, self.y + 6,
+        { color = "ember", n = 18, speed = 110 })
+      if G.Audio then G.Audio.sfx("emitter") end
+      if G.game then G.game:announce("The brazier catches.", 1.8) end
+      if Cold.checkGates(World) and G.game then
+        G.game:announce("Somewhere in the stacks, ice lets go of a door.", 2.6)
+        if G.Audio then G.Audio.sfx("quake") end
+      end
+      break
+    end
+  end
+end
+
+function Brazier:interact(p)
+  if not self:lit() then
+    G.game:startDialogue({ { who = "sys",
+      text = "A cold iron bowl of old ash. It has not burned in a hundred years. Nothing you carry will start it -- fire has to be brought here." } })
+    return
+  end
+  if p:hasSpark() then
+    G.game:startDialogue({ { who = "sys",
+      text = "Your hands are already full of fire." } })
+    return
+  end
+  p:takeSpark()
+  local World = require "src.world"
+  World:fx("spark", self.x + 6, self.y + 2, { color = "ember", n = 8 })
+  if G.game then
+    G.game:announce("You lift a spark out of the fire. It will not last long.", 2.2)
+  end
+end
+
+function Brazier:draw()
+  local g = love.graphics
+  local x, y = self.x, self.y
+  local lit = self:lit()
+  -- the bowl and its legs
+  g.setColor(P.shadow)
+  g.rectangle("fill", x - 1, y + 15, 14, 3)
+  g.setColor(P.slate)
+  g.rectangle("fill", x + 2, y + 17, 2, 6)
+  g.rectangle("fill", x + 8, y + 17, 2, 6)
+  g.setColor(lit and P.gray or P.slate)
+  g.rectangle("fill", x - 1, y + 11, 14, 5, 2, 2)
+  g.setColor(P.shadow)
+  g.rectangle("fill", x + 1, y + 12, 10, 2)
+
+  if not lit then
+    -- old ash, and a breath of frost off it
+    g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.35)
+    g.rectangle("fill", x + 1, y + 11, 10, 2)
+    g.setColor(1, 1, 1, 1)
+    return
+  end
+
+  local big = self.hearth and 1.5 or 1
+  local beat = 0.8 + math.sin(G.time * 4.2 + self.flick) * 0.14
+    + math.sin(G.time * 11.3 + self.flick) * 0.06
+  if self.litT > 0 then beat = beat * (1 + self.litT) end
+  local hh = (10 * big) * beat
+  local cx, cy = x + 6, y + 11
+  g.setColor(P.ember[1], P.ember[2], P.ember[3], 0.14 * beat)
+  g.circle("fill", cx, cy - hh * 0.3, (self.hearth and Cold.HEARTH_R or Cold.BRAZIER_R) * 0.45)
+  g.setColor(P.ember)
+  g.polygon("fill", cx, cy - hh, cx + 4 * big, cy, cx, cy + 2, cx - 4 * big, cy)
+  g.setColor(P.gold)
+  g.polygon("fill", cx, cy - hh * 0.66, cx + 2.4 * big, cy, cx, cy + 1.4, cx - 2.4 * big, cy)
+  g.setColor(1, 1, 1, 0.8 * beat)
+  g.polygon("fill", cx, cy - hh * 0.34, cx + 1.1 * big, cy, cx, cy + 1, cx - 1.1 * big, cy)
+  g.setColor(1, 1, 1, 1)
+end
+Entity.register("brazier", function(x, y, parts) return Brazier.new(x, y, parts) end)
+
+-- ------------------------------------------------------------------
+-- FROSTPATCH: frostpatch[:<tiles>]
+-- ------------------------------------------------------------------
+-- Rime creeping out from under a wall, onto floor that has no business
+-- being cold. No collision, no interaction, nothing to shoot -- it is a
+-- sentence about the world, not a hint about a wall.
+--
+-- This is the ONLY tell that the Coldstore is behind ug_secret's east
+-- wall. A shootable wall with nothing to distinguish it is a pixel hunt,
+-- and a glowing marker over it would be the game admitting it does not
+-- trust you. Cold spilling out from behind a wall is neither: it says
+-- something back there is very cold, and leaves the conclusion to you.
+local Frostpatch = Entity.extend()
+function Frostpatch:init(x, y, parts)
+  Entity.init(self, x, y + 8)
+  self.kind = "prop"
+  self.tiles = tonumber(parts[2]) or 3
+  self.w, self.h = self.tiles * T, 8
+  self.layer = -3          -- under everything, including the players
+  self.seed = (x * 13 + y * 7) % 97
+end
+function Frostpatch:update(dt) end
+function Frostpatch:draw()
+  local g = love.graphics
+  -- the sheet, thinning out to the left: the cold is coming FROM the
+  -- right, and the gradient is what points at the wall
+  for i = 0, self.tiles - 1 do
+    local t = (i + 1) / self.tiles                 -- 0 at the far end
+    local a = 0.10 + 0.34 * t
+    g.setColor(P.ice[1], P.ice[2], P.ice[3], a)
+    g.rectangle("fill", self.x + i * T, self.y + 2, T, 6)
+    -- crystals, denser toward the source
+    local n = math.floor(1 + 3 * t)
+    g.setColor(0.92, 0.98, 1.0, 0.20 + 0.45 * t)
+    for k = 1, n do
+      local h = (self.seed + i * 31 + k * 17) % 7
+      local px = self.x + i * T + ((self.seed + k * 53) % T)
+      g.rectangle("fill", px, self.y + 7 - h * 0.5, 1, 1 + h * 0.4)
+    end
+  end
+  g.setColor(1, 1, 1, 1)
+end
+Entity.register("frostpatch", function(x, y, parts) return Frostpatch.new(x, y, parts) end)
+
+-- ------------------------------------------------------------------
+-- TERMINAL: terminal:<dialogue id>
+-- ------------------------------------------------------------------
+-- A console that still has power enough to print. Mechanically it is a
+-- sign; it is a separate prop because the last thing in the Cradle
+-- should not look like a notice board, and because a screen that is
+-- still lit in a room full of people who are not is the image.
+local Terminal = Entity.extend()
+function Terminal:init(x, y, parts)
+  Entity.init(self, x, y - 12)
+  self.kind = "prop"
+  self.w, self.h = 18, 28
+  self.id = parts[2]
+  self.interactable = true
+  self.hint = "read the log"
+  self.interactRange = 26
+  self.layer = -1
+  self.lightR = 34
+  self.seed = (x * 7) % 61
+end
+function Terminal:update(dt) end
+function Terminal:interact(p)
+  -- Through Dialogue.get, exactly like Sign. The module returns
+  -- `Dialogue`, and the id table lives on `Dialogue.db` -- so indexing
+  -- the module directly returns nil for every id in the game and the
+  -- terminal reports itself dead. It did, on the first playthrough.
+  local Dialogue = require "src.data.dialogue"
+  local script = Dialogue.get(self.id, p)
+  if not script then
+    G.game:startDialogue({ { who = "sys",
+      text = "The screen is dead." } })
+    return
+  end
+  G.game:startDialogue(script)
+  G.run.flags["read_" .. tostring(self.id)] = true
+end
+function Terminal:draw()
+  local g = love.graphics
+  local x, y = self.x, self.y
+  -- housing
+  g.setColor(P.shadow)
+  g.rectangle("fill", x - 1, y + 25, 20, 3)
+  g.setColor(P.slate)
+  g.rectangle("fill", x, y, 18, 26, 2, 2)
+  g.setColor(P.gray)
+  g.rectangle("line", x, y, 18, 26, 2, 2)
+  -- the screen, still on after a hundred years
+  local flick = 0.55 + math.sin(G.time * 2.3 + self.seed) * 0.1
+    + math.sin(G.time * 17 + self.seed) * 0.04
+  g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.22 * flick)
+  g.rectangle("fill", x + 2, y + 3, 14, 12)
+  -- scan lines of text that never finished printing
+  g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.75 * flick)
+  for i = 0, 3 do
+    local wdt = 4 + ((self.seed + i * 29) % 9)
+    g.rectangle("fill", x + 3, y + 4.5 + i * 2.6, wdt, 1)
+  end
+  -- keys
+  g.setColor(P.gray)
+  for i = 0, 4 do
+    g.rectangle("fill", x + 2 + i * 3, y + 18, 2, 1.5)
+    g.rectangle("fill", x + 2 + i * 3, y + 21, 2, 1.5)
+  end
+  g.setColor(1, 1, 1, 1)
+end
+Entity.register("terminal", function(x, y, parts) return Terminal.new(x, y, parts) end)
+
+-- ------------------------------------------------------------------
 -- THE EMBER LANTERN (camp_main): the great lantern Ember Camp was
 -- built around -- which is to say, the stolen heart of the Core.
 -- Interactable from early on. Taking it has exactly the consequences
@@ -1203,6 +1454,11 @@ end)
 -- ------------------------------------------------------------------
 local FROZEN_LINES = {
   elder = "Maro, where he fell. The frost took his last word and kept it.",
+  -- CURATOR LOCK, in the Cradle. He is not one of the camp's dead -- he
+  -- froze here a hundred years before any of them, at his post, and this
+  -- is the only line he gets. Everything else he ever says, you find
+  -- written down.
+  lock = "He chose to die trying to finish his task rather than flee.",
   sol = "Doc Sol. Her hands are folded, patient, as if the cold were one more thing she could sit with.",
   brassa = "Brassa, hammer still raised. The ice finished the swing for her.",
   tikka = "Tikka. Small, and still, and eight years old at last, forever.",
@@ -1237,7 +1493,8 @@ function Frozenkeeper:draw()
   local NPC2 = require "src.entities.npc"
   local name = ({ elder = "npc_elder", sol = "npc_sol", brassa = "npc_brassa",
     tikka = "npc_tikka", root = "npc_root", inks = "npc_inks",
-    vill = "npc_vill", vill2 = "npc_vill2", jun = "npc_jun" })[self.id] or "npc_vill"
+    vill = "npc_vill", vill2 = "npc_vill2", jun = "npc_jun",
+    lock = "npc_lock" })[self.id] or "npc_vill"
   local g = love.graphics
   G.drawSprite(name, 1, self.x + self.w / 2, self.y + self.h + 0.5,
     { tint = { 0.62, 0.75, 0.95, 1 } })

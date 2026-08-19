@@ -7,6 +7,7 @@ local PH = require "src.physics"
 local Weapons = require "src.weapons"
 local Proj = require "src.entities.projectile"
 local Cam = require "src.camera"
+local Cold = require "src.cold"
 
 local T = 16
 local Player = Entity.extend()
@@ -142,7 +143,10 @@ function Player:init(idx, x, y)
   self.hurtT = 0
   self.breath = 9
   self.heat = 12
-  self.chill = 12
+  -- chill is a 0..1 meter that FILLS, the opposite sense to heat/breath.
+  -- It persists across rooms on purpose: a door is not a coat.
+  self.chill = 0
+  self.chillBite = 0
   self.chilledT = 0
 
   -- Vess kit
@@ -277,6 +281,10 @@ end
 
 function Player:goDown()
   self.downed = true
+  -- a bot on the floor is not holding a flame
+  if self:hasSpark() then
+    self:dropSpark(require "src.world", nil)
+  end
   local times = { 60, 30, 18 }
   self.bleedout = times[G.run.difficulty] or 30
   self.reviveProgress = 0
@@ -509,6 +517,7 @@ function Player:update(dt)
   self.dashCd = self.dashCd - dt
   if self.bulwarkT > 0 then self.bulwarkT = self.bulwarkT - dt end
   self:updateEmber(dt, World)
+  self:updateSpark(dt, World)
   if self.bounceT > 0 then self.bounceT = self.bounceT - dt end
   if self.chevT > 0 then self.chevT = self.chevT - dt end
   if self.plateFlashT > 0 then self.plateFlashT = self.plateFlashT - dt end
@@ -558,6 +567,8 @@ function Player:update(dt)
   local topSpeed = waterMode and BASE.waterSpeed or BASE.runSpeed
   if self.domeActive then topSpeed = topSpeed * 0.55 end
   if self:hasEmber() then topSpeed = topSpeed * EMBER_SLOW end
+  if self:hasSpark() then topSpeed = topSpeed * Cold.CARRY_SLOW end
+  topSpeed = topSpeed * self:chillSpeedMult()
   -- icy rooms (the Coldstore): grounded control goes slick
   local icy = self.onGround and not self.inWater
     and World.room and World.room.ice
@@ -716,7 +727,7 @@ function Player:update(dt)
   -- ---- Vess dash / grapple
   if self.isVess then
     if pressed("special") and self.dashCd <= 0 and self.dashT <= 0
-      and not self:hasEmber() then
+      and not self:hasEmber() and not self:hasSpark() then
       -- try grapple first if module owned and anchor in range
       local anchor = G.run.flags.grapple and self:findAnchor(World)
       if anchor then
@@ -759,7 +770,7 @@ function Player:update(dt)
 
   -- ---- Lu dome + repair
   if not self.isVess then
-    if pressed("special") and not self:hasEmber() then
+    if pressed("special") and not self:hasEmber() and not self:hasSpark() then
       if self.domeActive then
         self.domeActive = false
         if G.Audio then G.Audio.sfx("domeoff") end
@@ -825,7 +836,7 @@ function Player:update(dt)
     -- REPAIR PULSE. Every number is a forge tier now, read from
     -- src/upgrades.lua rather than written here -- heal, energy cost,
     -- cooldown and radius all improve together.
-    if pressed("util") and self.repairCd <= 0 then
+    if pressed("util") and self.repairCd <= 0 and not self:hasSpark() then
       local rp = Up.repair()
       if self.energy >= rp.cost then
         self.energy = self.energy - rp.cost
@@ -894,6 +905,12 @@ function Player:update(dt)
     World:fx("splash", self.x + self.w / 2, self.y + self.h / 2)
     if G.Audio then G.Audio.sfx("splash") end
   end
+  -- water kills a spark. Nothing else in the zone does, on purpose:
+  -- being hit while carrying is already a punishment, and taking the
+  -- flame away for it would make the escort's job impossible.
+  if self.inWater and self:hasSpark() then
+    self:dropSpark(World, "The water takes the spark.")
+  end
   self.wasInWater = self.inWater
   if self.inWater and not G.run.flags.hydroseals then
     local headTx = math.floor((self.x + self.w / 2) / T)
@@ -922,16 +939,8 @@ function Player:update(dt)
     self.heat = math.min(12, self.heat + dt * 3)
   end
 
-  -- cold rooms (the Coldstore): mirror of heat, gated by cryo coils
-  if World.room and World.room.cold and not G.run.flags.cryocoils then
-    self.chill = self.chill - dt
-    if self.chill <= 0 then
-      self.chill = 1.5
-      self:takeDamage(2, nil, { pierceDash = true })
-    end
-  else
-    self.chill = math.min(12, self.chill + dt * 3)
-  end
+  -- cold rooms (the Coldstore) -- see src/cold.lua
+  self:updateChill(dt, World)
   if self.chilledT > 0 then self.chilledT = self.chilledT - dt end
 
   -- last safe footing: solid ground, out of hazard, remembered per room
@@ -1242,9 +1251,142 @@ function Player:drawEmber(g)
   g.setColor(1, 1, 1, 1)
 end
 
+-- ------------------------------------------------------------------
+-- CHILL
+-- ------------------------------------------------------------------
+-- The Coldstore's gate is not a locked door, it is the air. You walk
+-- in without Cryo Coils, the edges of the screen go white, and about
+-- four seconds later you are down. That explains itself in a way a
+-- locked door never does.
+--
+-- With the Coils fitted the same air is survivable and never
+-- comfortable: the meter still fills, it just fills slowly enough to
+-- cross a room and reach the next fire. The Coils are not immunity.
+-- They are a longer breath.
+--
+-- The meter does NOT reset at a door. Carrying it between rooms is what
+-- makes the zone about routes instead of about rooms.
+function Player:updateChill(dt, World)
+  local cold = World.room and World.room.cold
+  local cx, cy = self.x + self.w / 2, self.y + self.h / 2
+
+  -- a spark in your hands is a fire in your hands
+  local warm = self:hasSpark() and true or false
+  if not warm and cold then
+    warm = Cold.heatAt(World, cx, cy) ~= nil
+  end
+
+  if cold and not warm then
+    local rate = G.run.flags.cryocoils and Cold.FILL_COILED or Cold.FILL_BARE
+    self.chill = math.min(Cold.CHILL_MAX, self.chill + rate * dt)
+  else
+    self.chill = math.max(0, self.chill - Cold.DRAIN * dt)
+  end
+
+  if self.chill >= Cold.CHILL_MAX then
+    self.chillBite = self.chillBite - dt
+    if self.chillBite <= 0 then
+      self.chillBite = Cold.BITE_TICK
+      -- a fraction of MAX HP, so the countdown is the same length at
+      -- every tier instead of instant at base and survivable when maxed
+      local dmg = math.max(Cold.BITE_MIN,
+        math.ceil((self.maxhp or 12) * Cold.BITE_FRAC))
+      self:takeDamage(dmg, nil, { pierceDash = true, cold = true })
+      if World.fx then
+        World:fx("spark", cx, cy, { color = "ice", n = 5 })
+      end
+    end
+  else
+    self.chillBite = 0
+  end
+  if self.chilledT > 0 then self.chilledT = self.chilledT - dt end
+end
+
+-- How much the cold has taken out of your legs, 1 = untouched.
+function Player:chillSpeedMult()
+  if self.chill <= Cold.SLOW_AT then return 1 end
+  local t = (self.chill - Cold.SLOW_AT) / (Cold.CHILL_MAX - Cold.SLOW_AT)
+  return 1 - (1 - Cold.SLOW_MIN) * math.min(1, t)
+end
+
+-- ------------------------------------------------------------------
+-- THE SPARK
+-- ------------------------------------------------------------------
+-- Fire spreads one way in this zone: somebody carries it. Which bot is
+-- holding it lives in the RUN for the same reason the Ember does -- it
+-- has to survive a room change and a bot swap.
+function Player:hasSpark()
+  return G.run and G.run.sparkCarrier == self.idx
+    and (G.run.sparkT or 0) > 0
+end
+
+function Player:takeSpark()
+  if not G.run then return end
+  G.run.sparkCarrier = self.idx
+  G.run.sparkT = Cold.SPARK_BURN
+  if G.Audio then G.Audio.sfx("emitter") end
+end
+
+function Player:dropSpark(World, why)
+  if not self:hasSpark() then return end
+  G.run.sparkCarrier = nil
+  G.run.sparkT = 0
+  if World and World.fx then
+    World:fx("burst", self.x + self.w / 2, self.y + self.h / 2,
+      { color = "ember", n = 10, speed = 60 })
+  end
+  if G.Audio then G.Audio.sfx("domeoff") end
+  if why and G.game then G.game:announce(why, 1.6) end
+end
+
+function Player:updateSpark(dt, World)
+  if not self:hasSpark() then
+    self.sparkFx = nil
+    return
+  end
+  G.run.sparkT = math.max(0, (G.run.sparkT or 0) - dt)
+  self.lightR = math.max(self.lightR or 0, Cold.SPARK_LIGHT)
+
+  if G.run.sparkT <= 0 then
+    -- Nothing punishes you but the walk. Chill starts filling and you
+    -- head back to the last brazier you lit -- which is the whole
+    -- reason the chain behind you matters.
+    self:dropSpark(World, "The spark gutters out.")
+    return
+  end
+
+  -- embers coming off the hand
+  self.sparkFx = (self.sparkFx or 0) - dt
+  if self.sparkFx <= 0 then
+    self.sparkFx = 0.09
+    World:fx("trail", self.x + self.w / 2 + self.facing * 5, self.y + 3,
+      { color = U.choose({ "ember", "gold" }), r = 1, t = 0.35,
+        vx = U.rand(-6, 6), vy = U.rand(-22, -8) })
+  end
+end
+
+-- A small flame held out in front, and it visibly runs down.
+function Player:drawSpark(g)
+  if not self:hasSpark() then return end
+  local t = (G.run.sparkT or 0) / Cold.SPARK_BURN
+  local cx = self.x + self.w / 2 + self.facing * 5
+  local cy = self.y + 3
+  local low = (G.run.sparkT or 0) <= Cold.SPARK_LOW
+  local beat = 0.75 + math.sin(G.time * (low and 14 or 5)) * (low and 0.25 or 0.12)
+  local hh = (3 + 5 * t) * beat
+
+  g.setColor(P.ember[1], P.ember[2], P.ember[3], 0.18 * beat)
+  g.circle("fill", cx, cy, Cold.SPARK_LIGHT * 0.22)
+  g.setColor(P.ember)
+  g.polygon("fill", cx, cy - hh, cx + 2.5, cy + 1, cx, cy + 2.5, cx - 2.5, cy + 1)
+  g.setColor(P.gold)
+  g.polygon("fill", cx, cy - hh * 0.6, cx + 1.4, cy + 1, cx, cy + 1.6, cx - 1.4, cy + 1)
+  g.setColor(1, 1, 1, 1)
+end
+
 function Player:updateFire(dt, World, slot, down, pressed)
   -- both hands are full
-  if self:hasEmber() then return end
+  if self:hasEmber() or self:hasSpark() then return end
   local ws = self:curWeaponState()
   if not ws then return end
   local def = Weapons.get(ws.id)
@@ -1465,6 +1607,7 @@ function Player:draw()
 
   -- the Ember goes UNDER the bot, so the sprite reads as holding it
   self:drawEmber(g)
+  self:drawSpark(g)
 
   -- dome
   if self.domeActive then
@@ -1672,11 +1815,20 @@ function Player:draw()
     g.rectangle("fill", self.x + self.w / 2 - 7, self.y - 11, bw, 2)
     g.setColor(1, 1, 1, 1)
   end
-  -- cold warning
-  if World.room and World.room.cold and not G.run.flags.cryocoils and self.chill < 8 then
-    g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.9)
-    local bw = 14 * (self.chill / 12)
-    g.rectangle("fill", self.x + self.w / 2 - 7, self.y - 11, bw, 2)
+  -- cold warning. Fills rather than empties, and it is shown to a
+  -- coiled bot too -- the Coils buy time, they do not buy immunity, and
+  -- a player who thinks they are immune finds out at the worst moment.
+  if self.chill > 0.02 then
+    local full = self.chill >= Cold.CHILL_MAX
+    g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.55)
+    g.rectangle("fill", self.x + self.w / 2 - 7, self.y - 11, 14, 2)
+    if full then
+      g.setColor(1, 1, 1, 0.6 + math.sin(G.time * 12) * 0.4)
+    else
+      g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.9)
+    end
+    g.rectangle("fill", self.x + self.w / 2 - 7, self.y - 11,
+      14 * (self.chill / Cold.CHILL_MAX), 2)
     g.setColor(1, 1, 1, 1)
   end
 end

@@ -16,7 +16,7 @@ return {
 ##........................................................##
 ##====....................................................##
 AA........................................................##
-AA...s....p...p...p...p...p...r...p...p...p...p...p.......##
+AA...s....p...p...p...p...p...r...p...p...p...p...p...k.y.##
 ############################################################
 ############################################################
 ############################################################
@@ -24,6 +24,13 @@ AA...s....p...p...p...p...p...r...p...p...p...p...p.......##
 ############################################################
 ]],
   key = {
+    -- CURATOR LOCK, where he fell. Not an NPC, not a dialogue tree: a
+    -- body at his post and one line. You have met him across a hundred
+    -- years of handwriting by the time you get here, and then you meet
+    -- him.
+    ["k"] = "frozenkeeper:lock",
+    -- ...and the thing he died in front of.
+    ["y"] = "terminal:log_cradle",
     ["N"] = "sign:sign_sleepers",
     ["s"] = "save",
     ["p"] = "pod",

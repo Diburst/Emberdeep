@@ -45,6 +45,19 @@ local CHAR_TILE = {
 local DOOR_CHARS = { A = true, B = true, C = true, D = true, E = true, F = true }
 local GATE_CHARS = { G = true, H = true, I = true, J = true }
 
+-- THE ROOM ALPHABET, published. A room map is a grid of single
+-- characters and these three tables decide which of them are terrain
+-- before the room's `key` table is ever consulted -- so an entity keyed
+-- to one of them is parsed as scenery and silently never spawns.
+--
+-- They are exported because four different tools used to keep their own
+-- hand-typed copies, and a copy is correct only until this table
+-- changes. Anything that needs to know what a character means reads it
+-- from here. See scripts/checkchars.py.
+World.CHAR_TILE = CHAR_TILE
+World.DOOR_CHARS = DOOR_CHARS
+World.GATE_CHARS = GATE_CHARS
+
 function World.preload()
   -- register every entity type
   require "src.entities.projectile"

@@ -297,6 +297,20 @@ D.log_core2 = { { script = {
 D.log_core3 = { { script = {
   { who = "sys", text = "DIAGNOSTIC. The heart is absent. Correction: the heart is stolen. Correction: the heart is [MAINTENANCE HAS NO WORD FOR THIS]. Resuming repairs." },
 } } }
+-- CURATOR LOCK'S LOG, on the terminal at the far end of the Cradle.
+-- Entry 3 is the one that recontextualises the whole zone: the thing you
+-- killed twenty seconds ago was following an order from the man lying
+-- behind you, and it followed it for a century after he stopped being
+-- able to give any. Nobody says that out loud either.
+D.log_cradle = { { script = {
+  { who = "sys", text = "CURATOR'S TERMINAL. It still has power. The cursor is still blinking, at the end of a line nobody finished reading." },
+  { who = "lock", text = "LOG 1. We've lost primary power. Temperature is dropping. Those fools took the Ember and doomed all of Emberdeep in the process!" },
+  { who = "lock", text = "LOG 2. The Archivist and I saved as many people as I could. 411 Stasis Pods. My job was to protect data, not people, but I'm all they've got." },
+  { who = "lock", text = "LOG 3. That dear machine. Archivist. I've given him his final order: protect this place." },
+  { who = "lock", text = "LOG 4. It's cold. So cold. I can't feel. I can't breathe." },
+  { who = "sys", text = "There are no further entries." },
+} } }
+
 D.log_core4 = { { script = {
   { who = "sys", text = "DAY 36,509. Mended to date: 1,206,441 things. The city is not mended. QUERY: what is the city? RESOLVED: the city is the thing I cannot reach." },
 } } }

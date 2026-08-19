@@ -51,10 +51,10 @@ NPC_GIVES = {
         {"gives": ["mote_done"],
          "req": ["glowmite1", "glowmite2", "glowmite3"]},
     ],
-    "lock": [
-        {"gives": ["cradle_found"],
-         "req": ["arcplate1", "arcplate2", "arcplate3", "arcplate4"]},
-    ],
+    # CURATOR LOCK used to stand in cold_4 and open the Cradle in
+    # exchange for four catalog plates fetched from four other zones.
+    # He has been dead in the Cradle for a hundred years; the way in
+    # answers to `braziergate` now -- see room_targets below.
 }
 
 # flags derived from other flags on visiting a room (camp_main onEnter)
@@ -87,6 +87,14 @@ def target_gives(spec):
         return [parts[1]], ["linkblast"]
     if kind == "boss":
         return ["boss_" + parts[1]] + BOSS_REWARDS.get(parts[1], []), []
+    if kind == "brazier":
+        # A brazier grants its own flag when you can reach it. The
+        # CARRY is not modelled as a requirement here on purpose --
+        # checkheat.py is the tool that walks the chain against the
+        # spark timer, and duplicating that reasoning in two places
+        # would guarantee the two disagree. This says only: you got
+        # there, so the fire could too.
+        return ["brazier_" + parts[1]], []
     if kind == "thawplate":
         # latching plate under old ice; the LINK blast (always available)
         # or any heavy shot melts it free
@@ -136,6 +144,22 @@ def room_targets(room):
             extra = list(extra) + ["bulwark"]
         if gives and ch in room.spawns:
             out["ent:" + ch] = (room.spawns[ch], gives, extra, spec.split(":")[0])
+    # THE BRAZIER CHAIN, as progression sees it. Each brazier is a target
+    # that grants `brazier_<id>` when you can reach it, and the room's
+    # braziergate is a target that wants all of them -- so checkprogress
+    # proves the Coldstore's climax is reachable by DOING THE ZONE, not
+    # by trusting that it is.
+    bg = getattr(room, "braziergate", None)
+    if bg:
+        flag, need = bg
+        cells = []
+        for ch, spec in sorted(room.key.items()):
+            if spec.split(":")[1:2] and spec.startswith("brazier:") \
+                    and spec.split(":")[1] in need:
+                cells.extend(room.spawns.get(ch, []))
+        if cells:
+            out["gate:" + flag] = (cells, [flag],
+                                   ["brazier_" + b for b in need], "braziergate")
     return out
 
 

@@ -21,12 +21,19 @@ went missing the day it was written.
 Run from game/ with PYTHONPATH=../scripts.
 """
 import glob
+import os
 import re
 import sys
 
-TILE = set("#.=^v<>~L%c")
-DOORS = set("ABCDEF")
-GATES = set("GHIJ")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import roommodel as RM                                    # noqa: E402
+
+# READ FROM THE ENGINE, never typed here. This file used to hold its own
+# copy of the tile alphabet, which is fine until world.lua gains a
+# character and this stops guarding it -- see checkchars.py.
+TILE = RM.TILES
+DOORS = RM.DOORS
+GATES = RM.GATES
 
 
 def audit(fname):

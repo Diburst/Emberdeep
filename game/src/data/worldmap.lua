@@ -35,9 +35,14 @@ WM.ZONE_NAMES = {
 -- map-canvas offsets (in map cells)
 WM.ZONE_OFFSETS = {
   camp = { x = 8, y = 8 },
-  coldstore = { x = 31, y = 13 },
+  -- The archive is behind ug_secret's east wall now, so it has to be
+  -- DRAWN behind ug_secret's east wall: undergrove sits at (11,14) and
+  -- ug_secret at (7,3) within it, which puts its right edge at 18,17.
+  coldstore = { x = 19, y = 17 },
   core = { x = 29, y = 17 },
-  cradle = { x = 50, y = 13 },
+  -- ...and the Cradle sits immediately past the Threshold it is behind,
+  -- instead of 12 cells away across the Core.
+  cradle = { x = 39, y = 17 },
   crystal = { x = 30, y = 14 },
   flooded = { x = 23, y = 6 },
   furnace = { x = 31, y = 10 },

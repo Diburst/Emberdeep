@@ -3330,17 +3330,19 @@ function Archivist:update(dt)
     if self.stateT <= 0 then self:setState("ride", 2.2 / frenzy) end
   end
 end
-function Archivist:onDeath()
-  Boss.onDeath(self)
-  -- the protector yields -- and chooses to open the way
-  if G.game then
-    G.game:startDialogue({
-      { who = "archivist", text = "Directive check. Keep the sleepers safe. Admit no one. ...One hundred years, zero exceptions." },
-      { who = "archivist", text = "Assessment: you did not come to harm them. You came to COUNT them." },
-      { who = "archivist", text = "A hundred years is long enough for a lie. Go in, caretakers. Read the record. Count them all." },
-    })
-  end
-end
+-- IT DIES. It does not yield, it does not assess you, and it does not
+-- give you permission to walk past it.
+--
+-- The old version survived its own defeat and narrated the reveal --
+-- three lines of a machine deciding you were worthy. That was the last
+-- thing in this zone explaining itself out loud, and it was also a
+-- misreading of its own epitaph: "the only one of us that never broke."
+-- A machine that never broke does not negotiate at the end. It runs out.
+--
+-- So there is no onDeath override any more: it falls, it leaves a
+-- corpse on the floor of the doorway it held for a century, and what it
+-- was doing there is something you work out AFTERWARDS, in the room
+-- behind it, from a body and a terminal. Nobody says it to you.
 function Archivist:draw()
   local g = love.graphics
   local cx = self.x + self.w / 2
