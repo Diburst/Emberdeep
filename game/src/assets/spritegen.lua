@@ -145,8 +145,12 @@ function SG.buildAll()
       love.graphics.setShader(whiteShader)
       whiteShader:send("whiteAmount", math.min(1, opts.white))
     end
+    -- Snap to the RENDER grid rather than the world grid: a world-unit
+    -- floor moves every sprite in RS-screen-pixel steps.
+    local RS = G.RS or 1
     love.graphics.draw(s.img, s.quads[frame],
-      math.floor(dx), math.floor(dy), opts.rot or 0, sx, sy,
+      math.floor(dx * RS) / RS, math.floor(dy * RS) / RS,
+      opts.rot or 0, sx, sy,
       opts.ox or s.ox, opts.oy or s.oy)
     if opts.white and opts.white > 0 then love.graphics.setShader() end
     love.graphics.setColor(1, 1, 1, 1)

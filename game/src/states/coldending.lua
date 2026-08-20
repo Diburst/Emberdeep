@@ -72,18 +72,18 @@ function S:draw()
     else
       g.setColor(P.silver[1], P.silver[2], P.silver[3], lineAlpha)
     end
-    g.printf(line, 40, y, G.VW - 80, "center")
+    g.printf(line, 40, y, G.SW - 80, "center")
     y = y + 14
   end
   -- falling frost
   for i = 1, 24 do
-    local fx = (i * 83 + G.time * (8 + i % 5 * 4)) % G.VW
-    local fy = (i * 47 + G.time * (14 + i % 3 * 6)) % G.VH
+    local fx = (i * 83 + G.time * (8 + i % 5 * 4)) % G.SW
+    local fy = (i * 47 + G.time * (14 + i % 3 * 6)) % G.SH
     g.setColor(P.ice[1], P.ice[2], P.ice[3], 0.25)
     g.rectangle("fill", fx, fy, 1, 1)
   end
   g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.5)
-  g.printf(G.fmtButtons("[CONFIRM]: continue"), 0, G.VH - 18, G.VW, "center")
+  g.printf(G.fmtButtons("[CONFIRM]: continue"), 0, G.SH - 18, G.SW, "center")
   g.setColor(1, 1, 1, 1)
 end
 

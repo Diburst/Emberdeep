@@ -63,7 +63,12 @@ W_OVER = 90.0        # two rooms in one cell: never acceptable in the
 # ------------------------------------------------------------------
 class Room:
     __slots__ = ("id", "zone", "x", "y", "w", "h", "edges", "links", "haspos",
-                 "arena")
+                 "arena",
+                 # TILE dimensions, kept beside the CELL dimensions (w, h)
+                 # precisely so the two can be compared. They are separate
+                 # facts: one is parsed from the room's map block, the
+                 # other is typed by hand into mapPos.
+                 "tw", "th")
 
 
 def load():
@@ -115,13 +120,16 @@ def load():
         r = Room()
         r.id, r.zone = name, z.group(1)
         r.haspos = bool(mp)
+        # Keep the TILE dimensions on the room. A room's size in tiles and
+        # its size in map cells are two independent facts -- one is in the
+        # room file, the other is authored by hand in mapPos -- and nothing
+        # used to compare them. See cells_for() and checkmap.py.
+        r.tw, r.th = W, H
         if mp:
             mx, my, r.w, r.h = (int(v) for v in mp.groups())
         else:
-            # a room that never declared one: size it the way its
-            # neighbours are sized, one cell per screen-ish
             mx, my = 0, 0
-            r.w, r.h = max(1, round(W / 22.0)), max(1, round(H / 17.0))
+            r.w, r.h = cells_for(W, H)
         ox, oy = off.get(r.zone, (0, 0))
         r.x, r.y = ox + mx, oy + my
         r.edges, r.links = edges, links
@@ -129,6 +137,25 @@ def load():
         rooms[name] = r
     seed_missing(rooms)
     return off, rooms
+
+
+
+# ------------------------------------------------------------------
+# ONE CELL PER SCREEN-ISH -- and this function is the only place that
+# says so.
+#
+# It was already here, inlined, as the fallback for a room with no
+# mapPos. Inlined it could only ever size the rooms nobody had sized,
+# which is the least useful thing it could do: the rooms that go wrong
+# are the ones that WERE sized, correctly, and then grew.
+#
+# Measured against the shipped game before it was trusted as a rule:
+# 80 of 83 rooms match it exactly. The three that do not are named in
+# checkmap.py, as decisions rather than as tolerances.
+# ------------------------------------------------------------------
+def cells_for(tw, th):
+    """The map-cell size a room of tw x th TILES ought to declare."""
+    return max(1, round(tw / 22.0)), max(1, round(th / 17.0))
 
 
 def seed_missing(rooms):

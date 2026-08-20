@@ -141,6 +141,8 @@ function S:update(dt)
     if #alive == 2 then
       for _, p in ipairs(alive) do
         if not p.downed then
+          -- WORLD space, not UI: this clamps a player inside the visible
+          -- window in world units, so it follows the camera, not the HUD.
           local minx, maxx = Cam.x + 2, Cam.x + G.VW - 2 - p.w
           if p.x < minx then
             local ox = p.x
@@ -639,14 +641,14 @@ function S:draw()
         local t = i / 5
         g.setColor(0.86, 0.95, 1.0, 0.16 * a * (1 - t))
         local d = band * t
-        g.rectangle("fill", 0, d, G.VW, band / 5)
-        g.rectangle("fill", 0, G.VH - d - band / 5, G.VW, band / 5)
-        g.rectangle("fill", d, 0, band / 5, G.VH)
-        g.rectangle("fill", G.VW - d - band / 5, 0, band / 5, G.VH)
+        g.rectangle("fill", 0, d, G.SW, band / 5)
+        g.rectangle("fill", 0, G.SH - d - band / 5, G.SW, band / 5)
+        g.rectangle("fill", d, 0, band / 5, G.SH)
+        g.rectangle("fill", G.SW - d - band / 5, 0, band / 5, G.SH)
       end
       if worst >= Cold.CHILL_MAX then
         g.setColor(0.86, 0.95, 1.0, 0.10 + math.sin(G.time * 9) * 0.06)
-        g.rectangle("fill", 0, 0, G.VW, G.VH)
+        g.rectangle("fill", 0, 0, G.SW, G.SH)
       end
       g.setColor(1, 1, 1, 1)
     end
@@ -676,9 +678,9 @@ function S:draw()
     g.setFont(G.fonts.main)
     local w = G.fonts.main:getWidth(a.text)
     g.setColor(0, 0, 0, 0.6 * alpha)
-    g.rectangle("fill", (G.VW - w) / 2 - 6, 36, w + 12, 14, 3, 3)
+    g.rectangle("fill", (G.SW - w) / 2 - 6, 36, w + 12, 14, 3, 3)
     g.setColor(P.cream[1], P.cream[2], P.cream[3], alpha)
-    g.printf(a.text, 0, 39, G.VW, "center")
+    g.printf(a.text, 0, 39, G.SW, "center")
     g.setColor(1, 1, 1, 1)
   end
 
@@ -687,7 +689,7 @@ function S:draw()
     self.flashT = self.flashT - 1 / 60
     if G.settings.flashes then
       love.graphics.setColor(1, 1, 1, self.flashT * 3)
-      love.graphics.rectangle("fill", 0, 0, G.VW, G.VH)
+      love.graphics.rectangle("fill", 0, 0, G.SW, G.SH)
       love.graphics.setColor(1, 1, 1, 1)
     end
   end
@@ -695,7 +697,7 @@ function S:draw()
   -- fade
   if self.fade > 0 then
     love.graphics.setColor(0, 0, 0, self.fade)
-    love.graphics.rectangle("fill", 0, 0, G.VW, G.VH)
+    love.graphics.rectangle("fill", 0, 0, G.SW, G.SH)
     love.graphics.setColor(1, 1, 1, 1)
   end
 end

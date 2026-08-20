@@ -99,10 +99,10 @@ end
 function S:draw()
   local g = love.graphics
   g.setColor(P.black[1], P.black[2], P.black[3], 0.82)
-  g.rectangle("fill", 0, 0, G.VW, G.VH)
+  g.rectangle("fill", 0, 0, G.SW, G.SH)
   g.setFont(G.fonts.main)
   g.setColor(P.ember)
-  g.printf("PAUSED", 0, 60, G.VW, "center")
+  g.printf("PAUSED", 0, 60, G.SW, "center")
 
   self.list:draw()
 
@@ -115,7 +115,7 @@ function S:draw()
   -- the menu gets.
   local y = math.min(self.list.y + shown * self.list.spacing + 12, 214)
   g.setColor(P.slate)
-  g.printf("MODULES", 0, y, G.VW, "center")
+  g.printf("MODULES", 0, y, G.SW, "center")
   -- Derived from the module table, like the Test Chamber's. The old
   -- hand-written five here never learned about the Bulwark Plate, the
   -- Drift Vanes, the Cryo Coils, the Lume Core or the Cinder Ram -- so
@@ -135,14 +135,14 @@ function S:draw()
   -- against a 440px limit, so a full kit wraps -- and the row under it
   -- has to start below the wrap, not below the first line.
   g.printf(#mods > 0 and table.concat(mods, " . ") or "none yet",
-    20, y + 10, G.VW - 40, "center")
+    20, y + 10, G.SW - 40, "center")
   g.setColor(P.gold)
   g.printf(string.format("CORE KEYS: %d/3     LIFE CAPSULES: %d     SCRAP: %d",
-    keys, G.run.capsules or 0, G.run.scrap or 0), 0, y + 32, G.VW, "center")
+    keys, G.run.capsules or 0, G.run.scrap or 0), 0, y + 32, G.SW, "center")
   g.setColor(P.slate)
   g.printf("playtime " .. require("src.core.util").formatTime(G.run.playtime or 0)
     .. "   .   " .. ({ "STORY", "NORMAL", "VETERAN" })[G.run.difficulty],
-    0, y + 44, G.VW, "center")
+    0, y + 44, G.SW, "center")
   g.setColor(1, 1, 1, 1)
 end
 

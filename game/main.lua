@@ -2,7 +2,37 @@
 io.stdout:setvbuf("no")
 
 G = {
-  VW = 480, VH = 270, TILE = 16,
+  -- ----------------------------------------------------------------
+  -- TWO VIEWPORTS THAT HAPPEN TO BE THE SAME SIZE.
+  --
+  -- VW/VH is WORLD space: how much of a room is on screen, in world
+  -- units. It is a DESIGN quantity and not a rendering one -- Cam.clamp
+  -- is roomH - VH, checksight.py re-derives that clamp to prove every
+  -- boss is visible, and about a hundred aggro radii, light radii and
+  -- speeds are written in these units. Change it and all ten boss
+  -- fights are reframed, and nothing in the test suite would notice,
+  -- because the scenarios assert on state and not on pixels.
+  --
+  -- SW/SH is SCREEN space: the logical canvas the HUD, menus, dialogue
+  -- and every full-screen wash are laid out in.
+  --
+  -- They answer different questions. "Where does the health bar go" is
+  -- not "how much of the room can you see", and the only reason one
+  -- name served both for so long is that the two numbers agree. They
+  -- are separated here so that the render scale in G.RS can grow the
+  -- canvas without touching a single tuning constant.
+  --
+  -- If you are adding a G.VW or a G.VH: does it move with the camera?
+  -- Then it is world. Does it sit still while the player walks? Then it
+  -- is SW/SH.
+  -- ----------------------------------------------------------------
+  VW = 480, VH = 270,
+  SW = 480, SH = 270,
+  -- RENDER SCALE: canvas pixels per logical unit. Set for real in
+  -- applyVideo(); this default exists so anything that reads G.RS before
+  -- the settings load gets 1 rather than nil.
+  RS = 1,
+  TILE = 16,
   DEBUG = false,
   time = 0,
 }
@@ -17,17 +47,34 @@ local function applyVideo()
     love.window.setFullscreen(false)
     local scale = s.windowscale or 2
     local dw, dh = love.window.getDesktopDimensions()
-    while G.VW * scale > dw or G.VH * scale > dh do
+    while G.SW * scale > dw or G.SH * scale > dh do
       scale = scale - 1
       if scale <= 1 then break end
     end
     local w, h = love.graphics.getDimensions()
-    if w ~= G.VW * scale or h ~= G.VH * scale then
-      love.window.setMode(G.VW * scale, G.VH * scale,
+    if w ~= G.SW * scale or h ~= G.SH * scale then
+      love.window.setMode(G.SW * scale, G.SH * scale,
         { resizable = true, vsync = s.vsync and 1 or 0, minwidth = 480, minheight = 270 })
     end
   end
-  G.canvas = love.graphics.newCanvas(G.VW, G.VH)
+  -- THE RENDER SCALE.
+  --
+  -- The canvas is RS times the logical screen on each axis, and every
+  -- draw call still works in logical units because love.draw pushes one
+  -- scale(G.RS) over the whole frame. 480x270 x 4 = 1920x1080 exactly, so
+  -- the scaling is integer and nothing lands on a half pixel.
+  --
+  -- This is NOT a wider lens. G.VW/G.VH -- how much of a room you can see
+  -- -- do not move, and must not: the camera clamp, checksight.py and
+  -- about a hundred world-pixel constants all encode them.
+  G.RS = math.max(1, math.floor(tonumber(os.getenv("EMBERDEEP_RS"))
+    or s.renderscale or 1))
+  G.canvas = love.graphics.newCanvas(G.SW * G.RS, G.SH * G.RS)
+  -- At RS=1 the canvas is blitted at a whole-number scale and nearest is
+  -- the only correct filter. Above 1 it is usually being brought DOWN to
+  -- the window, where nearest aliases and linear is a resolve, not a blur.
+  local f = G.RS > 1 and "linear" or "nearest"
+  G.canvas:setFilter(f, f)
 end
 G.applyVideo = applyVideo
 
@@ -57,6 +104,10 @@ function love.load()
   math.randomseed(os.time())
 
   G.test = os.getenv("EMBERDEEP_TEST")
+  -- Screenshot-regression mode. See src/shots.lua -- it takes over from
+  -- the loading state once the procedural assets are built, and it drives
+  -- itself from love.update/love.draw WITHOUT ever stepping the world.
+  G.shots = os.getenv("EMBERDEEP_SHOTS")
   State = require "src.core.state"
   G.State = State
   G.Save = require "src.save"
@@ -125,10 +176,17 @@ function love.update(dt)
 
   local steps = 0
   while acc >= STEP and steps < 4 do
-    G.time = G.time + STEP
-    State.update(STEP)
-    if G.test then require("src.core.invariants").check() end
-    if G.testStep then G.testStep() end
+    if G.shotsActive then
+      -- The shot harness REPLACES the update rather than passing dt = 0:
+      -- ambient particles are spawned from World:update, so a single tick
+      -- makes every run differ and the pixel diff becomes noise.
+      require("src.shots").update()
+    else
+      G.time = G.time + STEP
+      State.update(STEP)
+      if G.test then require("src.core.invariants").check() end
+      if G.testStep then G.testStep() end
+    end
     steps = steps + 1
     acc = acc - STEP
     if steps == 1 then
@@ -146,15 +204,30 @@ function love.update(dt)
 end
 
 function love.draw()
+  if G.shotsActive then require("src.shots").preDraw() end
   love.graphics.setCanvas(G.canvas)
   love.graphics.clear(0.05, 0.04, 0.08, 1)
+  love.graphics.push()
+  love.graphics.scale(G.RS)
   State.draw()
+  love.graphics.pop()
   love.graphics.setCanvas()
+  -- Capture happens HERE, off the canvas itself, and not from
+  -- love.graphics.captureScreenshot -- that grabs the window, letterbox
+  -- bars included, and the bars move with the window size.
+  if G.shotsActive then require("src.shots").postDraw() end
 
   local ww, wh = love.graphics.getDimensions()
-  local scale = math.max(1, math.floor(math.min(ww / G.VW, wh / G.VH)))
-  local ox = math.floor((ww - G.VW * scale) / 2)
-  local oy = math.floor((wh - G.VH * scale) / 2)
+  local cw, ch = G.canvas:getDimensions()
+  -- Whole-number scaling ONLY at RS=1, where the canvas is literal pixel
+  -- art and a fractional blowup would shimmer. Above 1 the canvas is dense
+  -- enough, and linear-filtered, that the exact ratio beats a truncated
+  -- one: flooring 1.33 to 1 on a 1440p screen would letterbox HARDER at
+  -- RS=4 than at RS=1, which is the exact opposite of the point.
+  local scale = math.min(ww / cw, wh / ch)
+  if G.RS == 1 and scale >= 1 then scale = math.floor(scale) end
+  local ox = math.floor((ww - cw * scale) / 2)
+  local oy = math.floor((wh - ch * scale) / 2)
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(G.canvas, ox, oy, 0, scale, scale)
 end

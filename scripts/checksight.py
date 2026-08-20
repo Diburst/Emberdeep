@@ -55,8 +55,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roommodel as RM                                    # noqa: E402
 
-T = 16
-VW, VH = 480, 270          # main.lua
+VW, VH, T = RM.viewport()  # read out of main.lua, never copied
 BOSSES = "src/entities/bosses.lua"
 
 src = open(BOSSES).read()

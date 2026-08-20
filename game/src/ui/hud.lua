@@ -116,12 +116,12 @@ end
 function Hud.draw(game)
   local g = love.graphics
   drawPlayerPanel(game, game.players[1], 8, 8)
-  drawPlayerPanel(game, game.players[2], G.VW - 125, 8)
+  drawPlayerPanel(game, game.players[2], G.SW - 125, 8)
 
   -- link meter (center top) -- hidden until Maro switches the LINK on
   if G.run.flags.linkblast then
     local lm = game.linkMeter
-    local x, w = G.VW / 2 - 30, 60
+    local x, w = G.SW / 2 - 30, 60
     g.setColor(0, 0, 0, 0.45)
     g.rectangle("fill", x - 2, 6, w + 4, 10, 2, 2)
     drawBar(x, 8, w, 6, lm, lm >= 1 and P.spark or P.teal)
@@ -136,21 +136,21 @@ function Hud.draw(game)
 
   -- scrap counter
   g.setColor(0, 0, 0, 0.45)
-  g.rectangle("fill", G.VW / 2 - 24, G.VH - 16, 48, 12, 2, 2)
+  g.rectangle("fill", G.SW / 2 - 24, G.SH - 16, 48, 12, 2, 2)
   g.setColor(P.silver)
-  g.print("o " .. (G.run.scrap or 0), G.VW / 2 - 18, G.VH - 14)
+  g.print("o " .. (G.run.scrap or 0), G.SW / 2 - 18, G.SH - 14)
 
   -- boss bar
   local World = require "src.world"
   if World.bossActive and not World.bossActive.dead then
     local b = World.bossActive
     local bw = 200
-    local bx = (G.VW - bw) / 2
+    local bx = (G.SW - bw) / 2
     g.setColor(0, 0, 0, 0.55)
-    g.rectangle("fill", bx - 4, G.VH - 34, bw + 8, 22, 3, 3)
+    g.rectangle("fill", bx - 4, G.SH - 34, bw + 8, 22, 3, 3)
     g.setColor(P.blood)
-    g.print(b.bossName or "???", bx, G.VH - 32)
-    drawBar(bx, G.VH - 22, bw, 7, b.hp / b.maxhp, P.blood)
+    g.print(b.bossName or "???", bx, G.SH - 32)
+    drawBar(bx, G.SH - 22, bw, 7, b.hp / b.maxhp, P.blood)
   end
 
   g.setColor(1, 1, 1, 1)

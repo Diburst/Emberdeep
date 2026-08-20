@@ -157,14 +157,14 @@ function S:draw()
   local title = self.mode == "slots" and "SELECT SAVE"
     or self.mode == "newgame" and "DIFFICULTY"
     or "HOW MANY PLAYERS?"
-  g.printf(title, 0, 70, G.VW, "center")
+  g.printf(title, 0, 70, G.SW, "center")
   if self.confirmErase then
     g.setColor(P.blood)
-    g.printf(G.fmtButtons("Press [ALT] again to erase slot ") .. self.confirmErase .. "!", 0, 90, G.VW, "center")
+    g.printf(G.fmtButtons("Press [ALT] again to erase slot ") .. self.confirmErase .. "!", 0, 90, G.SW, "center")
   end
   self.list:draw()
   g.setColor(P.slate)
-  g.printf(G.fmtButtons("[CONFIRM]: select   [CANCEL]: back"), 0, G.VH - 12, G.VW, "center")
+  g.printf(G.fmtButtons("[CONFIRM]: select   [CANCEL]: back"), 0, G.SH - 12, G.SW, "center")
   g.setColor(1, 1, 1, 1)
 end
 

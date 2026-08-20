@@ -33,6 +33,13 @@ function Enemy:init(x, y, def)
   -- something more fun to hit, not a mini-boss we accidentally trivialised.
   self.mass = def.mass or (def.heavy and "heavy") or "light"
   self.stunT = 0
+  -- Ordinary enemies are the ONLY things in the game that may stop
+  -- thinking when nobody is near them. See World:asleep for why this is
+  -- opt-in rather than opt-out. Boss extends Entity, not Enemy, so it
+  -- cannot pick this up by inheritance; if a subclass here ever becomes
+  -- something that must keep running off screen, clear it in that
+  -- subclass's init.
+  self.canSleep = true
 end
 
 -- ==================================================================

@@ -16,6 +16,10 @@ function Save.defaultSettings()
     volSfx = 0.9,
     fullscreen = false,
     windowscale = 2,
+    -- RENDER SCALE. How many canvas pixels per world unit. 1 is the
+    -- shipped look; 4 makes the canvas exactly 1920x1080. It does NOT
+    -- widen the lens -- see FOUNDATION-PLAN.md section 1.
+    renderscale = 1,
     vsync = true,
     shake = true,
     rumble = true,

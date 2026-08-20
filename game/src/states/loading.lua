@@ -58,6 +58,14 @@ function S:update(dt)
   end
   if self.i >= self.total and not self.launched then
     self.launched = true
+    -- Shot mode takes over here rather than at boot, because it needs the
+    -- procedural sprites, tiles and fonts that these steps build. It must
+    -- also return BEFORE the switch to title -- the switch would tear down
+    -- the game state it just stood up.
+    if G.shots then
+      require("src.shots").init(G.shots)
+      return
+    end
     if G.test then
       require("src.test").run(G.test)
     end
@@ -71,14 +79,14 @@ function S:draw()
   if G.fonts then
     g.setFont(G.fonts.main)
     g.setColor(P.ember)
-    g.printf("E M B E R D E E P", 0, 110, G.VW, "center")
+    g.printf("E M B E R D E E P", 0, 110, G.SW, "center")
     g.setColor(P.slate)
     local label = self.labels[math.min(self.i + 1, self.total)] or ""
-    g.printf(label, 0, 150, G.VW, "center")
+    g.printf(label, 0, 150, G.SW, "center")
   end
   -- progress bar
   local w, h = 180, 6
-  local x, y = (G.VW - w) / 2, 136
+  local x, y = (G.SW - w) / 2, 136
   love.graphics.setColor(P.shadow)
   love.graphics.rectangle("fill", x, y, w, h)
   love.graphics.setColor(P.ember)

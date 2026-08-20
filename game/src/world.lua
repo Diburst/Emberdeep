@@ -1163,14 +1163,19 @@ function World:update(dt)
 
   -- entities
   local n = #self.entities
+  local slept = 0
   for i = 1, n do
     local e = self.entities[i]
     if not e.dead then
+      -- The damage clocks tick whether or not the body is thinking. An
+      -- off-screen enemy can still be reached by a projectile, and a
+      -- frozen invuln would swallow the next hit that lands on it.
       if e.invuln and e.invuln > 0 then e.invuln = e.invuln - dt end
       if e.white and e.white > 0 then e.white = e.white - dt end
-      e:update(dt)
+      if self:asleep(e) then slept = slept + 1 else e:update(dt) end
     end
   end
+  self.sleptLast = slept
   -- sweep dead
   for i = #self.entities, 1, -1 do
     if self.entities[i].dead then table.remove(self.entities, i) end
@@ -1198,6 +1203,45 @@ function World:update(dt)
   end
 
   self:ambient(dt)
+end
+
+-- ------------------------------------------------------------------
+-- ENTITY SLEEP
+--
+-- Every body in a room used to think every frame. That is free in a 30x17
+-- box and it is not free in the rooms this engine is being prepared for,
+-- so a body far enough away stops thinking until you come back.
+--
+-- TWO tests, not one. Off camera is not enough on its own: in co-op the
+-- second bot can be off screen and still needs the world to behave around
+-- it, so an entity stays awake if it is near ANY living player.
+--
+-- Sleep is OPT-IN, and only ordinary enemies opt in. That is deliberately
+-- the conservative way round. Something that could sleep and does not
+-- costs a few microseconds; something that must NOT sleep and does is a
+-- boss that stops mid-fight, a door that never opens, or a projectile
+-- frozen in the air. Bosses, props, projectiles, pickups and NPCs simply
+-- never set the flag -- and Boss extends Entity rather than Enemy, so it
+-- cannot inherit it by accident.
+--
+-- Nothing sleeps at all while a boss is active. A boss that spawns adds
+-- has no way to tell them apart from scenery, and an add that freezes off
+-- screen is a fight that never ends.
+-- ------------------------------------------------------------------
+World.SLEEP_R = 640    -- world px from a player; 1.33 viewport widths
+
+function World:asleep(e)
+  if not e.canSleep or self.bossActive then return false end
+  local cx, cy = e.x + e.w / 2, e.y + e.h / 2
+  if Cam.onScreen(cx, cy, 96) then return false end
+  local R = World.SLEEP_R
+  for _, p in ipairs(self.players) do
+    if not p.dead and not p.idle then
+      local dx, dy = cx - (p.x + p.w / 2), cy - (p.y + p.h / 2)
+      if dx * dx + dy * dy < R * R then return false end
+    end
+  end
+  return true
 end
 
 function World:startCrumble(tx, ty)
@@ -2263,13 +2307,23 @@ end
 -- singing choir throat, waypoint props).
 -- ------------------------------------------------------------------
 function World:drawDarkness(g)
-  if not self.darkCanvas then
-    self.darkCanvas = love.graphics.newCanvas(G.VW, G.VH)
+  local RS = G.RS or 1
+  if not self.darkCanvas or self.darkRS ~= RS then
+    self.darkCanvas = love.graphics.newCanvas(G.VW * RS, G.VH * RS)
+    self.darkRS = RS
   end
   local dark = math.min(0.96, self.room.dark or 0.85)
   local prev = g.getCanvas()
+  -- PUSH BEFORE origin(). This function wiped the transform and never put
+  -- it back. It worked only because it is the LAST thing drawn inside
+  -- Cam.apply()/unapply(), so that pop() happened to clean up after it --
+  -- anything added below this call would have drawn at the origin. Once
+  -- love.draw carries a scale(G.RS), the wipe takes the render scale with
+  -- it too, and the overlay covers a quarter of the screen.
+  g.push()
   g.setCanvas(self.darkCanvas)
   g.origin()
+  g.scale(RS)                       -- the holes stay in logical units
   g.clear(0, 0, 0, dark)
   g.setBlendMode("replace")
   -- Project through the offset the camera REALLY used. Using Cam.x here
@@ -2315,13 +2369,17 @@ function World:drawDarkness(g)
   end
   g.setBlendMode("alpha")
   g.setCanvas(prev)
+  g.pop()
   g.setColor(1, 1, 1, 1)
   -- g.origin() above cleared the camera translate for the rest of this
   -- function, so this draw is in SCREEN space. It used to be drawn at
   -- (Cam.x, Cam.y), which pushed the whole overlay off by exactly the
   -- scroll distance -- fine in a single-screen room, badly wrong anywhere
   -- the camera moves. The canvas is already screen-sized and screen-aligned.
+  g.push()
+  g.origin()
   g.draw(self.darkCanvas, 0, 0)
+  g.pop()
 end
 
 -- ------------------------------------------------------------------

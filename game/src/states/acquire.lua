@@ -45,15 +45,15 @@ function S:draw()
   -- the room, dimmed rather than replaced: you can still see where you
   -- are standing, which matters when the panel closes
   g.setColor(0, 0, 0, 0.72)
-  g.rectangle("fill", 0, 0, G.VW, G.VH)
+  g.rectangle("fill", 0, 0, G.SW, G.SH)
 
   local w = 300
-  local x = (G.VW - w) / 2
+  local x = (G.SW - w) / 2
   g.setFont(G.fonts.main)
   local _, lines = G.fonts.main:getWrap(self.body, w - 24)
   local bodyH = #lines * 10
   local h = 54 + bodyH
-  local y = (G.VH - h) / 2
+  local y = (G.SH - h) / 2
 
   g.setColor(P.dark[1], P.dark[2], P.dark[3], 0.95)
   g.rectangle("fill", x, y, w, h, 4, 4)

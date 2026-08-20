@@ -86,7 +86,7 @@ function S:enter()
   self.card = 1
   self.t = 0
   self.credits = false
-  self.creditY = G.VH + 20
+  self.creditY = G.SH + 20
   if G.Audio then G.Audio.playMusic("victory") end
   G.run.flags.ending_done = true
   -- save the completed game
@@ -155,25 +155,25 @@ function S:draw()
     for i, line in ipairs(lines) do
       local lineAlpha = math.min(1, math.max(0, self.t * 2 - i * 0.4))
       g.setColor(P.cream[1], P.cream[2], P.cream[3], lineAlpha)
-      g.printf(line, 40, y, G.VW - 80, "center")
+      g.printf(line, 40, y, G.SW - 80, "center")
       y = y + 14
     end
     g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.5)
-    g.printf(G.fmtButtons("[CONFIRM]: continue"), 0, G.VH - 18, G.VW, "center")
+    g.printf(G.fmtButtons("[CONFIRM]: continue"), 0, G.SH - 18, G.SW, "center")
   else
     for i, line in ipairs(CREDITS) do
       local y = self.creditY + (i - 1) * 16
-      if y > -20 and y < G.VH + 10 then
+      if y > -20 and y < G.SH + 10 then
         if i == 1 then g.setColor(P.ember)
         elseif line:sub(1, 1) == "*" then g.setColor(P.gold)
         else g.setColor(P.light) end
-        g.printf(line, 0, y, G.VW, "center")
+        g.printf(line, 0, y, G.SW, "center")
       end
     end
     if G.run then
       g.setColor(P.slate)
       g.printf("your journey: " .. U.formatTime(G.run.playtime or 0)
-        .. "   capsules: " .. (G.run.capsules or 0) .. "/8", 0, G.VH - 14, G.VW, "center")
+        .. "   capsules: " .. (G.run.capsules or 0) .. "/8", 0, G.SH - 14, G.SW, "center")
     end
   end
   g.setColor(1, 1, 1, 1)

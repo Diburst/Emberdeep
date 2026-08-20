@@ -10,7 +10,7 @@ function Menu:init(items, opts)
   self.items = items
   self.sel = 1
   opts = opts or {}
-  self.x = opts.x or G.VW / 2
+  self.x = opts.x or G.SW / 2
   self.y = opts.y or 120
   self.spacing = opts.spacing or 14
   self.align = opts.align or "center"
@@ -87,10 +87,10 @@ function Menu:draw()
     -- affordances, so a truncated list never looks like the whole list
     g.setColor(P.slate)
     if first > 1 then
-      g.printf("^", 0, self.y - self.spacing, G.VW, "center")
+      g.printf("^", 0, self.y - self.spacing, G.SW, "center")
     end
     if last < #self.items then
-      g.printf("v", 0, self.y + (last - first + 1) * self.spacing, G.VW, "center")
+      g.printf("v", 0, self.y + (last - first + 1) * self.spacing, G.SW, "center")
     end
   end
   for i = first, last do
@@ -109,13 +109,13 @@ function Menu:draw()
     end
     g.setColor(disabled and P.gray or (i == self.sel and P.white or P.silver))
     if self.align == "center" then
-      g.printf(label, 0, y, G.VW, "center")
+      g.printf(label, 0, y, G.SW, "center")
     else
       g.print(label, self.x, y)
     end
     if i == self.sel and item.hint then
       g.setColor(P.slate)
-      g.printf(item.hint, 30, G.VH - 24, G.VW - 60, "center")
+      g.printf(item.hint, 30, G.SH - 24, G.SW - 60, "center")
     end
   end
   g.setColor(1, 1, 1, 1)

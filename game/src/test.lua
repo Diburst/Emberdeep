@@ -1,7 +1,15 @@
 -- Headless test harness. Activated when EMBERDEEP_TEST is set; the value
 -- names a scenario. Scenarios drive virtual input frame-by-frame, take
--- screenshots into /tmp, log to /tmp/emberdeep_test.log, and quit.
+-- screenshots and a log into emberdeep/_testlogs/, then quit.
+--
+-- Output used to go to /tmp, which is fine for the person running LOVE
+-- and useless to anyone else -- every failure became "paste me what it
+-- said", and a run whose tail was pasted hid the FAIL lines above it.
+-- _testlogs/ is inside the project and gitignored. Override with
+-- EMBERDEEP_TESTDIR.
 local Test = {}
+
+local OUTDIR = os.getenv("EMBERDEEP_TESTDIR") or "../_testlogs"
 
 local log
 local frame = 0
@@ -14,13 +22,14 @@ local function out(...)
   local line = table.concat(parts, " ")
   print(line)
   if log then log:write(line, "\n") log:flush() end
+  if Test.alllog then Test.alllog:write(line, "\n") Test.alllog:flush() end
 end
 Test.log = out
 
 function Test.shot(name)
   love.graphics.captureScreenshot(function(img)
     local fd = img:encode("png")
-    local f = io.open("/tmp/shots/" .. name .. ".png", "wb")
+    local f = io.open(OUTDIR .. "/shots/" .. name .. ".png", "wb")
     if f then
       f:write(fd:getString())
       f:close()
@@ -75,8 +84,11 @@ function Test.addScenario(name, fn) scenarios[name] = fn end
 pcall(function() require("src.test_scenarios")(Test, scenarios) end)
 
 function Test.run(name)
-  os.execute("mkdir -p /tmp/shots")
-  log = io.open("/tmp/emberdeep_test.log", "a")
+  os.execute("mkdir -p '" .. OUTDIR .. "/shots'")
+  -- One file per scenario, so a failure can be read on its own, PLUS an
+  -- append-only combined log for the order things ran in.
+  log = io.open(OUTDIR .. "/" .. name .. ".log", "w")
+  Test.alllog = io.open(OUTDIR .. "/all.log", "a")
   out("=== TEST " .. name .. " ===")
   scenario = scenarios[name]
   if not scenario then

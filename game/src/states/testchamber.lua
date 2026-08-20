@@ -237,12 +237,12 @@ end
 function S:draw()
   local g = love.graphics
   g.setColor(P.black[1], P.black[2], P.black[3], 0.92)
-  g.rectangle("fill", 0, 0, G.VW, G.VH)
+  g.rectangle("fill", 0, 0, G.SW, G.SH)
   g.setFont(G.fonts.main)
   g.setColor(P.spark)
-  g.printf("TEST CHAMBER", 0, 22, G.VW, "center")
+  g.printf("TEST CHAMBER", 0, 22, G.SW, "center")
   g.setColor(P.slate)
-  g.printf("weapons - bosses - mechanics", 0, 32, G.VW, "center")
+  g.printf("weapons - bosses - mechanics", 0, 32, G.SW, "center")
   self.list:draw()
   g.setColor(1, 1, 1, 1)
 end

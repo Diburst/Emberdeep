@@ -56,11 +56,11 @@ function S:draw()
   for i, line in ipairs(lines) do
     local lineAlpha = math.min(1, math.max(0, self.t * 2 - i * 0.4))
     g.setColor(P.light[1], P.light[2], P.light[3], lineAlpha)
-    g.printf(line, 40, y, G.VW - 80, "center")
+    g.printf(line, 40, y, G.SW - 80, "center")
     y = y + 14
   end
   g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.6 + math.sin(G.time * 2) * 0.3)
-  g.printf(G.fmtButtons("[CONFIRM]: continue    [CANCEL]: skip"), 0, G.VH - 20, G.VW, "center")
+  g.printf(G.fmtButtons("[CONFIRM]: continue    [CANCEL]: skip"), 0, G.SH - 20, G.SW, "center")
   g.setColor(1, 1, 1, 1)
 end
 

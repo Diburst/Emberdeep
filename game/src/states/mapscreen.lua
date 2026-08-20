@@ -450,10 +450,10 @@ function S:draw()
   local c = self:cell()
   self.sel = self:underCursor()
   g.setColor(P.black[1], P.black[2], P.black[3], 0.93)
-  g.rectangle("fill", 0, 0, G.VW, G.VH)
+  g.rectangle("fill", 0, 0, G.SW, G.SH)
   g.setFont(G.fonts.main)
   g.setColor(P.ember)
-  g.printf("MAP OF THE DEEP", 0, 6, G.VW, "center")
+  g.printf("MAP OF THE DEEP", 0, 6, G.SW, "center")
 
   g.setScissor(VIEW.x, VIEW.y, VIEW.w, VIEW.h)
 
@@ -559,7 +559,7 @@ function S:drawFooter(g)
     table.sort(parts)
     g.setColor(P.silver)
     g.print(elide(g, "exits  "
-      .. (#parts > 0 and table.concat(parts, "   ") or "none"), G.VW - 16),
+      .. (#parts > 0 and table.concat(parts, "   ") or "none"), G.SW - 16),
       8, y + 9)
   else
     g.setColor(P.slate)
@@ -568,11 +568,11 @@ function S:drawFooter(g)
   g.setColor(P.gray)
   g.print(elide(g,
     "gold: save   cyan: teleporter   red: boss   notch: door   dashed: shaft",
-    G.VW - 16), 8, y + 19)
+    G.SW - 16), 8, y + 19)
   g.setColor(P.slate)
   g.print(elide(g, G.fmtButtons(
     "ARROWS/D-PAD pan   [JUMP] in   [FIRE] out   [UTIL] fit   [MAP] close"),
-    G.VW - 16), 8, y + 28)
+    G.SW - 16), 8, y + 28)
 end
 
 return S

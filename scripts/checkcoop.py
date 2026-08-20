@@ -30,7 +30,7 @@ import glob
 import sys
 import roommodel as RM
 
-VW, VH, T = 480, 270, 16
+VW, VH, T = RM.viewport()  # read out of main.lua, never copied
 BUDGET = 0.75
 H_BUDGET = BUDGET * VW / T          # 22.5 tiles
 V_BUDGET = BUDGET * VH / T          # 12.66 tiles

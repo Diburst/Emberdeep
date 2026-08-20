@@ -23,7 +23,7 @@ function S:enter()
   -- decorative embers
   self.embers = {}
   for i = 1, 26 do
-    self.embers[i] = { x = love.math.random(0, G.VW), y = love.math.random(0, G.VH),
+    self.embers[i] = { x = love.math.random(0, G.SW), y = love.math.random(0, G.SH),
       s = love.math.random() * 0.7 + 0.3 }
   end
 end
@@ -34,8 +34,8 @@ function S:update(dt)
     e.y = e.y - dt * 14 * e.s
     e.x = e.x + math.sin(self.t * 1.2 + e.s * 9) * 0.3
     if e.y < -4 then
-      e.y = G.VH + 4
-      e.x = love.math.random(0, G.VW)
+      e.y = G.SH + 4
+      e.x = love.math.random(0, G.SW)
     end
   end
 end
@@ -75,31 +75,31 @@ function S:draw()
 
   -- the two bots by a lantern
   if G.sprites then
-    G.drawSprite("prop_lantern", 2, G.VW / 2, 158)
-    G.drawSprite("vess_idle", math.floor(self.t * 2) % 2 + 1, G.VW / 2 - 24, 158)
-    G.drawSprite("lu_idle", math.floor(self.t * 2 + 1) % 2 + 1, G.VW / 2 + 24, 158,
+    G.drawSprite("prop_lantern", 2, G.SW / 2, 158)
+    G.drawSprite("vess_idle", math.floor(self.t * 2) % 2 + 1, G.SW / 2 - 24, 158)
+    G.drawSprite("lu_idle", math.floor(self.t * 2 + 1) % 2 + 1, G.SW / 2 + 24, 158,
       { flip = true })
   end
 
   g.setFont(G.fonts.main)
   g.setColor(P.dark)
-  g.printf("E M B E R D E E P", 2, 62, math.floor(G.VW / 2), "center", 0, 2, 2)
+  g.printf("E M B E R D E E P", 2, 62, math.floor(G.SW / 2), "center", 0, 2, 2)
   g.setColor(P.ember)
-  g.printf("E M B E R D E E P", 0, 60, math.floor(G.VW / 2), "center", 0, 2, 2)
+  g.printf("E M B E R D E E P", 0, 60, math.floor(G.SW / 2), "center", 0, 2, 2)
   g.setColor(P.slate)
-  g.printf("a co-op cavern story", 0, 92, G.VW, "center")
+  g.printf("a co-op cavern story", 0, 92, G.SW, "center")
 
   if not self.started then
     if math.floor(self.t * 2) % 2 == 0 then
       g.setColor(P.light)
-      g.printf(G.anyPad() and "PRESS START" or "PRESS ENTER", 0, 190, G.VW, "center")
+      g.printf(G.anyPad() and "PRESS START" or "PRESS ENTER", 0, 190, G.SW, "center")
     end
   else
     self.list:draw()
   end
 
   g.setColor(P.gray)
-  g.printf("v4.1", 0, G.VH - 12, G.VW - 6, "right")
+  g.printf("v4.1", 0, G.SH - 12, G.SW - 6, "right")
   g.setColor(1, 1, 1, 1)
 end
 

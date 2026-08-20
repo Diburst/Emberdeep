@@ -16,7 +16,7 @@ import sys
 import roommodel as RM
 
 ROOMS = "src/data/rooms"
-VW, VH, T = 480, 270, 16
+VW, VH, T = RM.viewport()  # read out of main.lua, never copied
 H_BUDGET, V_BUDGET = 0.75 * VW / T, 0.75 * VH / T
 
 

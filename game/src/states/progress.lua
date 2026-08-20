@@ -72,7 +72,7 @@ local ROWH = 9
 local TOP, BOT = 34, 20
 
 function S:visibleRows()
-  return math.floor((G.VH - TOP - BOT) / ROWH)
+  return math.floor((G.SH - TOP - BOT) / ROWH)
 end
 
 function S:menu(action)
@@ -108,13 +108,13 @@ end
 function S:draw()
   local g = love.graphics
   g.setColor(P.black[1], P.black[2], P.black[3], 0.88)
-  g.rectangle("fill", 0, 0, G.VW, G.VH)
+  g.rectangle("fill", 0, 0, G.SW, G.SH)
   g.setFont(G.fonts.main)
   g.setColor(P.cyan)
-  g.printf("PROGRESS  (test mode)", 0, 12, G.VW, "center")
+  g.printf("PROGRESS  (test mode)", 0, 12, G.SW, "center")
   g.setColor(P.slate)
   g.printf(G.fmtButtons("F1 / [CANCEL] close    [MOVE] scroll"),
-    0, G.VH - 14, G.VW, "center")
+    0, G.SH - 14, G.SW, "center")
   local vis = self:visibleRows()
   for i = 1, vis do
     local ln = self.lines[i + self.scroll]
@@ -124,11 +124,11 @@ function S:draw()
   end
   if self.scroll > 0 then
     g.setColor(P.gold)
-    g.print("^", G.VW - 16, TOP)
+    g.print("^", G.SW - 16, TOP)
   end
   if #self.lines - self.scroll > vis then
     g.setColor(P.gold)
-    g.print("v", G.VW - 16, G.VH - BOT - 8)
+    g.print("v", G.SW - 16, G.SH - BOT - 8)
   end
   g.setColor(1, 1, 1, 1)
 end

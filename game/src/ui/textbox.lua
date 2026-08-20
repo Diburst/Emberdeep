@@ -149,8 +149,8 @@ function Textbox:draw()
   g.setFont(font)
 
   local bx, bh = 20, 62
-  local by = G.VH - bh - 8
-  local bw = G.VW - 40
+  local by = G.SH - bh - 8
+  local bw = G.SW - 40
   g.setColor(P.black[1], P.black[2], P.black[3], 0.92)
   g.rectangle("fill", bx, by, bw, bh, 4, 4)
   g.setColor(P.slate)

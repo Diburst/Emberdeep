@@ -54,6 +54,32 @@ def _alphabet(path="src/world.lua"):
     return tiles, cs("DOOR_CHARS"), cs("GATE_CHARS")
 
 
+# ------------------------------------------------------------------
+# THE VIEWPORT HAS EXACTLY ONE OWNER TOO: game/main.lua.
+#
+# Same failure mode as the alphabet, one floor down. checksight.py,
+# checkcoop.py and genvanes.py each typed out `VW, VH = 480, 270` with a
+# `# main.lua` comment beside it -- three copies of a number that three
+# different tools use to decide whether a boss is on screen, whether
+# co-op splits, and where a vane platform may go. Correct today; silently
+# wrong the moment the viewport moves, and wrong in the direction that
+# reports a working game as broken.
+#
+# Comments are stripped before searching, because prose describing a
+# value looks exactly like the value to a regex, and this project has
+# been bitten by that three times.
+# ------------------------------------------------------------------
+def viewport(path="main.lua"):
+    """(VW, VH, TILE) read out of the engine. Run from game/."""
+    src = re.sub(r"--[^\n]*", "", open(path).read())
+    m = re.search(r"\bVW\s*=\s*(\d+)\s*,\s*VH\s*=\s*(\d+)", src)
+    t = re.search(r"\bTILE\s*=\s*(\d+)", src)
+    if not m or not t:
+        raise SystemExit(
+            "roommodel.viewport: no VW/VH/TILE in %s -- run from game/" % path)
+    return int(m.group(1)), int(m.group(2)), int(t.group(1))
+
+
 TILE_KIND, DOORS, GATES = _alphabet()
 TILES = set(TILE_KIND)
 LIQ = set(c for c, k in TILE_KIND.items() if k in ("WATER", "LAVA"))

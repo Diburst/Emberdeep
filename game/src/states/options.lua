@@ -107,10 +107,10 @@ end
 function S:draw()
   local g = love.graphics
   g.setColor(P.black[1], P.black[2], P.black[3], 0.88)
-  g.rectangle("fill", 0, 0, G.VW, G.VH)
+  g.rectangle("fill", 0, 0, G.SW, G.SH)
   g.setFont(G.fonts.main)
   g.setColor(P.ember)
-  g.printf("OPTIONS", 0, 46, G.VW, "center")
+  g.printf("OPTIONS", 0, 46, G.SW, "center")
   self.list:draw()
   g.setColor(1, 1, 1, 1)
 end

@@ -100,12 +100,12 @@ end
 function S:draw()
   local g = love.graphics
   g.setColor(P.black[1], P.black[2], P.black[3], 0.88)
-  g.rectangle("fill", 0, 0, G.VW, G.VH)
+  g.rectangle("fill", 0, 0, G.SW, G.SH)
   g.setFont(G.fonts.main)
   g.setColor(P.gold)
-  g.printf(self.title or "WARP", 0, 34, G.VW, "center")
+  g.printf(self.title or "WARP", 0, 34, G.SW, "center")
   g.setColor(P.slate)
-  g.printf("test mode -- no fanfare, no ceremony", 0, 46, G.VW, "center")
+  g.printf("test mode -- no fanfare, no ceremony", 0, 46, G.SW, "center")
   self.list:draw()
   g.setColor(1, 1, 1, 1)
 end

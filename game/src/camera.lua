@@ -58,11 +58,18 @@ end
 function Cam.apply()
   local sx, sy = 0, 0
   if Cam.shakeT > 0 then
-    sx = love.math.random(-Cam.shakeMag, Cam.shakeMag)
-    sy = love.math.random(-Cam.shakeMag, Cam.shakeMag)
+    -- FLOAT shake. This used love.math.random(a, b)'s INTEGER overload,
+    -- so the gentlest tremor the game could express was a whole world
+    -- unit -- four screen pixels at RS=4, which is not a tremor.
+    sx = (love.math.random() * 2 - 1) * Cam.shakeMag
+    sy = (love.math.random() * 2 - 1) * Cam.shakeMag
   end
-  Cam.ox = math.floor(Cam.x + sx)
-  Cam.oy = math.floor(Cam.y + sy)
+  -- Snap to the RENDER grid, not the world grid. Flooring to whole world
+  -- units is what keeps pixel art crisp at RS=1, and is exactly what
+  -- quantises every camera movement into RS-pixel jumps above it.
+  local RS = G.RS or 1
+  Cam.ox = math.floor((Cam.x + sx) * RS) / RS
+  Cam.oy = math.floor((Cam.y + sy) * RS) / RS
   love.graphics.push()
   love.graphics.translate(-Cam.ox, -Cam.oy)
 end

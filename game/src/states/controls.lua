@@ -105,17 +105,17 @@ end
 function S:draw()
   local g = love.graphics
   g.setColor(P.black[1], P.black[2], P.black[3], 0.92)
-  g.rectangle("fill", 0, 0, G.VW, G.VH)
+  g.rectangle("fill", 0, 0, G.SW, G.SH)
   g.setFont(G.fonts.main)
 
   g.setColor(P.ember)
-  g.printf("CONTROLS", 0, 14, G.VW, "center")
+  g.printf("CONTROLS", 0, 14, G.SW, "center")
   g.setColor(self.player == 1 and P.vessred or P.lublue)
   g.printf("PLAYER " .. self.player .. (self.player == 1 and " (VESS)" or " (LU)")
-    .. "   [X or L/R: switch player]", 0, 28, G.VW, "center")
+    .. "   [X or L/R: switch player]", 0, 28, G.SW, "center")
   g.setColor(P.silver)
   g.printf("device: " .. (self.device == "pad" and "GAMEPAD" or "KEYBOARD")
-    .. " (L/R to switch)", 0, 40, G.VW, "center")
+    .. " (L/R to switch)", 0, 40, G.SW, "center")
 
   local y0 = 56
   for i, action in ipairs(REMAP_ACTIONS) do
@@ -145,14 +145,14 @@ function S:draw()
 
   if self.capturing then
     g.setColor(P.black[1], P.black[2], P.black[3], 0.85)
-    g.rectangle("fill", 90, 100, G.VW - 180, 60, 4, 4)
+    g.rectangle("fill", 90, 100, G.SW - 180, 60, 4, 4)
     g.setColor(P.gold)
-    g.rectangle("line", 90, 100, G.VW - 180, 60, 4, 4)
+    g.rectangle("line", 90, 100, G.SW - 180, 60, 4, 4)
     g.printf("Press the new " .. (self.device == "pad" and "button/trigger" or "key")
       .. " for:\n" .. (Input.ACTION_LABELS[REMAP_ACTIONS[self.sel]] or ""),
-      100, 116, G.VW - 200, "center")
+      100, 116, G.SW - 200, "center")
     g.setColor(P.slate)
-    g.printf(self.device == "kb" and "(ESC cancels)" or "", 100, 146, G.VW - 200, "center")
+    g.printf(self.device == "kb" and "(ESC cancels)" or "", 100, 146, G.SW - 200, "center")
   end
   g.setColor(1, 1, 1, 1)
 end

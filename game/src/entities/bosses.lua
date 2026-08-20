@@ -2835,6 +2835,13 @@ function Mother:onDeath()
   -- phase 1 down: do NOT set final flags; spawn the Mender (phase 2)
   local World = require "src.world"
   local cx, cy = self:center()
+  -- ...but its drones DO die with it. This override deliberately skips
+  -- Boss:onDeath -- no loot, no corpse, no final flags, because the fight
+  -- is not over -- and in doing so it also skipped the add sweep, so the
+  -- sentinel and screamer summoned in the "adds" state lived through the
+  -- transition and shot at the players during the Mender's dialogue.
+  -- Nothing a boss summons outlives it; a phase change is still an it.
+  self:clearAdds()
   Cam.shake(6, 1)
   if G.Audio then G.Audio.sfx("explode") end
   for i = 1, 6 do

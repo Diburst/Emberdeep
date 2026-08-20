@@ -2324,17 +2324,37 @@ return function(Test, scenarios)
       G.game.fade = 0 G.game.fadeDir = 0
       wait(10)
       -- find the tripwire and cross it HIGH (the jump-over route)
-      local trig
+      -- Not every boss is armed by a tripwire, and the exception is a
+      -- design decision rather than an oversight: the Archivist is woken
+      -- from the kept brazier's dialogue ("Wake it" / "Take a spark"),
+      -- on a thing you can see and choose. So look for BOTH mechanisms
+      -- and read which one this arena uses off the room, instead of
+      -- keeping a list here that goes stale the next time one changes.
+      local trig, armer
       for _, t in ipairs(World.entities) do
-        if t.bossId == id and t.kind == "bosstrigger" then trig = t break end
+        if t.bossId == id and t.kind == "bosstrigger" then trig = t end
+        if t.armBoss == id then armer = t end
       end
-      if not trig then
-        Test.log("FAIL NOTRIGGER " .. id) fails = fails + 1
+      if not trig and armer then
+        -- exactly what the dialogue's "Wake it" branch does
+        require("src.entities.bosses").start(id, World)
+        wait(10)
+      end
+      if not trig and not armer then
+        Test.log("FAIL NOARM " .. id
+          .. " -- no bosstrigger and nothing with armBoss in " .. room)
+        fails = fails + 1
       else
+        -- Only the tripwire route needs the players moved. Guarding this
+        -- on `trig` rather than on the branch: the armed-by-choice bosses
+        -- reach the else with trig still nil, and the previous version
+        -- indexed it anyway.
         for _, p in ipairs(World.players) do
-          p.x = trig.x
-          p.y = 40
-          p.vx, p.vy = 0, 0
+          if trig then
+            p.x = trig.x
+            p.y = 40
+            p.vx, p.vy = 0, 0
+          end
           p.invuln = 99
         end
         wait(10)
@@ -2398,63 +2418,218 @@ return function(Test, scenarios)
   -- ----------------------------------------------------------------
   scenarios.bossadds = function()
     local World = require "src.world"
+    local Bosses = require "src.entities.bosses"
     local TC = require "src.states.testchamber"
-    local bad = 0
+
+    -- ----------------------------------------------------------------
+    -- WHAT EVERY BOSS ACTUALLY DOES.
+    --
+    -- Read out of bosses.lua, not guessed. Line numbers are where to go
+    -- and re-check a claim when one of these stops being true.
+    --
+    --   arm     -- "trip" a bosstrigger column, "choice" a brazier
+    --              dialogue (the Archivist is woken deliberately)
+    --   gate    -- what hurt() demands before damage lands at all
+    --   summons -- "always" it tags adds the moment it wakes
+    --              "hurt"   only below a health threshold
+    --              "random" on a dice roll during some state
+    --              false    it never calls addSpawn, anywhere
+    --
+    -- This table exists because the old loop said it would kill each
+    -- boss "however this particular boss insists on being killed" and
+    -- then knew about exactly one of the gates. THREE bosses were
+    -- unkillable by it -- the Tide Engine (hurt() returns false until
+    -- both valves are blown), the Mycel Choir (needs opts.fromNode) and
+    -- the Crucible (needs link AND open vents) -- so each burned its
+    -- 4000-frame guard and logged SKIP, and the add-sweep this scenario
+    -- exists to prove was never tested on any of them.
+    -- ----------------------------------------------------------------
+    local FACTS = {
+      bramblemaw    = { gate = "none",   summons = "random",
+                        note = "gnat on chance(0.5) per volley (285)" },
+      rustwarden    = { gate = "link",   summons = false,
+                        note = "deflects() yields to opts.link (656); no addSpawn" },
+      tideengine    = { gate = "valves", summons = "always",
+                        note = "hurt() false until both valves blown (1023); valves spawned on the first update (913)" },
+      slaggolem     = { gate = "none",   summons = "hurt",
+                        note = "slagblobs only below 70% hp (1156)" },
+      crucible      = { gate = "vents",  summons = "random",
+                        note = "shield needs link AND ventsOpen (1546); slaglings via spewSlag (1538)" },
+      prismtyrant   = { gate = "beam",   summons = "random",
+                        note = "shield needs opts.beam (2029); wisps on every recharge (1894)" },
+      aeriesentinel = { gate = "none",   summons = false,
+                        note = "no addSpawn anywhere in its class" },
+      mycelchoir    = { gate = "node",   summons = "always",
+                        note = "hurt() needs opts.fromNode (3153); three nodes at start (3074)" },
+      archivist     = { gate = "none",   summons = false,
+                        note = "a closed shield only multiplies damage, never blocks (3356)" },
+      motherengine  = { gate = "none",   summons = "random",
+                        note = "sentinel + screamer in state 'adds' (2824)" },
+      vessel8       = { gate = "link",   summons = false,
+                        note = "deflects() yields to opts.link (4214); no addSpawn" },
+    }
+
+    -- Every key any boss's hurt() looks for. The ones that do not care
+    -- about a given key ignore it, so a single table serves all eleven.
+    local HURT = { link = true, beam = true, refracted = true, fromNode = true }
+
+    -- Fifteen seconds of open fight. The Bramble Maw rolls its gnat at
+    -- chance(0.5) once per volley and a volley cycle is about five
+    -- seconds (244, 290), so a five-second window saw one roll and
+    -- reported VACUOUS half the time it ran.
+    local SUMMON_FRAMES = 900
+
+    -- Open whatever this boss is holding shut. Reaching into valves and
+    -- vents is DRIVING, not asserting: the subject here is the sweep in
+    -- Boss:onDeath, and a fair fight is not required to reach it.
+    local function openGate(b)
+      for _, v in ipairs(b.valves or {}) do          -- Tide Engine
+        if not v.regenT then v.regenT, v.regenMax = 15, 15 end
+      end
+      if b.shielded then
+        b.ventsOpen = true                            -- Crucible
+        if b.beamStrike then                          -- Conductor
+          b:beamStrike({ b.x, b.y, b.x, b.y + 40 }, 1 / 60)
+        end
+      end
+      b.invuln = 0    -- 1.2s per landed hit would swallow two in three
+    end
+
+    local bad, vacuous, checked = 0, 0, 0
     for _, bd in ipairs(TC.BOSSES) do
       if bd.id then
+        local fact = FACTS[bd.id] or { gate = "?", summons = "random" }
         startRun { coop = true, room = bd.arena, door = "A" }
         G.run.flags.bulwark = true
         G.run.flags.driftvanes = true
         G.run.flags.linkblast = true
         wait(20)
+
+        -- Arm it the way this arena arms it: a tripwire column, or the
+        -- brazier dialogue that wakes the Archivist.
+        local trig, armer
+        for _, e in ipairs(World.entities) do
+          if e.kind == "bosstrigger" and e.bossId == bd.id then trig = e end
+          if e.armBoss == bd.id then armer = e end
+        end
+        if trig then
+          for _, p in ipairs(World.players) do
+            p.x, p.y = trig.x, 40
+            p.vx, p.vy = 0, 0
+          end
+        elseif armer then
+          Bosses.start(bd.id, World)
+        else
+          error(bd.id .. ": nothing arms it in " .. bd.arena)
+        end
+        wait(10)
+
         local b = World.bossActive
         if not b then error(bd.id .. " did not spawn") end
         for _, p in ipairs(World.players) do p.invuln = 999 end
-        -- let it get going and actually summon something
         local guard = 0
         while b.state == "intro" and guard < 300 do wait(1) guard = guard + 1 end
-        wait(240)                        -- four seconds of fight
-        local spawned = 0
-        for _, e in ipairs(World.entities) do
-          if e.bossAdd and not e.dead then spawned = spawned + 1 end
-        end
-        -- kill it, however this particular boss insists on being killed
+
+        -- SOFTEN IT FIRST. The old version waited four seconds at FULL
+        -- health, which is a window in which two of these bosses cannot
+        -- summon by definition: the Slag Golem calls blobs only below
+        -- 70% and Maro calls Brassa only below 60%.
+        local floorHp = math.max(1, math.floor((b.maxhp or 100) * 0.5))
         guard = 0
-        while not b.dead and guard < 4000 do
-          if b.shielded and b.beamStrike then
-            b:beamStrike({ b.x, b.y, b.x, b.y + 40 }, 1 / 60)
+        while not b.dead and b.hp > floorHp and guard < 900 do
+          openGate(b)
+          b:hurt(8, b.x - 10, b.y, HURT)
+          wait(1)
+          guard = guard + 1
+        end
+        if b.hp > floorHp and not b.dead then
+          Test.log(("WARN %-14s could not be softened (hp %d/%d) -- %s")
+            :format(bd.id, b.hp, b.maxhp, fact.note or ""))
+        end
+
+        -- WATCH IT FIGHT -- and do not touch it while watching.
+        --
+        -- openGate() forces ventsOpen every frame, and for the Crucible
+        -- that is not neutral: a link hit through open vents SHATTERS the
+        -- shield and stuns it for five seconds (1546), so holding the
+        -- vents open kept stunning it before it could reach the slam that
+        -- spews the slaglings (1488). The gate-forcing was suppressing
+        -- the very summons being counted.
+        --
+        -- And sample every frame, keeping the PEAK. A single reading at
+        -- the end cannot see an add that spawned and died inside the
+        -- window, which is precisely the case this scenario cares about.
+        local spawned = 0
+        for _ = 1, SUMMON_FRAMES do
+          local n = 0
+          for _, e in ipairs(World.entities) do
+            if e.bossAdd and not e.dead then n = n + 1 end
           end
-          b:hurt(20, b.x - 10, b.y, { link = true, beam = true, refracted = true })
+          if n > spawned then spawned = n end
+          wait(1)
+        end
+
+        guard = 0
+        while not b.dead and guard < 1200 do
+          openGate(b)
+          b:hurt(20, b.x - 10, b.y, HURT)
           wait(1)
           guard = guard + 1
         end
         if not b.dead then
-          Test.log("SKIP " .. bd.id .. ": could not be killed in time")
+          Test.log(("SKIP %-14s could not be killed -- gate=%s %s")
+            :format(bd.id, fact.gate, fact.note or ""))
         else
           wait(10)
           local left = 0
           for _, e in ipairs(World.entities) do
             if e.bossAdd and not e.dead then left = left + 1 end
           end
+          checked = checked + 1
           Test.log(string.format("%-14s summoned %d, %d left after death",
             bd.id, spawned, left))
           if left > 0 then bad = bad + 1 end
-          -- and the prize must have survived the sweep
+
+          -- A boss that summoned nothing proves nothing about a sweep.
+          -- Which of them SHOULD have is a per-boss fact, not a global
+          -- one: five of the eleven never call addSpawn at all, and
+          -- failing them for it would be failing them for their design.
+          if fact.summons == "always" and spawned == 0 then
+            error(bd.id .. " summoned nothing but always should -- " .. fact.note)
+          elseif fact.summons and spawned == 0 then
+            Test.log(("VACUOUS %-14s -- expected %s summons, saw none (%s)")
+              :format(bd.id, tostring(fact.summons), fact.note or ""))
+            vacuous = vacuous + 1
+          end
+
           local prize, corpse = false, false
           for _, e in ipairs(World.entities) do
             if e.give and not e.dead then prize = true end
             if e.bossId and e.hint == "inspect" then corpse = true end
           end
-          if b.reward and not prize then
-            error(bd.id .. ": the sweep ate the reward drop")
+          -- GONE and COLLECTED are different facts and only the first
+          -- implicates the sweep: Reward:update auto-grants on TOUCH and
+          -- both bots are parked where the prize lands.
+          if b.reward then
+            local mod = b.reward:match("^module:(.+)$")
+            local wpn = b.reward:match("^weapon:(.+)$")
+            local held = (mod and G.run.flags[mod])
+              or (wpn and G.run.flags["weapon_" .. wpn])
+            if not prize and not held then
+              error(bd.id .. ": the reward is gone and nobody has it ("
+                .. b.reward .. ")")
+            end
           end
           if not corpse and bd.id ~= "motherengine" then
             error(bd.id .. ": the sweep ate the corpse")
           end
         end
+        G.run.flags["boss_" .. bd.id] = true
+        World.bossActive = nil
       end
     end
     if bad > 0 then error(bad .. " boss(es) left adds alive after dying") end
+    Test.log(string.format("%d bosses killed and swept, %d vacuous", checked, vacuous))
     Test.log("OK bossadds")
   end
 
@@ -3433,5 +3608,73 @@ return function(Test, scenarios)
     wait(5)
     Test.log("after recall p1=" .. pos(1) .. " p2=" .. pos(2))
     Test.log("OK solo")
+  end
+
+  -- ----------------------------------------------------------------
+  -- ENTITY SLEEP (Phase 2.5)
+  --
+  -- Driven with PROBES rather than real enemies: a probe counts the
+  -- frames it was allowed to think in, so the assertion is on the
+  -- behaviour ("did this body update?") and not on some enemy's internal
+  -- state, which would break the moment that enemy is retuned.
+  -- ----------------------------------------------------------------
+  scenarios.sleep = function()
+    startRun { coop = true, room = "test_arena", door = "A" }
+    wait(10)
+    local World = require "src.world"
+    local fails = 0
+    local function fail(m) Test.log("FAIL " .. m) fails = fails + 1 end
+
+    local function probe(x, y, canSleep)
+      local e = { x = x, y = y, w = 12, h = 12, ticks = 0, dead = false,
+                  invuln = 0, white = 0, canSleep = canSleep, kind = "probe",
+                  update = function(self) self.ticks = self.ticks + 1 end,
+                  draw = function() end }
+      World:add(e)
+      return e
+    end
+
+    local p1 = G.game.players[1]
+    local far    = probe(6000, 6000, true)
+    local near   = probe(p1.x + 40, p1.y, true)
+    local optOut = probe(6000, 6000, nil)
+    wait(30)
+    Test.log(("ticks after 30: far=%d near=%d optOut=%d slept=%s")
+      :format(far.ticks, near.ticks, optOut.ticks, tostring(World.sleptLast)))
+    if far.ticks ~= 0 then fail("a body 6000px away kept thinking") end
+    if near.ticks == 0 then fail("a body beside the player stopped thinking") end
+    if optOut.ticks == 0 then fail("a body that never opted in was put to sleep") end
+    if not World.sleptLast or World.sleptLast < 1 then
+      fail("World.sleptLast did not report the sleeping body")
+    end
+
+    -- it must WAKE when you come back, or this is a soft-lock generator
+    far.x, far.y = p1.x + 40, p1.y
+    local was = far.ticks
+    wait(20)
+    if far.ticks <= was then fail("a sleeper next to the player never woke") end
+
+    -- ...and nothing sleeps during a boss fight, however far it wanders:
+    -- a boss add frozen off screen is a fight that never ends.
+    --
+    -- Asserted by calling the predicate with a controlled `self`, NOT by
+    -- standing a fake boss up in the live World. World.bossActive is
+    -- contractually a boss ENTITY -- hud.lua reads b.hp / b.maxhp off it
+    -- every single frame -- so a `{ fake = true }` there does not test the
+    -- sleep guard, it crashes the draw path by breaking a different
+    -- invariant. That is exactly what the first version of this did.
+    far.x, far.y = 6000, 6000
+    if World:asleep(far) ~= true then
+      fail("a body 6000px away was not asleep to begin with")
+    end
+    local fighting = { bossActive = true, players = World.players,
+                       asleep = World.asleep }
+    if fighting:asleep(far) ~= false then
+      fail("bossActive did not keep a distant body awake")
+    end
+
+    far.dead, near.dead, optOut.dead = true, true, true
+    wait(2)
+    Test.log((fails == 0 and "OK" or "FAILED ") .. " sleep")
   end
 end

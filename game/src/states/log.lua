@@ -45,7 +45,7 @@ function S:enter()
 end
 
 function S:visibleRows()
-  return math.floor((G.VH - TOP - BOT) / ROWH)
+  return math.floor((G.SH - TOP - BOT) / ROWH)
 end
 
 function S:menu(action)
@@ -81,13 +81,13 @@ end
 function S:draw()
   local g = love.graphics
   g.setColor(P.black[1], P.black[2], P.black[3], 0.9)
-  g.rectangle("fill", 0, 0, G.VW, G.VH)
+  g.rectangle("fill", 0, 0, G.SW, G.SH)
   g.setFont(G.fonts.main)
   g.setColor(P.gold)
-  g.printf("LOG", 0, 12, G.VW, "center")
+  g.printf("LOG", 0, 12, G.SW, "center")
   g.setColor(P.slate)
   g.printf(G.fmtButtons("[MOVE] scroll    [CANCEL] close"),
-    0, G.VH - 14, G.VW, "center")
+    0, G.SH - 14, G.SW, "center")
   local vis = self:visibleRows()
   for i = 1, vis do
     local ln = self.lines[i + self.scroll]
@@ -98,13 +98,13 @@ function S:draw()
   end
   -- scrollbar
   if #self.lines > vis then
-    local h = G.VH - TOP - BOT
+    local h = G.SH - TOP - BOT
     local barH = math.max(8, h * vis / #self.lines)
     local barY = TOP + (h - barH) * (self.scroll / math.max(1, #self.lines - vis))
     g.setColor(P.gray)
-    g.rectangle("fill", G.VW - 8, TOP, 2, h)
+    g.rectangle("fill", G.SW - 8, TOP, 2, h)
     g.setColor(P.silver)
-    g.rectangle("fill", G.VW - 8, barY, 2, barH)
+    g.rectangle("fill", G.SW - 8, barY, 2, barH)
   end
   g.setColor(1, 1, 1, 1)
 end

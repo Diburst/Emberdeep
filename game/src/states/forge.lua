@@ -196,16 +196,16 @@ end
 function S:draw()
   local g = love.graphics
   g.setColor(P.black[1], P.black[2], P.black[3], 0.88)
-  g.rectangle("fill", 0, 0, G.VW, G.VH)
+  g.rectangle("fill", 0, 0, G.SW, G.SH)
   g.setFont(G.fonts.main)
   g.setColor(P.ember)
-  g.printf("BRASSA'S FORGE", 0, 42, G.VW, "center")
+  g.printf("BRASSA'S FORGE", 0, 42, G.SW, "center")
   g.setColor(P.gold)
-  g.printf("SCRAP: " .. (G.run.scrap or 0), 0, 56, G.VW, "center")
+  g.printf("SCRAP: " .. (G.run.scrap or 0), 0, 56, G.SW, "center")
   g.setColor(P.slate)
   g.printf("cores found: " .. (G.run.capsules or 0)
     .. " capsule / " .. (G.run.tanks or 0) .. " tank",
-    0, G.VH - 14, G.VW, "center")
+    0, G.SH - 14, G.SW, "center")
   self.list:draw()
   g.setColor(1, 1, 1, 1)
 end

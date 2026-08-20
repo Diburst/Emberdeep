@@ -83,6 +83,48 @@ def main():
         if not r.haspos:
             fails.append("%s has no mapPos -- it never draws on the map" % n)
 
+    # ----------------------------------------------------------------
+    # DOES THE MAP CELL STILL MATCH THE ROOM?
+    #
+    # A room's size in TILES lives in its map block; its size in map
+    # CELLS is typed by hand into mapPos. Nothing tied the two together,
+    # so a room could double in height and keep its old cell -- and every
+    # validator would pass while the map quietly lied about it. That is
+    # not a hypothetical: it is the failure mode waiting for the
+    # world-geometry pass.
+    #
+    # UNDERSIZED fails and OVERSIZED only notes, because the directions
+    # are not symmetric. A cell smaller than its room hides corridors,
+    # steals the wall a door needs (see the crowded-wall notes below) and
+    # makes the map understate where you have been. A cell larger than
+    # its room just leaves white space.
+    #
+    # The formula is ML.cells_for -- the same one that sizes a room with
+    # no mapPos, so there is exactly one statement of it in the tree.
+    # ----------------------------------------------------------------
+    # Measured, deliberate, and older than this check. Listed rather than
+    # tolerated by widening the rule, so that a fourth one has to be
+    # argued for instead of sliding in under a threshold.
+    ACCEPTED_UNDERSIZE = {
+        "flood_deep1": "2x2 against a 3x2 room; the extra column has no doors on it",
+        "moss_4": "2x1 against a 3x1 room; drawn narrow so the Well reads as its neighbour",
+    }
+    for n, r in sorted(rooms.items()):
+        if not r.haspos or not getattr(r, "tw", None):
+            continue
+        ew, eh = ML.cells_for(r.tw, r.th)
+        if r.w < ew or r.h < eh:
+            msg = ("%s is %dx%d tiles but only %dx%d cells (should be %dx%d) "
+                   "-- the map understates it" % (n, r.tw, r.th, r.w, r.h, ew, eh))
+            if n in ACCEPTED_UNDERSIZE:
+                notes.append("%s [accepted: %s]" % (msg, ACCEPTED_UNDERSIZE[n]))
+            else:
+                fails.append(msg)
+        elif r.w > ew or r.h > eh:
+            notes.append("%s is %dx%d tiles but %dx%d cells (formula says %dx%d) "
+                         "-- harmless, just white space"
+                         % (n, r.tw, r.th, r.w, r.h, ew, eh))
+
     if L.over:
         # name the offenders, not just the area
         for i in range(len(L.ids)):
