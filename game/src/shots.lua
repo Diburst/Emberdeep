@@ -129,13 +129,16 @@ function Shots.init(t)
   local mf = io.open(dir .. "/meta.txt", "w")
   if mf then
     mf:write(string.format(
-      "rs=%d\nrooms=%d\ncanvas=%dx%d\nworld=%dx%d\nscreen=%dx%d\n",
+      "rs=%d\nrooms=%d\ncanvas=%dx%d\nworld=%dx%d\nscreen=%dx%d\n"
+      .. "lighting=%s\nglow=%s\n",
       G.RS or 1, #Shots.ROOMS, (G.SW or 0) * (G.RS or 1), (G.SH or 0) * (G.RS or 1),
-      G.VW or 0, G.VH or 0, G.SW or 0, G.SH or 0))
+      G.VW or 0, G.VH or 0, G.SW or 0, G.SH or 0,
+      tostring(G.settings.lighting), tostring(G.settings.glow)))
     mf:close()
   end
-  out(string.format("=== SHOTS %s (%d rooms, RS=%d, canvas %dx%d) ===",
-    tag, #Shots.ROOMS, G.RS or 1, (G.SW or 0) * (G.RS or 1), (G.SH or 0) * (G.RS or 1)))
+  out(string.format("=== SHOTS %s (%d rooms, RS=%d, canvas %dx%d, lighting=%s) ===",
+    tag, #Shots.ROOMS, G.RS or 1, (G.SW or 0) * (G.RS or 1), (G.SH or 0) * (G.RS or 1),
+    tostring(G.settings.lighting)))
 
   reseed()
   G.run = G.Save.newRun(1, 2, true)

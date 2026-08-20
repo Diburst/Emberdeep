@@ -1424,35 +1424,33 @@ end
 -- ------------------------------------------------------------------
 -- Drawing
 -- ------------------------------------------------------------------
+-- ------------------------------------------------------------------
+-- THE DRAW ORDER, in one place.
+--
+-- This was a single 300-line function. Splitting it into named layers
+-- does not change a pixel; it makes the order legible, gives a new layer
+-- an obvious place to go, and is what let the FOREGROUND exist at all.
+--
+-- Two things about the order are load-bearing and neither is obvious
+-- from reading a layer on its own:
+--
+--   * Everything before Cam.apply() is SCREEN space. The sky and the
+--     parallax are not in the camera transform -- they scroll by
+--     offsetting themselves against Cam.x by hand, which is what makes
+--     them parallax rather than scenery.
+--
+--   * drawDarkness must stay LAST inside the transform. It renders to
+--     its own canvas and blits in screen space, so anything drawn after
+--     it sits on top of the dark instead of under it -- which is the
+--     whole point of a dark room.
+-- ------------------------------------------------------------------
 function World:draw()
   local g = love.graphics
   local set = G.tiles[self.zone] or G.tiles.camp
   local zc = set.conf
 
-  -- background gradient
-  local c1, c2 = P[zc.sky1], P[zc.sky2]
-  for i = 0, 8 do
-    local t = i / 8
-    g.setColor(U.lerp(c1[1], c2[1], t), U.lerp(c1[2], c2[2], t), U.lerp(c1[3], c2[3], t), 1)
-    g.rectangle("fill", 0, i * (G.VH / 9), G.VW, G.VH / 9 + 1)
-  end
-  -- distant glow spots
-  if set.bgGlow then
-    g.setColor(1, 1, 1, 1)
-    local off0 = -(Cam.x * 0.1) % 480
-    g.draw(set.bgGlow, off0 - 480, 0)
-    g.draw(set.bgGlow, off0, 0)
-  end
-  -- parallax silhouettes
-  g.setColor(1, 1, 1, 0.55)
-  local off1 = -(Cam.x * 0.25) % 480
-  g.draw(set.bg[1], off1 - 480, 0)
-  g.draw(set.bg[1], off1, 0)
-  g.setColor(1, 1, 1, 0.8)
-  local off2 = -(Cam.x * 0.5) % 480
-  g.draw(set.bg[2], off2 - 480, 0)
-  g.draw(set.bg[2], off2, 0)
-  g.setColor(1, 1, 1, 1)
+  self:drawSky(g, set, zc)
+  self:drawParallax(g, set)
 
   -- boss arenas carry their own scenery (screen space, room-locked)
   if self.room and self.room.arena then
@@ -1461,12 +1459,121 @@ function World:draw()
 
   Cam.apply()
 
-  -- tiles
+  -- The visible tile window, computed once and handed to every layer
+  -- that iterates tiles. It was computed twice before, here and again in
+  -- the water pass, with the same four lines written out both times.
   local frozen = self:zoneFrozen()
   local tx0 = math.max(0, math.floor(Cam.x / T) - 1)
   local ty0 = math.max(0, math.floor(Cam.y / T) - 1)
   local tx1 = math.min(self.w - 1, math.floor((Cam.x + G.VW) / T) + 1)
   local ty1 = math.min(self.h - 1, math.floor((Cam.y + G.VH) / T) + 1)
+
+  self:drawTerrain(g, set, tx0, ty0, tx1, ty1, frozen)
+  self:drawGrate(g)
+  self:drawFlood(g)
+  -- HOARFROST, over the floor and under everything that stands on it.
+  if self.frost then require("src.cold").frostDraw(self) end
+  self:drawBeams(g)
+  self:drawDoorArt(g, set)
+  self:drawDecor(g, tx0, ty0, tx1, ty1)   -- zone decoration, behind bodies
+  self:drawEntities(g)
+  self:drawWater(g, tx0, ty0, tx1, ty1)
+  self:drawParticles(g)
+  self:drawForeground(g, tx0, ty0, tx1, ty1)
+  self:drawWashes(g)
+
+  -- DARKNESS. Dark rooms have always been the Undergrove's; a frozen
+  -- world is dark everywhere, because every lantern in it has gone out.
+  -- This is what makes Lu's lume and the Ember's own aura the way you
+  -- see -- the light you are carrying is the only light there is.
+  if (self.room and self.room.dark) or self:zoneFrozen() then
+    self:drawLight(g)
+  end
+
+  Cam.unapply()
+end
+
+-- SCREEN SPACE. A vertical wash between the zone's two sky colours.
+function World:drawSky(g, set, zc)
+  -- background gradient
+  local c1, c2 = P[zc.sky1], P[zc.sky2]
+  for i = 0, 8 do
+    local t = i / 8
+    g.setColor(U.lerp(c1[1], c2[1], t), U.lerp(c1[2], c2[2], t), U.lerp(c1[3], c2[3], t), 1)
+    g.rectangle("fill", 0, i * (G.VH / 9), G.VW, G.VH / 9 + 1)
+  end
+end
+
+-- ------------------------------------------------------------------
+-- PARALLAX -- N layers, both axes.
+--
+-- SCREEN SPACE, and that is the whole mechanism: a layer offsets itself
+-- against the camera by its OWN factor, so the far ones lag and the near
+-- ones keep up. Inside the camera transform they would all move together
+-- and there would be no depth at all.
+--
+-- This was three layers, hardcoded, horizontal only, wrapping at a
+-- literal 480 -- which was the image width, said twice, in a place that
+-- would not notice if the images ever changed size. It is now a list, of
+-- any length, with per-layer factors on both axes, wrapping at whatever
+-- the image actually measures.
+--
+--   fx, fy  scroll factor per axis. 0 is painted on the back wall, 1
+--           moves exactly with the world. Anything above ~0.6 starts to
+--           read as scenery rather than distance.
+--   a       alpha. Distance is mostly haze, not size: fading a far layer
+--           does more for depth than moving it slower does.
+--
+-- fy = 0 everywhere today, which is why this phase changes nothing. A
+-- 34-row room is where vertical parallax would earn its keep -- with
+-- fy = 0 the sky is welded to the top of the screen, so climbing a shaft
+-- reads as the shaft moving past a backdrop rather than as ascent.
+-- ------------------------------------------------------------------
+
+-- The three layers the game has always had, written as data. A zone may
+-- set its own `parallax` list; this is what it gets if it does not, and
+-- the numbers are exactly the ones that were inline before.
+local function defaultParallax(set)
+  return {
+    { img = set.bgGlow,            fx = 0.10, fy = 0, a = 1.00 },
+    { img = set.bg and set.bg[1],  fx = 0.25, fy = 0, a = 0.55 },
+    { img = set.bg and set.bg[2],  fx = 0.50, fy = 0, a = 0.80 },
+  }
+end
+
+function World:drawParallax(g, set)
+  set.parallax = set.parallax or defaultParallax(set)
+  for _, layer in ipairs(set.parallax) do
+    local img = layer.img
+    if img then
+      local iw, ih = img:getDimensions()
+      local fx, fy = layer.fx or 0, layer.fy or 0
+      g.setColor(1, 1, 1, layer.a or 1)
+      -- One extra copy on each axis that scrolls, so the seam is always
+      -- off screen. An axis that does not scroll draws a single row at
+      -- its resting offset -- which is what keeps this identical to the
+      -- hand-written version it replaces.
+      local ox = -(Cam.x * fx) % iw
+      local nx = math.ceil(G.SW / iw) + 1
+      if fy ~= 0 then
+        local oy = -(Cam.y * fy) % ih
+        local ny = math.ceil(G.SH / ih) + 1
+        for j = 0, ny - 1 do
+          for i = 0, nx - 1 do
+            g.draw(img, ox + (i - 1) * iw, oy + (j - 1) * ih)
+          end
+        end
+      else
+        for i = 0, nx - 1 do
+          g.draw(img, ox + (i - 1) * iw, layer.y or 0)
+        end
+      end
+    end
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
+function World:drawTerrain(g, set, tx0, ty0, tx1, ty1, frozen)
   for ty = ty0, ty1 do
     for tx = tx0, tx1 do
       local c = self.tiles[ty][tx]
@@ -1582,13 +1689,11 @@ function World:draw()
       end
     end
   end
+end
 
-  self:drawGrate(g)
-  self:drawFlood(g)
-  -- HOARFROST, over the floor and under everything that stands on it.
-  if self.frost then require("src.cold").frostDraw(self) end
-  self:drawBeams(g)
-
+-- Edge chevrons, sealed bars and portal frames: everything that tells
+-- you where a door is and whether it will open.
+function World:drawDoorArt(g, set)
   -- edge-door markers: a soft pulsing chevron pointing out of the room,
   -- so exits read at a glance
   for ch, d in pairs(self.doors) do
@@ -1649,16 +1754,17 @@ function World:draw()
       g.setColor(1, 1, 1, 1)
     end
   end
+end
 
-  -- zone decorations (behind entities)
-  self:drawDecor(g, tx0, ty0, tx1, ty1)
-
+function World:drawEntities(g)
   -- entities by layer
   table.sort(self.entities, function(a, b) return (a.layer or 0) < (b.layer or 0) end)
   for _, e in ipairs(self.entities) do
     if not e.dead and Cam.onScreen(e.x, e.y, 64) then e:draw() end
   end
+end
 
+function World:drawWater(g, tx0, ty0, tx1, ty1)
   -- dynamic water line overlay
   if self.waterLine then
     local wy = self.waterLine
@@ -1699,7 +1805,9 @@ function World:draw()
     end
   end
   g.setColor(1, 1, 1, 1)
+end
 
+function World:drawParticles(g)
   -- particles
   for _, p in ipairs(self.particles) do
     local a = math.min(1, p.t * 4)
@@ -1707,7 +1815,11 @@ function World:draw()
     g.rectangle("fill", p.x - p.r / 2, p.y - p.r / 2, p.r, p.r)
   end
   g.setColor(1, 1, 1, 1)
+end
 
+-- Full-screen tints that say something about the state of the world:
+-- warmth where a guardian has fallen, cold once the Ember is gone.
+function World:drawWashes(g)
   -- healed-zone warmth: once a zone's guardian falls, its air warms
   if self:zoneMended() then
     local warm = 0.05 + math.sin(G.time * 0.8) * 0.015
@@ -1722,16 +1834,47 @@ function World:draw()
     g.rectangle("fill", Cam.ox, Cam.oy, G.VW, G.VH)
     g.setColor(1, 1, 1, 1)
   end
+end
 
-  -- DARKNESS. Dark rooms have always been the Undergrove's; a frozen
-  -- world is dark everywhere, because every lantern in it has gone out.
-  -- This is what makes Lu's lume and the Ember's own aura the way you
-  -- see -- the light you are carrying is the only light there is.
-  if (self.room and self.room.dark) or self:zoneFrozen() then
-    self:drawDarkness(g)
+-- ------------------------------------------------------------------
+-- FOREGROUND OCCLUDERS -- the layer that draws OVER the players.
+--
+-- A pillar you walk behind, a hanging root, the near lip of a ledge.
+-- This is most of what separates a room that reads as a SPACE from one
+-- that reads as a flat wall with things standing on it, and until now
+-- there was nowhere in the draw order to put such a thing.
+--
+-- It sits above bodies, water and particles, and below the washes and
+-- the darkness, so an occluder is tinted by a frozen room and hidden by
+-- an unlit one exactly like the geometry it is pretending to be part of.
+--
+-- The GATE IS THE DATA: a room with no `foreground` table draws nothing,
+-- which is every room today, which is why this phase is a no-op. That is
+-- deliberately not a settings toggle -- a switch a player can flip to
+-- turn off level geometry is not a graphics option, it is a bug.
+--
+-- The contract, for whoever fills it in (Phase 8):
+--   room.foreground = {
+--     { kind = "rect", x, y, w, h, col = "shadow", a = 0.8 },
+--     { kind = "sprite", name = "prop_pillar", x, y, sx, sy, a },
+--   }
+-- Coordinates are WORLD pixels, because this draws inside the camera
+-- transform alongside the tiles.
+-- ------------------------------------------------------------------
+function World:drawForeground(g, tx0, ty0, tx1, ty1)
+  local fg = self.room and self.room.foreground
+  if not fg then return end
+  for _, o in ipairs(fg) do
+    local a = o.a or 1
+    if o.kind == "sprite" then
+      G.drawSprite(o.name, 1, o.x, o.y, { sx = o.sx, sy = o.sy, alpha = a })
+    else
+      local c = P[o.col or "shadow"] or P.shadow
+      g.setColor(c[1], c[2], c[3], a)
+      g.rectangle("fill", o.x, o.y, o.w or T, o.h or T)
+    end
   end
-
-  Cam.unapply()
+  g.setColor(1, 1, 1, 1)
 end
 
 -- A zone counts as "mended" once its guardian -- the Mender's mad
@@ -2306,6 +2449,163 @@ end
 -- entity that carries a lightR (glowmites, struck sporebulbs, the
 -- singing choir throat, waypoint props).
 -- ------------------------------------------------------------------
+-- ==================================================================
+-- LIGHT
+-- ==================================================================
+-- Two models, one list of lights.
+--
+-- The MASK (shipped) is a black rectangle with soft holes punched in it,
+-- three concentric circles per light. It is SUBTRACTIVE: it can take
+-- darkness away and that is all it can do. It cannot tint, two lamps
+-- overlapping are no brighter than one, and at RS=4 its three fixed
+-- alpha steps read as three visible rings.
+--
+-- The BUFFER accumulates coloured light additively into its own canvas
+-- and MULTIPLIES the scene by it. Unlit is a floor rather than a void,
+-- overlapping lamps add up, and Lu's lume can be cold while the Ember is
+-- warm -- which is most of what makes a dark room read as a place with
+-- things burning in it rather than a screen with holes cut in it.
+--
+-- This is a LOOK, not a quality setting. It changes the character of
+-- Undergrove, Coldstore and the Cradle, so it ships OFF.
+
+local PROP_GLOW = { save = 26, checkpoint = 24, teleporter = 30 }
+
+-- Light TINTS -- what a source throws, not what it is painted. Kept
+-- apart from the palette deliberately: a brazier is orange and throws
+-- orange, but Lu is white and throws cold.
+local LIGHT_VESS = { 1.00, 0.72, 0.42 }
+local LIGHT_LU   = { 0.62, 0.86, 1.00 }
+local LIGHT_SHOT = { 0.85, 0.95, 1.00 }
+local LIGHT_PROP = { 1.00, 0.82, 0.55 }
+local LIGHT_WARM = { 1.00, 0.78, 0.50 }
+
+-- ONE OWNER for what emits light, how far, and what colour.
+--
+-- Both models read this. Letting each keep its own list is precisely how
+-- a prop ends up glowing under one model and invisible under the other,
+-- and nobody would find out until they switched.
+--
+-- The mask ignores `col`; it is the entire point of the buffer.
+function World:eachLight(fn)
+  for _, pl in ipairs(self.players) do
+    if not pl.dead and not pl.idle then
+      local r, col
+      if pl.isVess then
+        r, col = 34, LIGHT_VESS
+      else
+        r = G.run.flags.lumecore and 105 or 68
+        if pl.domeActive then r = r + 22 end
+        col = LIGHT_LU
+      end
+      fn(pl.x + pl.w / 2, pl.y + pl.h / 2, r, col)
+    end
+  end
+  for _, e in ipairs(self.entities) do
+    if not e.dead then
+      if e.lightR then
+        fn(e.x + e.w / 2, e.y + e.h / 2, e.lightR, e.lightCol or LIGHT_WARM)
+      elseif e.kind == "proj" and e.side == "player" then
+        fn(e.x + e.w / 2, e.y + e.h / 2, 15, LIGHT_SHOT)
+      elseif PROP_GLOW[e.kind] then
+        fn(e.x + e.w / 2, e.y + e.h / 2, PROP_GLOW[e.kind], LIGHT_PROP)
+      elseif e.interactable then
+        fn(e.x + e.w / 2, e.y + e.h / 2, 16, LIGHT_PROP)
+      end
+    end
+  end
+end
+
+-- One soft radial falloff, generated once and scaled per light. Squared,
+-- so there is a bright core, a long tail, and no step anywhere -- the
+-- mask's three fixed alphas are exactly what produce the rings that
+-- become obvious once the canvas is dense enough to show them.
+local lightTex
+local function getLightTex()
+  if lightTex then return lightTex end
+  local S = 128
+  local d = love.image.newImageData(S, S)
+  local c = (S - 1) / 2
+  d:mapPixel(function(x, y)
+    local dx, dy = (x - c) / c, (y - c) / c
+    local f = math.max(0, 1 - math.sqrt(dx * dx + dy * dy))
+    return 1, 1, 1, f * f
+  end)
+  lightTex = love.graphics.newImage(d)
+  lightTex:setFilter("linear", "linear")
+  return lightTex
+end
+
+function World:drawLight(g)
+  if G.settings.lighting == "buffer" then
+    self:drawLightBuffer(g)
+  else
+    self:drawDarkness(g)
+  end
+end
+
+function World:drawLightBuffer(g)
+  local RS = G.RS or 1
+  if not self.lightCanvas or self.lightRS ~= RS then
+    self.lightCanvas = love.graphics.newCanvas(G.VW * RS, G.VH * RS)
+    self.lightRS = RS
+  end
+  local tex = getLightTex()
+  local tw = tex:getWidth()
+  local dark = math.min(0.96, self.room.dark or 0.85)
+  -- AMBIENT: what an unlit pixel keeps. The mask takes `dark` away as
+  -- flat black; here the same number becomes a floor that light is added
+  -- on top of. Tinted cold on purpose -- unlit rock at the bottom of the
+  -- world is not grey, and a neutral ambient makes an unlit room read as
+  -- "turned down" rather than "deep".
+  local amb = 1 - dark
+  -- The offset the camera REALLY used, shake included. Reading Cam.x
+  -- here instead slides the light off the world on every explosion.
+  local cx0, cy0 = Cam.ox, Cam.oy
+  local prev = g.getCanvas()
+
+  g.push()
+  g.setCanvas(self.lightCanvas)
+  g.origin()
+  g.scale(RS)
+  g.clear(amb * 0.80, amb * 0.88, amb * 1.18, 1)
+  g.setBlendMode("add")
+  self:eachLight(function(wx, wy, r, col)
+    if r <= 0 then return end
+    local sx, sy = wx - cx0, wy - cy0
+    if sx < -r or sy < -r or sx > G.VW + r or sy > G.VH + r then return end
+    local s = (r * 2) / tw
+    g.setColor(col[1], col[2], col[3], 1)
+    g.draw(tex, sx, sy, 0, s, s, tw / 2, tw / 2)
+  end)
+  g.setBlendMode("alpha")
+  g.setCanvas(prev)
+  g.pop()
+
+  g.push()
+  g.origin()
+  -- MULTIPLY the scene by the light map. LOVE requires "premultiplied"
+  -- for multiply; this buffer is cleared at alpha 1 and only ever added
+  -- to, so every pixel is opaque and it is a straight RGB multiply.
+  g.setColor(1, 1, 1, 1)
+  g.setBlendMode("multiply", "premultiplied")
+  g.draw(self.lightCanvas, 0, 0)
+  g.setBlendMode("alpha")
+  -- ...then a little of the same buffer ADDED back. A real bloom wants a
+  -- downsample and a blur pass; this gets most of the read for one more
+  -- draw, and what it buys is a lamp bleeding past the edge of what it
+  -- lights instead of stopping dead at it.
+  local glow = G.settings.glow or 0
+  if glow > 0 then
+    g.setBlendMode("add")
+    g.setColor(1, 1, 1, glow)
+    g.draw(self.lightCanvas, 0, 0)
+    g.setBlendMode("alpha")
+    g.setColor(1, 1, 1, 1)
+  end
+  g.pop()
+end
+
 function World:drawDarkness(g)
   local RS = G.RS or 1
   if not self.darkCanvas or self.darkRS ~= RS then
@@ -2341,32 +2641,9 @@ function World:drawDarkness(g)
     g.setColor(0, 0, 0, 0)
     g.circle("fill", sx, sy, r * 0.45)
   end
-  for _, pl in ipairs(self.players) do
-    if not pl.dead and not pl.idle then
-      local r
-      if pl.isVess then
-        r = 34
-      else
-        r = G.run.flags.lumecore and 105 or 68
-        if pl.domeActive then r = r + 22 end
-      end
-      hole(pl.x + pl.w / 2, pl.y + pl.h / 2, r)
-    end
-  end
-  local PROP_GLOW = { save = 26, checkpoint = 24, teleporter = 30 }
-  for _, e in ipairs(self.entities) do
-    if not e.dead then
-      if e.lightR then
-        hole(e.x + e.w / 2, e.y + e.h / 2, e.lightR)
-      elseif e.kind == "proj" and e.side == "player" then
-        hole(e.x + e.w / 2, e.y + e.h / 2, 15)
-      elseif PROP_GLOW[e.kind] then
-        hole(e.x + e.w / 2, e.y + e.h / 2, PROP_GLOW[e.kind])
-      elseif e.interactable then
-        hole(e.x + e.w / 2, e.y + e.h / 2, 16)
-      end
-    end
-  end
+  -- Same lights, same order, same radii as before -- read from the one
+  -- list both models share, rather than from a second copy kept here.
+  self:eachLight(function(wx, wy, r) hole(wx, wy, r) end)
   g.setBlendMode("alpha")
   g.setCanvas(prev)
   g.pop()

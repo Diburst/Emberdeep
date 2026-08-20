@@ -20,6 +20,26 @@ function Save.defaultSettings()
     -- shipped look; 4 makes the canvas exactly 1920x1080. It does NOT
     -- widen the lens -- see FOUNDATION-PLAN.md section 1.
     renderscale = 1,
+    -- LIGHTING MODEL for dark rooms.
+    --
+    -- "buffer" is the shipped look: coloured light accumulated into its
+    -- own canvas and multiplied over the scene. "mask" is the model the
+    -- game shipped with before -- flat black with soft holes punched in
+    -- it -- kept because it is cheaper and because a look that replaced
+    -- another should leave a way back to it for a while.
+    --
+    -- Verified before the switch: mask against the pre-Phase-4 baseline
+    -- was 0 differing across 31 rooms, and buffer against mask differs in
+    -- exactly the 4 dark rooms and nowhere else.
+    lighting = "buffer",
+    -- How much of the light buffer is added back over the scene: a cheap
+    -- bloom that lets a lamp bleed past what it lights. 0 disables it.
+    glow = 0.18,
+    -- Bumped when a DEFAULT changes in a way existing players should
+    -- receive. See the migration in loadSettings. 0 means "written
+    -- before this existed", which is why the default is 0 and not the
+    -- current version.
+    settingsVersion = 0,
     vsync = true,
     shake = true,
     rumble = true,
@@ -40,6 +60,26 @@ function Save.loadSettings()
       for k, v in pairs(ok) do s[k] = v end
     end
   end
+  -- ----------------------------------------------------------------
+  -- SETTINGS MIGRATION
+  --
+  -- A saved settings.dat overrides every default. That is right for
+  -- anything the player chose and wrong for a default that has since
+  -- moved: `lighting` shipped as "mask" and is now "buffer", and a file
+  -- written in between holds "mask" not because anyone picked it but
+  -- because the file got written at all -- one press of F11 does it.
+  --
+  -- After the fact the two are indistinguishable, so the version stamp
+  -- is the only way to tell them apart. Migrate the specific keys that
+  -- moved; never wipe the file, because everything else in it -- volume,
+  -- bindings, difficulty -- the player really did choose.
+  -- ----------------------------------------------------------------
+  local V = 1
+  if (s.settingsVersion or 0) < V then
+    s.lighting = Save.defaultSettings().lighting
+    s.settingsVersion = V
+  end
+
   -- validate bindings shape
   if s.bindings then
     local valid = type(s.bindings) == "table" and #s.bindings == 2
@@ -58,6 +98,13 @@ end
 
 function Save.saveSettings()
   local s = U.copy(G.settings)
+  -- An environment override is for LOOKING at something, not for changing
+  -- what the player owns. EMBERDEEP_LIGHTING=buffer followed by any
+  -- settings write -- toggling fullscreen with F11 would do it -- would
+  -- otherwise bake the override into settings.dat, where it outlives the
+  -- session that asked for it and cannot be traced back to anything the
+  -- player did. Put the real values back before writing.
+  for k, v in pairs(G.settingsEnv or {}) do s[k] = v end
   love.filesystem.write("settings.dat", Ser.pack(s))
 end
 

@@ -112,6 +112,21 @@ function love.load()
   G.State = State
   G.Save = require "src.save"
   G.settings = G.Save.loadSettings()
+  -- Lighting override, so the two models can be put side by side without
+  -- editing a save file: EMBERDEEP_LIGHTING=buffer love .
+  -- Remember what each override displaced, so Save.saveSettings can put
+  -- it back and a debugging flag never becomes permanent state.
+  G.settingsEnv = {}
+  local lt = os.getenv("EMBERDEEP_LIGHTING")
+  if lt then
+    G.settingsEnv.lighting = G.settings.lighting
+    G.settings.lighting = lt
+  end
+  local gl = tonumber(os.getenv("EMBERDEEP_GLOW") or "")
+  if gl then
+    G.settingsEnv.glow = G.settings.glow
+    G.settings.glow = gl
+  end
   Input = require "src.input"
   G.Input = Input
   Input.init(G.settings.bindings)
