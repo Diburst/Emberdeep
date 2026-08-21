@@ -1849,6 +1849,44 @@ function World:drawWashes(g)
   end
 end
 
+-- A zone counts as "mended" once its guardian -- the Mender's mad
+-- repair -- has been put down. Subtle, but the deep should feel it.
+local MENDED_FLAG = {
+  mosswood = "boss_bramblemaw", flooded = "boss_tideengine",
+  furnace = "boss_crucible", crystal = "boss_prismtyrant",
+  skyroot = "boss_aeriesentinel", undergrove = "boss_mycelchoir",
+}
+function World:zoneMended()
+  local mf = MENDED_FLAG[self.zone]
+  return mf and G.run and G.run.flags and G.run.flags[mf]
+    and not self.bossActive
+end
+
+-- THE WHOLE DEEP FREEZES, not just the camp.
+--
+-- This used to be scoped to `zone == "camp"`, because the only frozen
+-- place was the one you stole from. But the Ember was the city's heat --
+-- every district was warm because of it -- so once it leaves the camp
+-- zone in your hands, everything it was keeping alive goes out at once.
+-- camp_frozen is set by World:load the moment you carry it into a
+-- non-camp room, which makes it exactly the right trigger: it fires on
+-- the first step you take away.
+-- MUSIC. Every zone keeps its own theme right up until the Ember comes
+-- loose, and then there is only one piece of music left in the world --
+-- the zones do not get to sound like themselves any more. Everything
+-- that starts zone music asks this, so a boss dying cannot quietly put
+-- the old theme back on over a frozen world.
+function World:musicName(want)
+  if G.run and G.run.flags and G.run.flags.camp_frozen then
+    return "untending"
+  end
+  return want
+end
+
+function World:zoneFrozen()
+  return G.run and G.run.flags and G.run.flags.camp_frozen or false
+end
+
 -- ==================================================================
 -- ROOM ART -- decoupled from the collision grid
 -- ==================================================================

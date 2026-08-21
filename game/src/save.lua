@@ -19,7 +19,15 @@ function Save.defaultSettings()
     -- RENDER SCALE. How many canvas pixels per world unit. 1 is the
     -- shipped look; 4 makes the canvas exactly 1920x1080. It does NOT
     -- widen the lens -- see FOUNDATION-PLAN.md section 1.
-    renderscale = 1,
+    -- RENDER SCALE: canvas pixels per logical unit. 4 makes the canvas
+    -- exactly 1920x1080. The procedural pixel art is unchanged by it --
+    -- nearest-filtered tiles at 4x are identical to upscaling -- so what
+    -- it buys is everything drawn as vectors rather than sprites: the
+    -- light buffer's gradients, rounded HUD corners, particles, and
+    -- camera and sprite motion snapping to a quarter of a world unit
+    -- instead of a whole one. It is the only setting here with a real
+    -- runtime cost; EMBERDEEP_RS=1 backs it out.
+    renderscale = 4,
     -- LIGHTING MODEL for dark rooms.
     --
     -- "buffer" is the shipped look: coloured light accumulated into its
@@ -43,7 +51,7 @@ function Save.defaultSettings()
     -- the shipped look (backdrops welded to the screen). It is anchored
     -- at each room's floor, so it can only ever act in a room taller than
     -- the viewport -- 20 of 83 -- and is a no-op in the rest.
-    parallaxY = 0,
+    parallaxY = 1,
     settingsVersion = 0,
     vsync = true,
     shake = true,
@@ -79,9 +87,19 @@ function Save.loadSettings()
   -- moved; never wipe the file, because everything else in it -- volume,
   -- bindings, difficulty -- the player really did choose.
   -- ----------------------------------------------------------------
-  local V = 1
-  if (s.settingsVersion or 0) < V then
-    s.lighting = Save.defaultSettings().lighting
+  -- One entry per version, naming only the keys whose DEFAULT moved.
+  -- Everything not listed is left exactly as the player left it.
+  local MIGRATIONS = {
+    { "lighting" },                      -- v1: mask -> buffer
+    { "renderscale", "parallaxY" },      -- v2: the foundation dials come on
+  }
+  local V = #MIGRATIONS
+  local have = s.settingsVersion or 0
+  if have < V then
+    local d = Save.defaultSettings()
+    for v = have + 1, V do
+      for _, k in ipairs(MIGRATIONS[v]) do s[k] = d[k] end
+    end
     s.settingsVersion = V
   end
 
