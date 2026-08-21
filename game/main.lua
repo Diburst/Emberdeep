@@ -127,6 +127,11 @@ function love.load()
     G.settingsEnv.glow = G.settings.glow
     G.settings.glow = gl
   end
+  local py = tonumber(os.getenv("EMBERDEEP_PARALLAX_Y") or "")
+  if py then
+    G.settingsEnv.parallaxY = G.settings.parallaxY
+    G.settings.parallaxY = py
+  end
   Input = require "src.input"
   G.Input = Input
   Input.init(G.settings.bindings)

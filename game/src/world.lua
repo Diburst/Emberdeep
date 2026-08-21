@@ -1476,10 +1476,11 @@ function World:draw()
   self:drawBeams(g)
   self:drawDoorArt(g, set)
   self:drawDecor(g, tx0, ty0, tx1, ty1)   -- zone decoration, behind bodies
+  self:drawScenery(g)                     -- room art, behind bodies
   self:drawEntities(g)
   self:drawWater(g, tx0, ty0, tx1, ty1)
   self:drawParticles(g)
-  self:drawForeground(g, tx0, ty0, tx1, ty1)
+  self:drawForeground(g)                  -- room art, in front of bodies
   self:drawWashes(g)
 
   -- DARKNESS. Dark rooms have always been the Undergrove's; a frozen
@@ -1535,9 +1536,9 @@ end
 -- the numbers are exactly the ones that were inline before.
 local function defaultParallax(set)
   return {
-    { img = set.bgGlow,            fx = 0.10, fy = 0, a = 1.00 },
-    { img = set.bg and set.bg[1],  fx = 0.25, fy = 0, a = 0.55 },
-    { img = set.bg and set.bg[2],  fx = 0.50, fy = 0, a = 0.80 },
+    { img = set.bgGlow,            fx = 0.10, fy = 0.05,  a = 1.00 },
+    { img = set.bg and set.bg[1],  fx = 0.25, fy = 0.125, a = 0.55 },
+    { img = set.bg and set.bg[2],  fx = 0.50, fy = 0.25,  a = 0.80 },
   }
 end
 
@@ -1555,18 +1556,30 @@ function World:drawParallax(g, set)
       -- hand-written version it replaces.
       local ox = -(Cam.x * fx) % iw
       local nx = math.ceil(G.SW / iw) + 1
-      if fy ~= 0 then
-        local oy = -(Cam.y * fy) % ih
-        local ny = math.ceil(G.SH / ih) + 1
-        for j = 0, ny - 1 do
-          for i = 0, nx - 1 do
-            g.draw(img, ox + (i - 1) * iw, oy + (j - 1) * ih)
-          end
-        end
-      else
-        for i = 0, nx - 1 do
-          g.draw(img, ox + (i - 1) * iw, layer.y or 0)
-        end
+      -- VERTICAL: offset, never tiled, and ANCHORED AT THE ROOM'S FLOOR.
+      --
+      -- These layer images are screen-height with a ground line along the
+      -- bottom. They tile horizontally because they were drawn to; they
+      -- would not tile vertically, and repeating one would put a second
+      -- horizon in the sky.
+      --
+      -- Anchoring at the floor rather than at zero is what makes this
+      -- safe to turn on everywhere: at the bottom of any room the offset
+      -- is 0 and the frame is exactly what it always was. A room only one
+      -- viewport tall has nowhere else to be, so 63 of the 83 rooms are
+      -- untouched by construction -- the change lands only where there is
+      -- real vertical travel to sell.
+      --
+      -- Climbing then pushes the backdrop DOWN, uncovering sky above it,
+      -- which is the read we want: the shaft is not sliding past a
+      -- painted wall, you are going up.
+      local oy = 0
+      if fy ~= 0 and G.settings.parallaxY and G.settings.parallaxY > 0 then
+        local maxCam = math.max(0, self.h * T - G.VH)
+        oy = (maxCam - Cam.y) * fy * G.settings.parallaxY
+      end
+      for i = 0, nx - 1 do
+        g.draw(img, ox + (i - 1) * iw, (layer.y or 0) + oy)
       end
     end
   end
@@ -1836,89 +1849,78 @@ function World:drawWashes(g)
   end
 end
 
--- ------------------------------------------------------------------
--- FOREGROUND OCCLUDERS -- the layer that draws OVER the players.
+-- ==================================================================
+-- ROOM ART -- decoupled from the collision grid
+-- ==================================================================
+-- Everything a room looks like used to be a consequence of what it is
+-- made of: a `#` is a solid tile and it draws the zone's solid tile,
+-- full stop. That is a tight, honest system and it is also why every
+-- room in this game is built out of the same sixteen-pixel vocabulary.
 --
--- A pillar you walk behind, a hanging root, the near lip of a ledge.
--- This is most of what separates a room that reads as a SPACE from one
--- that reads as a flat wall with things standing on it, and until now
--- there was nowhere in the draw order to put such a thing.
+-- These two layers take art off the grid. An entry sits at arbitrary
+-- WORLD pixels, at any size, at any alpha, and owes nothing to what the
+-- tile underneath it is:
 --
--- It sits above bodies, water and particles, and below the washes and
--- the darkness, so an occluder is tinted by a frozen room and hidden by
--- an unlit one exactly like the geometry it is pretending to be part of.
+--   room.scenery     drawn BEHIND bodies -- the far wall of a hall, a
+--                    shaft of light, a machine too big to be a tile
+--   room.foreground  drawn IN FRONT of bodies -- a pillar you pass
+--                    behind, a hanging root, the near lip of a ledge
 --
--- The GATE IS THE DATA: a room with no `foreground` table draws nothing,
--- which is every room today, which is why this phase is a no-op. That is
--- deliberately not a settings toggle -- a switch a player can flip to
--- turn off level geometry is not a graphics option, it is a bug.
+-- The foreground is most of what separates a room that reads as a SPACE
+-- from a flat wall with things standing on it. Both sit inside the
+-- camera transform, so they are hidden by an unlit room and tinted by a
+-- frozen one exactly like the geometry they are pretending to belong to.
 --
--- The contract, for whoever fills it in (Phase 8):
---   room.foreground = {
---     { kind = "rect", x, y, w, h, col = "shadow", a = 0.8 },
---     { kind = "sprite", name = "prop_pillar", x, y, sx, sy, a },
---   }
--- Coordinates are WORLD pixels, because this draws inside the camera
--- transform alongside the tiles.
--- ------------------------------------------------------------------
-function World:drawForeground(g, tx0, ty0, tx1, ty1)
-  local fg = self.room and self.room.foreground
-  if not fg then return end
-  for _, o in ipairs(fg) do
+-- THE GATE IS THE DATA. A room with neither table draws nothing, which
+-- is every room today. Deliberately not a settings toggle: a switch a
+-- player can flip to turn off level geometry is not a graphics option.
+--
+--   { kind = "rect",   x, y, w, h, col = "shadow", a = 0.8 }
+--   { kind = "sprite", name = "prop_pillar", x, y, sx, sy, a }
+--   { kind = "band",   x, y, w, h, col, a, a2 }   -- vertical fade
+--
+-- Any entry may carry `px` / `py`: a scroll factor that shifts it
+-- against the camera. px = 0.15 on a scenery entry makes a far wall
+-- drift behind the room as you walk, which is the whole point of taking
+-- art off the grid -- a tile can only ever be exactly where it is.
+-- ==================================================================
+function World:drawArtLayer(g, list)
+  if not list then return end
+  for _, o in ipairs(list) do
     local a = o.a or 1
+    -- Parallax INSIDE the camera transform: the offset is added back, so
+    -- a factor of 0 is welded to the world and 1 is welded to the screen.
+    local x = o.x + (o.px and Cam.x * o.px or 0)
+    local y = o.y + (o.py and Cam.y * o.py or 0)
     if o.kind == "sprite" then
-      G.drawSprite(o.name, 1, o.x, o.y, { sx = o.sx, sy = o.sy, alpha = a })
+      G.drawSprite(o.name, o.frame or 1, x, y,
+        { sx = o.sx, sy = o.sy, alpha = a, flip = o.flip })
+    elseif o.kind == "band" then
+      local c = P[o.col or "shadow"] or P.shadow
+      local h = o.h or T
+      local steps = math.max(1, math.min(24, math.floor(h / 4)))
+      for i = 0, steps - 1 do
+        local t = i / steps
+        g.setColor(c[1], c[2], c[3], a + (( o.a2 or 0) - a) * t)
+        g.rectangle("fill", x, y + h * t, o.w or T, h / steps + 1)
+      end
     else
       local c = P[o.col or "shadow"] or P.shadow
       g.setColor(c[1], c[2], c[3], a)
-      g.rectangle("fill", o.x, o.y, o.w or T, o.h or T)
+      g.rectangle("fill", x, y, o.w or T, o.h or T)
     end
   end
   g.setColor(1, 1, 1, 1)
 end
 
--- A zone counts as "mended" once its guardian -- the Mender's mad
--- repair -- has been put down. Subtle, but the deep should feel it.
-local MENDED_FLAG = {
-  mosswood = "boss_bramblemaw", flooded = "boss_tideengine",
-  furnace = "boss_crucible", crystal = "boss_prismtyrant",
-  skyroot = "boss_aeriesentinel", undergrove = "boss_mycelchoir",
-}
-function World:zoneMended()
-  local mf = MENDED_FLAG[self.zone]
-  return mf and G.run and G.run.flags and G.run.flags[mf]
-    and not self.bossActive
+function World:drawScenery(g)
+  self:drawArtLayer(g, self.room and self.room.scenery)
 end
 
--- THE WHOLE DEEP FREEZES, not just the camp.
---
--- This used to be scoped to `zone == "camp"`, because the only frozen
--- place was the one you stole from. But the Ember was the city's heat --
--- every district was warm because of it -- so once it leaves the camp
--- zone in your hands, everything it was keeping alive goes out at once.
--- camp_frozen is set by World:load the moment you carry it into a
--- non-camp room, which makes it exactly the right trigger: it fires on
--- the first step you take away.
--- MUSIC. Every zone keeps its own theme right up until the Ember comes
--- loose, and then there is only one piece of music left in the world --
--- the zones do not get to sound like themselves any more. Everything
--- that starts zone music asks this, so a boss dying cannot quietly put
--- the old theme back on over a frozen world.
-function World:musicName(want)
-  if G.run and G.run.flags and G.run.flags.camp_frozen then
-    return "untending"
-  end
-  return want
+function World:drawForeground(g)
+  self:drawArtLayer(g, self.room and self.room.foreground)
 end
 
-function World:zoneFrozen()
-  return G.run and G.run.flags and G.run.flags.camp_frozen or false
-end
-
--- ------------------------------------------------------------------
--- Arena scenery: each boss room tells its owner's story behind the
--- fight. Drawn between the parallax layers and the tiles.
--- ------------------------------------------------------------------
 function World:drawArenaBackdrop(g, arena, ox, oy)
   local W, H = self.w * T, self.h * T
   local floorY = H - 5 * T

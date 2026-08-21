@@ -39,6 +39,11 @@ function Save.defaultSettings()
     -- receive. See the migration in loadSettings. 0 means "written
     -- before this existed", which is why the default is 0 and not the
     -- current version.
+    -- VERTICAL PARALLAX strength: a multiplier on each layer's fy. 0 is
+    -- the shipped look (backdrops welded to the screen). It is anchored
+    -- at each room's floor, so it can only ever act in a room taller than
+    -- the viewport -- 20 of 83 -- and is a no-op in the rest.
+    parallaxY = 0,
     settingsVersion = 0,
     vsync = true,
     shake = true,

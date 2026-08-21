@@ -98,6 +98,17 @@ local FLAGS = {
 -- from there. Absolute paths work too, via EMBERDEEP_SHOTDIR.
 local SHOTDIR = os.getenv("EMBERDEEP_SHOTDIR") or "../_shots"
 
+-- EMBERDEEP_SHOTS_CAMY=mid lifts the camera off the floor before each
+-- capture.
+--
+-- Needed because floor-anchored vertical parallax is a NO-OP at the
+-- bottom of a room by design, and this harness always spawns on the
+-- floor -- so the effect it exists to show would diff as zero and read
+-- as "the feature does nothing". A regression harness that cannot see
+-- the thing being changed is worse than no harness, because it reports
+-- success.
+local CAMY = os.getenv("EMBERDEEP_SHOTS_CAMY")
+
 local tag, dir, idx, phase = nil, nil, 0, "load"
 local log
 
@@ -130,10 +141,11 @@ function Shots.init(t)
   if mf then
     mf:write(string.format(
       "rs=%d\nrooms=%d\ncanvas=%dx%d\nworld=%dx%d\nscreen=%dx%d\n"
-      .. "lighting=%s\nglow=%s\n",
+      .. "lighting=%s\nglow=%s\nparallaxY=%s\ncamy=%s\n",
       G.RS or 1, #Shots.ROOMS, (G.SW or 0) * (G.RS or 1), (G.SH or 0) * (G.RS or 1),
       G.VW or 0, G.VH or 0, G.SW or 0, G.SH or 0,
-      tostring(G.settings.lighting), tostring(G.settings.glow)))
+      tostring(G.settings.lighting), tostring(G.settings.glow),
+      tostring(G.settings.parallaxY), tostring(CAMY or "floor")))
     mf:close()
   end
   out(string.format("=== SHOTS %s (%d rooms, RS=%d, canvas %dx%d, lighting=%s) ===",
@@ -164,6 +176,18 @@ function Shots.settle()
   g.dialogue, g.cutscene = nil, nil
   g.respawning = false
   g.linkMeter, g.linkState = 1, nil
+
+  if CAMY == "mid" then
+    local Cam = require "src.camera"
+    local World = require "src.world"
+    local maxCam = math.max(0, World.h * (G.TILE or 16) - G.VH)
+    Cam.y = maxCam / 2
+    Cam.clamp()
+    -- Cam.ox/oy are what the world actually projects through, and they
+    -- are only refreshed inside Cam.apply(). Set them here too or the
+    -- darkness and light buffers would still be aimed at the old row.
+    Cam.ox, Cam.oy = math.floor(Cam.x), math.floor(Cam.y)
+  end
 end
 
 -- Called INSTEAD OF State.update.  The world is never stepped.
