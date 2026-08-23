@@ -2,20 +2,91 @@
 return {
   zone = "scrapyard", music = "scrapyard",
   arena = "vessel8",
+  -- BEHIND the rock: stacked wrecks, gantries, haze
+  backdrop = {
+    { kind = "band", x = 0, y = 0, w = 960, h = 272, col = "umber", a = 0.3, a2 = 0.06, py = 0.05 },
+    { kind = "rect", x = -20, y = 166, w = 67, h = 83, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 73, y = 187, w = 51, h = 66, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 153, y = 227, w = 51, h = 44, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 217, y = 155, w = 63, h = 107, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 295, y = 166, w = 85, h = 90, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 403, y = 197, w = 64, h = 67, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 489, y = 209, w = 52, h = 59, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 559, y = 206, w = 85, h = 59, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 668, y = 221, w = 47, h = 44, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 736, y = 170, w = 95, h = 92, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 855, y = 182, w = 48, h = 88, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 923, y = 206, w = 74, h = 54, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = -30, y = 179, w = 108, h = 93, col = "black", a = 0.26, py = 0.12 },
+    { kind = "rect", x = 103, y = 133, w = 97, h = 139, col = "black", a = 0.26, py = 0.12 },
+    { kind = "rect", x = 237, y = 183, w = 79, h = 89, col = "black", a = 0.26, py = 0.12 },
+    { kind = "rect", x = 351, y = 129, w = 67, h = 143, col = "black", a = 0.26, py = 0.12 },
+    { kind = "rect", x = 461, y = 147, w = 122, h = 125, col = "black", a = 0.26, py = 0.12 },
+    { kind = "rect", x = 642, y = 150, w = 71, h = 122, col = "black", a = 0.26, py = 0.12 },
+    { kind = "rect", x = 766, y = 183, w = 67, h = 89, col = "black", a = 0.26, py = 0.12 },
+    { kind = "rect", x = 892, y = 162, w = 114, h = 110, col = "black", a = 0.26, py = 0.12 },
+    { kind = "girder", x = -16, y = 48, w = 992, h = 14, col = "black", a = 0.42, py = 0.3, step = 34 },
+    { kind = "girder", x = -16, y = 108, w = 992, h = 14, col = "black", a = 0.34, py = 0.24, step = 30 },
+    { kind = "hang", x = 884, y = 62, w = 2, h = 51, col = "black", a = 0.5, py = 0.3, lw = 2, sway = 4, rate = 0.4, bob = true },
+    { kind = "hang", x = 651, y = 62, w = 2, h = 39, col = "black", a = 0.5, py = 0.3, lw = 2, sway = 4, rate = 0.4, bob = true },
+    { kind = "hang", x = 103, y = 62, w = 2, h = 49, col = "black", a = 0.5, py = 0.3, lw = 2, sway = 4, rate = 0.4, bob = true },
+    { kind = "hang", x = 108, y = 62, w = 2, h = 42, col = "black", a = 0.5, py = 0.3, lw = 2, sway = 4, rate = 0.4, bob = true },
+  },
+  -- welded to the world: rust runs and lamps
+  scenery = {
+    { kind = "rect", x = 35, y = 50, w = 3, h = 27, col = "rust", a = 0.3 },
+    { kind = "rect", x = 497, y = 56, w = 2, h = 21, col = "rust", a = 0.3 },
+    { kind = "rect", x = 397, y = 156, w = 4, h = 24, col = "rust", a = 0.3 },
+    { kind = "rect", x = 949, y = 132, w = 2, h = 32, col = "rust", a = 0.3 },
+    { kind = "rect", x = 445, y = 119, w = 3, h = 41, col = "rust", a = 0.3 },
+    { kind = "rect", x = 159, y = 101, w = 4, h = 23, col = "rust", a = 0.3 },
+    { kind = "rect", x = 251, y = 55, w = 2, h = 18, col = "rust", a = 0.3 },
+    { kind = "rect", x = 122, y = 116, w = 5, h = 32, col = "rust", a = 0.3 },
+    { kind = "rect", x = 601, y = 190, w = 3, h = 40, col = "rust", a = 0.3 },
+    { kind = "rect", x = 260, y = 93, w = 2, h = 28, col = "rust", a = 0.3 },
+    { kind = "rect", x = 540, y = 90, w = 7, h = 9, col = "rust", a = 0.9 },
+    { kind = "rect", x = 542, y = 92, w = 3, h = 5, col = "ember", a = 1 },
+    { kind = "rect", x = 620, y = 127, w = 7, h = 9, col = "rust", a = 0.9 },
+    { kind = "rect", x = 622, y = 129, w = 3, h = 5, col = "ember", a = 1 },
+    { kind = "rect", x = 920, y = 144, w = 7, h = 9, col = "rust", a = 0.9 },
+    { kind = "rect", x = 922, y = 146, w = 3, h = 5, col = "ember", a = 1 },
+    { kind = "rect", x = 805, y = 131, w = 7, h = 9, col = "rust", a = 0.9 },
+    { kind = "rect", x = 807, y = 133, w = 3, h = 5, col = "ember", a = 1 },
+  },
+  -- NEARER than the world -- it overtakes you
+  foreground = {
+    { kind = "girder", x = -24, y = 16, w = 1008, h = 16, col = "black", a = 0.9, py = -0.12, step = 34 },
+    { kind = "hang", x = 258, y = 32, w = 2, h = 41, col = "black", a = 0.85, py = -0.12, lw = 2, sway = 5, rate = 0.5, bob = true },
+    { kind = "hang", x = 692, y = 32, w = 2, h = 49, col = "black", a = 0.85, py = -0.12, lw = 2, sway = 5, rate = 0.5, bob = true },
+    { kind = "hang", x = 861, y = 32, w = 2, h = 36, col = "black", a = 0.85, py = -0.12, lw = 2, sway = 5, rate = 0.5, bob = true },
+    { kind = "hang", x = 353, y = 32, w = 2, h = 63, col = "black", a = 0.85, py = -0.12, lw = 2, sway = 5, rate = 0.5, bob = true },
+    { kind = "hang", x = 268, y = 32, w = 2, h = 52, col = "black", a = 0.85, py = -0.12, lw = 2, sway = 5, rate = 0.5, bob = true },
+    { kind = "hang", x = 542, y = 32, w = 2, h = 62, col = "black", a = 0.85, py = -0.12, lw = 2, sway = 5, rate = 0.5, bob = true },
+    { kind = "band", x = 0, y = 0, w = 26, h = 272, col = "black", a = 0.55, a2 = 0.55, py = -0.06 },
+    { kind = "band", x = 934, y = 0, w = 26, h = 272, col = "black", a = 0.55, a2 = 0.55, py = -0.06 },
+  },
+  -- additive; the lamps and one welding arc
+  lights = {
+    { x = 543, y = 94, col = { 1.00, 0.62, 0.28 }, r = 40, flicker = 5.74 },
+    { x = 623, y = 131, col = { 1.00, 0.62, 0.28 }, r = 48, flicker = 5.65 },
+    { x = 923, y = 148, col = { 1.00, 0.62, 0.28 }, r = 45, flicker = 5.23 },
+    { x = 808, y = 135, col = { 1.00, 0.62, 0.28 }, r = 58, flicker = 5.02 },
+    { x = 42, y = 134, col = { 1.00, 0.86, 0.55 }, r = 66, flicker = 11.57 },
+  },
   mapPos = { x = 3, y = 2, w = 3, h = 1 },
   gates = { H = "boss_vessel8" },
   map = [[
 ############################################################
 ####################################################EE######
-##.................................................HEE#...##
-##............................................=====####...##
+######...#......#######............#...............HEE######
+##.#................#..............#......................##
+##.##########.......#..........................##########.##
+##.##########..................................##########.##
+##.......................==========.......................##
 ##........................................................##
-##........................................................##
-##............................................======......##
-##........................................................##
-##..............=======...............=======.............##
-##..........................................======........##
-AA........................................................##
+##............=========..............=========............##
+##.........................................=======........##
+AA......=====...%%%%%%....%%%%%%...............=======....##
 AA............................t...........................##
 ############################################################
 ############################################################

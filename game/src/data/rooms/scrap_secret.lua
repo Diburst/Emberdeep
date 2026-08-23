@@ -2,27 +2,73 @@
 return {
   zone = "scrapyard", music = "scrapyard",
   arena = "scrapyard",
+  -- BEHIND the rock: stacked wrecks, gantries, haze
+  backdrop = {
+    { kind = "band", x = 0, y = 0, w = 480, h = 272, col = "umber", a = 0.3, a2 = 0.06, py = 0.05 },
+    { kind = "rect", x = -20, y = 200, w = 81, h = 48, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 82, y = 197, w = 63, h = 53, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 154, y = 170, w = 57, h = 78, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 229, y = 186, w = 48, h = 74, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 298, y = 210, w = 96, h = 56, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = 421, y = 175, w = 54, h = 87, col = "black", a = 0.42, py = 0.22 },
+    { kind = "rect", x = -30, y = 127, w = 84, h = 145, col = "black", a = 0.26, py = 0.12 },
+    { kind = "rect", x = 91, y = 169, w = 86, h = 103, col = "black", a = 0.26, py = 0.12 },
+    { kind = "rect", x = 223, y = 135, w = 106, h = 137, col = "black", a = 0.26, py = 0.12 },
+    { kind = "rect", x = 378, y = 166, w = 75, h = 106, col = "black", a = 0.26, py = 0.12 },
+    { kind = "girder", x = -16, y = 48, w = 512, h = 14, col = "black", a = 0.42, py = 0.3, step = 30 },
+    { kind = "girder", x = -16, y = 108, w = 512, h = 14, col = "black", a = 0.34, py = 0.24, step = 30 },
+    { kind = "hang", x = 330, y = 62, w = 2, h = 30, col = "black", a = 0.5, py = 0.3, lw = 2, sway = 4, rate = 0.4, bob = true },
+    { kind = "hang", x = 49, y = 62, w = 2, h = 33, col = "black", a = 0.5, py = 0.3, lw = 2, sway = 4, rate = 0.4, bob = true },
+  },
+  -- welded to the world: rust runs and lamps
+  scenery = {
+    { kind = "rect", x = 373, y = 179, w = 2, h = 32, col = "rust", a = 0.3 },
+    { kind = "rect", x = 204, y = 82, w = 5, h = 25, col = "rust", a = 0.3 },
+    { kind = "rect", x = 50, y = 160, w = 3, h = 19, col = "rust", a = 0.3 },
+    { kind = "rect", x = 184, y = 54, w = 3, h = 43, col = "rust", a = 0.3 },
+    { kind = "rect", x = 383, y = 104, w = 3, h = 41, col = "rust", a = 0.3 },
+    { kind = "rect", x = 331, y = 115, w = 7, h = 9, col = "rust", a = 0.9 },
+    { kind = "rect", x = 333, y = 117, w = 3, h = 5, col = "ember", a = 1 },
+    { kind = "rect", x = 386, y = 60, w = 7, h = 9, col = "rust", a = 0.9 },
+    { kind = "rect", x = 388, y = 62, w = 3, h = 5, col = "ember", a = 1 },
+  },
+  -- NEARER than the world -- it overtakes you
+  foreground = {
+    { kind = "girder", x = -24, y = 16, w = 528, h = 16, col = "black", a = 0.9, py = -0.12, step = 34 },
+    { kind = "hang", x = 442, y = 32, w = 2, h = 42, col = "black", a = 0.85, py = -0.12, lw = 2, sway = 5, rate = 0.5, bob = true },
+    { kind = "hang", x = 399, y = 32, w = 2, h = 32, col = "black", a = 0.85, py = -0.12, lw = 2, sway = 5, rate = 0.5, bob = true },
+    { kind = "hang", x = 370, y = 32, w = 2, h = 31, col = "black", a = 0.85, py = -0.12, lw = 2, sway = 5, rate = 0.5, bob = true },
+    { kind = "band", x = 0, y = 0, w = 26, h = 272, col = "black", a = 0.55, a2 = 0.55, py = -0.06 },
+    { kind = "band", x = 454, y = 0, w = 26, h = 272, col = "black", a = 0.55, a2 = 0.55, py = -0.06 },
+  },
+  -- additive; the lamps and one welding arc
+  lights = {
+    { x = 334, y = 119, col = { 1.00, 0.62, 0.28 }, r = 49, flicker = 7.49 },
+    { x = 389, y = 64, col = { 1.00, 0.62, 0.28 }, r = 40, flicker = 6.94 },
+    { x = 262, y = 157, col = { 1.00, 0.86, 0.55 }, r = 59, flicker = 12.48 },
+  },
   mapPos = { x = 6, y = 4, w = 1, h = 1 },
   map = [[
 ##############################
 ##############################
+###..#..######################
+##..........##########...#####
+#########.................#.##
+#########........9..h.......##
+##...........==========.....##
 ##..........................##
 ##..........................##
-##..........................##
-##..........................##
-##..................=====...##
-##..........................##
-##..........................##
-##..........................##
-AA..........................##
-AA.......s.....k......9.....##
-##############################
-##############################
-##############################
-##############################
+##....=========.............##
+AA........................####
+AA......................######
+########..===========.########
+##....s...............########
+##..####....%%%%%%%...########
+##########.....k.....#########
 ##############################
 ]],
   key = {
+    ["h"] = "scraphusk",
     ["s"] = "sign:sign_scrap_bay",
     ["k"] = "capsule:cap_scrap",
     ["9"] = "chest:ch_scrap1:scrap:30",

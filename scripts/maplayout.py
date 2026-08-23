@@ -158,6 +158,21 @@ def cells_for(tw, th):
     return max(1, round(tw / 22.0)), max(1, round(th / 17.0))
 
 
+# Rooms that are deliberately drawn smaller than cells_for says. Measured,
+# deliberate, and older than the check that enforces the formula -- listed
+# rather than tolerated by widening the rule, so a third one has to be
+# argued for instead of sliding in under a threshold.
+#
+# It lives beside cells_for because it is an exception to cells_for, and
+# because BOTH checkmap (which reports them) and fixmappos (which must not
+# "repair" them) need it. Two copies of this list is two chances for a
+# room to be quietly re-fixed every time someone edits it.
+ACCEPTED_UNDERSIZE = {
+    "flood_deep1": "2x2 against a 3x2 room; the extra column has no doors on it",
+    "moss_4": "2x1 against a 3x1 room; drawn narrow so the Well reads as its neighbour",
+}
+
+
 def seed_missing(rooms):
     """A room with no mapPos starts stacked on its zone origin, which is
     an overlap, and the solver's hard no-overlap rule would then reject

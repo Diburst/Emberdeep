@@ -102,13 +102,10 @@ def main():
     # The formula is ML.cells_for -- the same one that sizes a room with
     # no mapPos, so there is exactly one statement of it in the tree.
     # ----------------------------------------------------------------
-    # Measured, deliberate, and older than this check. Listed rather than
-    # tolerated by widening the rule, so that a fourth one has to be
-    # argued for instead of sliding in under a threshold.
-    ACCEPTED_UNDERSIZE = {
-        "flood_deep1": "2x2 against a 3x2 room; the extra column has no doors on it",
-        "moss_4": "2x1 against a 3x1 room; drawn narrow so the Well reads as its neighbour",
-    }
+    # The exceptions live in maplayout beside the formula they except,
+    # because fixmappos needs the same list and must not "repair" a room
+    # that is undersized on purpose.
+    ACCEPTED_UNDERSIZE = ML.ACCEPTED_UNDERSIZE
     for n, r in sorted(rooms.items()):
         if not r.haspos or not getattr(r, "tw", None):
             continue

@@ -21,8 +21,14 @@ local ZONES = {
                bg1 = "black", bg2 = "dark", sky1 = "black", sky2 = "dark" },
   undergrove = { base = "soil", dark = "black", accent = "violet", cap = "plum",
                bg1 = "black", bg2 = "dark", sky1 = "black", sky2 = "black" },
+  -- `strata` scales World:drawStrata for this zone only. The Coldstore
+  -- reads as ICE, and ice is smooth: banding every deep tile the way the
+  -- Scrapyard wants it made the walls look like sediment instead of a
+  -- frozen face. It is a per-zone property because "how layered is the
+  -- rock" is a fact about the rock, not a global preference.
   coldstore = { base = "slate", dark = "navy", accent = "ice", cap = "silver",
-               bg1 = "navy", bg2 = "shadow", sky1 = "black", sky2 = "navy" },
+               bg1 = "navy", bg2 = "shadow", sky1 = "black", sky2 = "navy",
+               strata = 0.35 },
   cradle   = { base = "gloom", dark = "black", accent = "ice", cap = "slate",
                bg1 = "black", bg2 = "dark", sky1 = "black", sky2 = "black" },
   scrapyard = { base = "shadow", dark = "black", accent = "slate", cap = "gray",

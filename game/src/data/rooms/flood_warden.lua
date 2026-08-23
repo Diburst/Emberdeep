@@ -2,6 +2,53 @@
 return {
   zone = "flooded", music = "flooded",
   arena = "rustwarden",
+  -- BEHIND the rock: stacked wrecks, gantries, haze
+  backdrop = {
+    { kind = "band", x = 0, y = 0, w = 640, h = 272, col = "deepsea", a = 0.1, a2 = 0.4, py = 0.04 },
+    { kind = "girder", x = -16, y = 54, w = 672, h = 13, col = "black", a = 0.36, py = 0.28, step = 38 },
+    { kind = "girder", x = -16, y = 119, w = 672, h = 13, col = "black", a = 0.28, py = 0.2, step = 35 },
+    { kind = "girder", x = -16, y = 184, w = 672, h = 13, col = "black", a = 0.2, py = 0.13, step = 37 },
+    { kind = "column", x = -12, y = 54, w = 16, h = 217, col = "navy", a = 0.26, py = 0.17, step = 30, acc = "teal" },
+    { kind = "column", x = 99, y = 54, w = 23, h = 217, col = "navy", a = 0.26, py = 0.17, step = 29, acc = "teal" },
+    { kind = "column", x = 220, y = 54, w = 19, h = 217, col = "navy", a = 0.26, py = 0.17, step = 38, acc = "teal" },
+    { kind = "column", x = 282, y = 54, w = 15, h = 217, col = "navy", a = 0.26, py = 0.17, step = 40, acc = "teal" },
+    { kind = "column", x = 387, y = 54, w = 24, h = 217, col = "navy", a = 0.26, py = 0.17, step = 39, acc = "teal" },
+    { kind = "column", x = 491, y = 54, w = 21, h = 217, col = "navy", a = 0.26, py = 0.17, step = 35, acc = "teal" },
+    { kind = "column", x = 573, y = 54, w = 24, h = 217, col = "navy", a = 0.26, py = 0.17, step = 33, acc = "teal" },
+  },
+  -- welded to the world: rust runs and lamps
+  scenery = {
+    { kind = "hang", x = 228, y = 221, w = 1, h = 56, col = "sky", a = 0.3, lw = 1, sway = 2, rate = 0.58, bob = true },
+    { kind = "hang", x = 264, y = 181, w = 1, h = 60, col = "sky", a = 0.24, lw = 1, sway = 5, rate = 1.05, bob = true },
+    { kind = "hang", x = 206, y = 116, w = 1, h = 31, col = "sky", a = 0.37, lw = 1, sway = 4, rate = 0.93, bob = true },
+    { kind = "hang", x = 470, y = 236, w = 1, h = 59, col = "sky", a = 0.38, lw = 1, sway = 2, rate = 0.94, bob = true },
+    { kind = "hang", x = 458, y = 115, w = 1, h = 56, col = "sky", a = 0.26, lw = 1, sway = 2, rate = 0.91, bob = true },
+    { kind = "hang", x = 448, y = 159, w = 1, h = 53, col = "sky", a = 0.37, lw = 1, sway = 3, rate = 0.76, bob = true },
+    { kind = "hang", x = 585, y = 227, w = 1, h = 27, col = "sky", a = 0.38, lw = 1, sway = 5, rate = 0.68, bob = true },
+    { kind = "hang", x = 360, y = 133, w = 1, h = 57, col = "sky", a = 0.28, lw = 1, sway = 3, rate = 0.62, bob = true },
+    { kind = "hang", x = 106, y = 125, w = 1, h = 54, col = "sky", a = 0.33, lw = 1, sway = 2, rate = 0.63, bob = true },
+    { kind = "hang", x = 526, y = 207, w = 1, h = 60, col = "sky", a = 0.22, lw = 1, sway = 5, rate = 0.53, bob = true },
+    { kind = "rect", x = 599, y = 140, w = 12, h = 4, col = "rust", a = 0.21 },
+    { kind = "rect", x = 191, y = 206, w = 7, h = 3, col = "teal", a = 0.24 },
+    { kind = "rect", x = 41, y = 45, w = 6, h = 2, col = "rust", a = 0.37 },
+    { kind = "rect", x = 339, y = 105, w = 15, h = 2, col = "teal", a = 0.4 },
+    { kind = "rect", x = 324, y = 99, w = 6, h = 2, col = "rust", a = 0.22 },
+    { kind = "rect", x = 575, y = 104, w = 9, h = 3, col = "rust", a = 0.21 },
+    { kind = "rect", x = 297, y = 173, w = 8, h = 2, col = "rust", a = 0.25 },
+    { kind = "rect", x = 571, y = 202, w = 16, h = 3, col = "rust", a = 0.32 },
+    { kind = "rect", x = 264, y = 60, w = 13, h = 3, col = "rust", a = 0.36 },
+  },
+  -- NEARER than the world -- it overtakes you
+  foreground = {
+    { kind = "girder", x = -24, y = 8, w = 688, h = 16, col = "black", a = 0.86, py = -0.12, step = 34 },
+    { kind = "band", x = 0, y = 0, w = 26, h = 272, col = "navy", a = 0.45, a2 = 0.45, py = -0.06 },
+    { kind = "band", x = 614, y = 0, w = 26, h = 272, col = "navy", a = 0.45, a2 = 0.45, py = -0.06 },
+  },
+  -- additive; the lamps and one welding arc
+  lights = {
+    { x = 160, y = 38, col = { 0.50, 0.90, 0.92 }, r = 93, flicker = 1.1 },
+    { x = 480, y = 38, col = { 0.50, 0.90, 0.92 }, r = 88, flicker = 1.34 },
+  },
   mapPos = { x = 9, y = 1, w = 2, h = 1 },
   map = [[
 ########################################

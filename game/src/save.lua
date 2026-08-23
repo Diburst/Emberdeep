@@ -52,6 +52,15 @@ function Save.defaultSettings()
     -- at each room's floor, so it can only ever act in a room taller than
     -- the viewport -- 20 of 83 -- and is a no-op in the rest.
     parallaxY = 1,
+    -- ROCK TEXTURE strength over enclosed solid tiles. 0 is the old flat
+    -- tile grid. See World:drawStrata.
+    strata = 1,
+    -- EDGE SOFTENING + foreground overgrowth strength. 0 is the bare
+    -- 16px tile outline. See World:drawEdges.
+    -- 0.7 rather than 1: at full strength the hanging growth reads as a
+    -- curtain in motion rather than as a cave. The corner rounding is
+    -- unaffected by this -- only the density of what hangs off the rock.
+    edges = 0.7,
     settingsVersion = 0,
     vsync = true,
     shake = true,

@@ -12,9 +12,9 @@ local Items = {}
 -- and the outer emitters need a thermal column -- with no way to turn
 -- either on, and no way to win. `short` is the name the chamber shows.
 Items.MODULES = {
-  sparkjump = { ability = true, short = "SPARK JUMP", name = "SPARK JUMP MODULE", desc = "Lu's original leg actuators, home at last. She jumps a full block higher! Vess can WARP to her after she climbs." },
-  grapple = { ability = true, short = "GRAPPLE", name = "MAGNE-GRAPPLE", desc = "Vess's factory grapple, back where it belongs. Press DASH near an anchor ring to zip to it!" },
-  heatplating = { ability = true, short = "HEAT PLATING", name = "HEAT PLATING", desc = "Original caretaker furnace plating, refitted. Both bots endure the deep heat!" },
+  sparkjump = { ability = true, short = "SPARK JUMP", name = "SPARK JUMP MODULE", desc = "Increases LUMEN robot jumping capability." },
+  grapple = { ability = true, short = "GRAPPLE", name = "MAGNE-GRAPPLE", desc = "VESSEL robot grapple apparatus. Press DASH near an anchor ring to zip to it." },
+  heatplating = { ability = true, short = "HEAT SHIELDING", name = "HEAT SHIELDING", desc = "Ceramic heat shields. Compatible with both robots." },
   hydroseals = { ability = true, short = "HYDRO SEALS", name = "HYDRO SEALS", desc = "Original hull seals, good as new. Both bots can dive underwater indefinitely!" },
   telenet = { ability = true, short = "TELEPORTER KEY", name = "TELEPORTER KEY", desc = "The old teleporter network is yours to use!" },
   corekey1 = { name = "CORE KEY FRAGMENT (1/3)", desc = "A piece of the seal on the heart of Emberdeep." },

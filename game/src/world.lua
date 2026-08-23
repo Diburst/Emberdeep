@@ -36,8 +36,21 @@ local AIR, SOLID, ONEWAY, SPIKE_U, SPIKE_D, SPIKE_L, SPIKE_R, WATER, LAVA,
 World.codes = { AIR = AIR, SOLID = SOLID, ONEWAY = ONEWAY, WATER = WATER,
   LAVA = LAVA, BREAK = BREAK, CRUMBLE = CRUMBLE, GATE = GATE }
 
+-- ICE ('_') PARSES AS SOLID AND IS REMEMBERED SEPARATELY.
+--
+-- It could have been its own tile code, but SOLID is tested directly in
+-- ten places across the renderer and the physics and every one of them
+-- would have had to learn about it -- for a tile that collides exactly
+-- like rock. So it is rock, plus a set: World.iceSet holds the tiles
+-- whose SURFACE is frozen, drawIce glazes them, and the player asks
+-- World:isIce what it is standing on. Nothing else changes.
+--
+-- The character came off checkchars' free list rather than out of the
+-- air: '_' is used as a key in no room in the game, so adding it to the
+-- alphabet cannot silently turn an existing entity spawn into scenery.
+-- That is the bug this project has hit twelve times.
 local CHAR_TILE = {
-  ["#"] = SOLID, ["."] = AIR, ["="] = ONEWAY,
+  ["#"] = SOLID, ["_"] = SOLID, ["."] = AIR, ["="] = ONEWAY,
   ["^"] = SPIKE_U, ["v"] = SPIKE_D, ["<"] = SPIKE_L, [">"] = SPIKE_R,
   ["~"] = WATER, ["L"] = LAVA, ["%"] = BREAK, ["c"] = CRUMBLE,
 }
@@ -76,6 +89,10 @@ local function idx(tx, ty) return ty * 4096 + tx end
 function World:tileAt(tx, ty)
   if tx < 0 or ty < 0 or tx >= self.w or ty >= self.h then return SOLID end
   return self.tiles[ty][tx]
+end
+
+function World:isIce(tx, ty)
+  return self.iceSet ~= nil and self.iceSet[idx(tx, ty)] == true
 end
 
 function World:isSolid(tx, ty, ent)
@@ -713,7 +730,12 @@ end
 -- ------------------------------------------------------------------
 -- Room loading
 -- ------------------------------------------------------------------
-local roomCache = {}
+-- Published so the editor's save layer can drop a single room after
+-- writing it. A local-only cache made RoomIO.invalidate a silent no-op:
+-- package.loaded was cleared, this was not, and the saved edit did not
+-- come back on the next load.
+World.roomCache = {}
+local roomCache = World.roomCache
 function World.getRoomDef(id)
   if not roomCache[id] then
     roomCache[id] = require("src.data.rooms." .. id)
@@ -722,31 +744,29 @@ function World.getRoomDef(id)
   return roomCache[id]
 end
 
-function World:load(roomId, doorChar, keepPlayers)
-  local def = World.getRoomDef(roomId)
-  self.room = def
-  self.zone = def.zone
-  self.entities = {}
-  self.addQueue = {}
-  self.particles = {}
-  self.beamSegs = {}
-  self.beamDirty = true
-  self.doors = {}
-  self.crumbles = {}
-  self.broken = {}
-  self.gateFlags = {}
-  self.gateStyles = {}
-  self.pendingTransition = nil
-  self.bossActive = nil
-
-  -- parse grid
-  local lines = {}
-  for line in def.map:gmatch("[^\n]+") do
-    if #line > 0 then lines[#lines + 1] = line end
-  end
+-- ------------------------------------------------------------------
+-- THE GRID PARSER, and everything derived from it.
+-- ------------------------------------------------------------------
+-- Lifted out of World:load so that there is exactly ONE of it.
+--
+-- The editor's live resize used to rebuild World.tiles by hand from the
+-- character grid, which looked equivalent and was not: the FOUR passes
+-- below all read the finished tile array, and skipping them cost water
+-- (the settle pass turns the air cell a fish spawns in back into water,
+-- so every enemy in a lake left an air bubble behind), the floor and
+-- ceiling decor, the water-depth shading, and every door's bounding box
+-- and derived side.
+--
+-- Returns the spawn characters it found, which only World:load cares
+-- about -- the editor keeps the entities it already has.
+function World:parseGrid(lines, def, roomId)
   self.h = #lines
   self.w = #lines[1]
   self.tiles = {}
+  self.doors = {}
+  self.gateFlags = {}
+  self.gateStyles = {}
+  self.iceSet = {}
   local spawnsByChar = {}
   for ty = 0, self.h - 1 do
     self.tiles[ty] = {}
@@ -759,6 +779,7 @@ function World:load(roomId, doorChar, keepPlayers)
       local code = CHAR_TILE[ch]
       if code then
         self.tiles[ty][tx] = code
+        if ch == "_" then self.iceSet[idx(tx, ty)] = true end
       elseif DOOR_CHARS[ch] then
         self.tiles[ty][tx] = AIR
         local d = self.doors[ch]
@@ -864,6 +885,30 @@ function World:load(roomId, doorChar, keepPlayers)
     -- built. A requirement on the door itself is exact.
     d.req = d.link and d.link.req
   end
+
+  return spawnsByChar
+end
+
+function World:load(roomId, doorChar, keepPlayers)
+  local def = World.getRoomDef(roomId)
+  self.room = def
+  self.zone = def.zone
+  self.entities = {}
+  self.addQueue = {}
+  self.particles = {}
+  self.beamSegs = {}
+  self.beamDirty = true
+  self.crumbles = {}
+  self.broken = {}
+  self.pendingTransition = nil
+  self.bossActive = nil
+  self.depthMap = nil          -- rebuilt per room by World:solidDepth
+
+  local lines = {}
+  for line in def.map:gmatch("[^\n]+") do
+    if #line > 0 then lines[#lines + 1] = line end
+  end
+  local spawnsByChar = self:parseGrid(lines, def, roomId)
 
   -- spawn entities
   for _, s in ipairs(spawnsByChar) do
@@ -1468,7 +1513,11 @@ function World:draw()
   local tx1 = math.min(self.w - 1, math.floor((Cam.x + G.VW) / T) + 1)
   local ty1 = math.min(self.h - 1, math.floor((Cam.y + G.VH) / T) + 1)
 
+  self:drawBackdrop(g)                    -- room art, BEHIND the rock
   self:drawTerrain(g, set, tx0, ty0, tx1, ty1, frozen)
+  self:drawStrata(g, set, tx0, ty0, tx1, ty1)   -- rock, not blocks of dirt
+  self:drawEdges(g, set, tx0, ty0, tx1, ty1)    -- and break the 16px outline
+  self:drawIce(g, tx0, ty0, tx1, ty1)          -- glaze, AFTER the rock
   self:drawGrate(g)
   self:drawFlood(g)
   -- HOARFROST, over the floor and under everything that stands on it.
@@ -1480,6 +1529,7 @@ function World:draw()
   self:drawEntities(g)
   self:drawWater(g, tx0, ty0, tx1, ty1)
   self:drawParticles(g)
+  self:drawOvergrowth(g, set, tx0, ty0, tx1, ty1)  -- cover over the impassable
   self:drawForeground(g)                  -- room art, in front of bodies
   self:drawWashes(g)
 
@@ -1578,8 +1628,27 @@ function World:drawParallax(g, set)
         local maxCam = math.max(0, self.h * T - G.VH)
         oy = (maxCam - Cam.y) * fy * G.settings.parallaxY
       end
+      local ly = (layer.y or 0) + oy
       for i = 0, nx - 1 do
-        g.draw(img, ox + (i - 1) * iw, (layer.y or 0) + oy)
+        g.draw(img, ox + (i - 1) * iw, ly)
+      end
+      -- ...AND FILL WHAT THE SHIFT UNCOVERED.
+      --
+      -- These images are exactly screen height. Pushing one down by oy
+      -- leaves oy pixels above it with nothing in them, and "nothing"
+      -- here is drawSky's gradient, which for most zones runs black to
+      -- dark. Climbing a 34-row shaft opened 68px of void along the top
+      -- of the screen -- the first thing Thomas saw when he went up.
+      --
+      -- The top row of every one of these layers is sky, so stretching
+      -- that single scanline upward fills the gap seamlessly and costs
+      -- one draw. Tiling the image instead would hang a second horizon
+      -- in the air.
+      if ly > 0.5 then
+        layer.topq = layer.topq or love.graphics.newQuad(0, 0, iw, 1, iw, ih)
+        for i = 0, nx - 1 do
+          g.draw(img, layer.topq, ox + (i - 1) * iw, ly, 0, 1, -ly)
+        end
       end
     end
   end
@@ -1706,6 +1775,378 @@ end
 
 -- Edge chevrons, sealed bars and portal frames: everything that tells
 -- you where a door is and whether it will open.
+-- ------------------------------------------------------------------
+-- ROCK, instead of blocks of dirt.
+--
+-- A solid tile draws one 16x16 image, so a large mass of them reads as a
+-- grid of identical stamps. The fix is not a better tile -- it is
+-- FEATURES BIGGER THAN A TILE, so the eye stops finding the seam.
+--
+-- Three of them, and all three only on ENCLOSED tiles. The exposed rim,
+-- the cap, and anything a bot can stand on are left completely alone:
+-- those are what the player reads to know where the floor is, and they
+-- have to stay crisp. Texture goes where nobody can walk.
+--
+--   DEPTH   how far inside the mass a tile sits, breadth-first out from
+--           open air, computed once per room and cached. Rock darkening
+--           inward is the strongest single cue that it is a solid BODY
+--           rather than a wall of stamps.
+--   STRATA  horizontal bands keyed on the tile ROW ALONE, so one band
+--           runs unbroken across every tile in that row and crosses the
+--           entire mass. This is what actually kills the grid.
+--   GRAIN   a few flecks per tile in the zone's own cap colour, so the
+--           mineral belongs to the zone it is in.
+--
+-- The hash is sin-based rather than bitwise on purpose: LOVE 11 runs
+-- LuaJIT, which is 5.1, and 5.3's `~` and `>>` would not survive there.
+-- ------------------------------------------------------------------
+local function h01(a, b, s)
+  local n = math.sin(a * 12.9898 + b * 78.233 + (s or 0) * 3.71) * 43758.5453
+  return n - math.floor(n)
+end
+
+local NEIGH = { { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+
+local function hardKind(c)
+  return c == SOLID or c == BREAK or c == CRUMBLE or c == GATE
+end
+
+-- Distance from open air, breadth-first, capped -- once per room.
+function World:solidDepth()
+  if self.depthMap then return self.depthMap end
+  local d, q, qn = {}, {}, 0
+  for ty = 0, self.h - 1 do
+    for tx = 0, self.w - 1 do
+      if not hardKind(self.tiles[ty][tx]) then
+        local i = idx(tx, ty)
+        d[i] = 0; qn = qn + 1; q[qn] = i
+      end
+    end
+  end
+  local head = 1
+  while head <= qn do
+    local i = q[head]; head = head + 1
+    local nd = d[i] + 1
+    if nd <= 6 then
+      local tx, ty = i % 4096, math.floor(i / 4096)
+      for k = 1, 4 do
+        local nx, ny = tx + NEIGH[k][1], ty + NEIGH[k][2]
+        if nx >= 0 and ny >= 0 and nx < self.w and ny < self.h then
+          local j = idx(nx, ny)
+          if d[j] == nil then d[j] = nd; qn = qn + 1; q[qn] = j end
+        end
+      end
+    end
+  end
+  self.depthMap = d
+  return d
+end
+
+function World:drawStrata(g, set, tx0, ty0, tx1, ty1)
+  local amt = G.settings.strata or 1
+  local zc = set.conf
+  -- A zone may dial its own banding down. Ice is smooth: the Coldstore
+  -- at the Scrapyard's strength read as sediment rather than as a frozen
+  -- face. The global setting still scales it, so EMBERDEEP_STRATA=0
+  -- turns everything off exactly as before.
+  amt = amt * (zc and zc.strata or 1)
+  if amt <= 0 then return end
+  local dk = P[zc.dark] or P.black
+  local cap = P[zc.cap] or P.gray
+  local d = self:solidDepth()
+  for ty = ty0, ty1 do
+    for tx = tx0, tx1 do
+      local c = self.tiles[ty][tx]
+      if c == SOLID or c == BREAK then
+        local dep = d[idx(tx, ty)] or 0
+        -- dep 1 is the rim: left clean so the silhouette stays readable
+        if dep >= 2 then
+          local px, py = tx * T, ty * T
+          g.setColor(dk[1], dk[2], dk[3], math.min(0.52, (dep - 1) * 0.135) * amt)
+          g.rectangle("fill", px, py, T, T)
+          local sh = h01(0, ty, 3)
+          if sh < 0.34 then
+            local yy = py + math.floor(sh * 8.8) * 4 + 3
+            g.setColor(dk[1], dk[2], dk[3], 0.32 * amt)
+            g.rectangle("fill", px, yy, T, 2)
+            g.setColor(cap[1], cap[2], cap[3], 0.06 * amt)
+            g.rectangle("fill", px, yy + 2, T, 1)
+          end
+          for k = 1, 3 do
+            local hx = h01(tx, ty, k)
+            if hx > 0.63 then
+              local hy = h01(ty, tx, k + 7)
+              g.setColor(cap[1], cap[2], cap[3], 0.11 * amt)
+              g.rectangle("fill", px + math.floor(hx * 13), py + math.floor(hy * 13), 2, 2)
+            end
+          end
+        end
+      end
+    end
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
+-- ------------------------------------------------------------------
+-- THE EDGES -- where "square" actually lives.
+--
+-- drawStrata textures the INSIDE of a mass, and in a room like moss_3
+-- that turns out to be almost nothing: the platforms are one or two
+-- tiles thick, so every tile in them is depth-1 rim and the strata pass
+-- skips the lot. What the player is looking at is not the inside of the
+-- rock. It is the OUTLINE, and the outline is a 16px staircase of
+-- perfect right angles.
+--
+-- So this pass works on exactly the tiles strata refuses: the rim. Four
+-- treatments, each aimed at one straight line:
+--
+--   DRIP     under a ceiling or a platform's belly -- the flat bottom
+--            edge is the single most "brick" line on screen
+--   CREST    over an exposed top, spilling PAST the lip left and right,
+--            so the platform's ends stop being vertical cuts
+--   RAGGED   on exposed vertical faces, a few pixels of broken profile
+--   CHAMFER  a soft 2px cut across convex corners, in the zone's own
+--            backdrop colour, so a 90 degree corner reads as worn
+--
+-- All of it is ADDITIVE and hashed off world position: stable frame to
+-- frame, never tiling, and it cannot move a collision boundary because
+-- it does not touch the tile map. What a bot can stand on is exactly
+-- what it could stand on before -- this only changes where the eye
+-- thinks the edge is.
+-- ------------------------------------------------------------------
+-- Growth spilling DOWN an exposed vertical face. Split out of drawEdges
+-- so the two sides share one body without allocating a table per tile to
+-- iterate over.
+-- ------------------------------------------------------------------
+-- THE WALL PROBLEM.
+--
+-- Per-tile noise cannot fix a thirty-tile column. Whatever you scatter
+-- along it repeats on a 16px beat, and the eye reads the beat, so the
+-- column stays a ruled line with fringe on it -- which is exactly what
+-- the first two passes produced.
+--
+-- What a rock face actually has is a profile that wanders over METRES,
+-- not centimetres. So the bulge is a function of world Y alone, summing
+-- two slow sines with periods of about nine and twenty-three tiles. It
+-- is continuous across tile boundaries by construction, because it never
+-- knew where the boundaries were.
+--
+-- Drawn in four bands per tile rather than per pixel: four rectangles a
+-- tile is affordable inside the draw loop, and at 4px the steps read as
+-- strata rather than as stairs.
+-- ------------------------------------------------------------------
+local function faceBulge(wy, seed)
+  local a = math.sin(wy * 0.045 + seed)
+  local b = math.sin(wy * 0.017 + seed * 2.3)
+  return (a * 0.5 + b * 0.5 + 1) * 0.5      -- 0..1
+end
+
+function World:faceCreep(g, sx, py, tx, ty, dir, up, amt, dk, cap)
+  -- the wandering profile first, so the strands hang off the new edge
+  local base = P[(G.tiles[self.zone] or G.tiles.camp).conf.base] or P.gray
+  local seed = (dir > 0 and 3.1 or 7.9)
+  local out = 6 * amt
+  for b = 0, 3 do
+    local wy = py + b * 4
+    local d = faceBulge(wy, seed) * out
+    if d > 0.7 then
+      local bx = dir > 0 and sx or (sx + 3 - d)
+      g.setColor(base[1], base[2], base[3], 0.95)
+      g.rectangle("fill", bx, wy, d, 4)
+      g.setColor(dk[1], dk[2], dk[3], 0.8)
+      g.rectangle("fill", dir > 0 and (bx + d - 1) or bx, wy, 1, 4)
+    end
+  end
+  for k = 0, 3 do
+    local hh = h01(tx * 3 + dir, ty, k + 97)
+    if hh > 0.45 then
+      local dy = math.floor(h01(ty, tx + dir, k + 101) * 12)
+      local ln = (2 + hh * 9) * amt
+      g.setColor(dk[1], dk[2], dk[3], 0.9)
+      g.rectangle("fill", sx, py + dy, 3, ln)
+      if not up and dy < 4 then
+        g.setColor(cap[1], cap[2], cap[3], 0.7)
+        g.rectangle("fill", sx, py + dy, 3, math.min(ln, 4))
+      end
+    end
+  end
+end
+
+-- BLUE ICE, drawn over the finished rock.
+--
+-- Slipperiness the player cannot see is a trap, not a mechanic, so this
+-- has to be unmistakable: a cold wash over the whole tile, a bright lip
+-- along any face with air above it, and a slow specular travelling
+-- across that lip so the surface reads as WET as well as blue. The lip
+-- is the part that matters -- it is the exact edge you will slide along.
+function World:drawIce(g, tx0, ty0, tx1, ty1)
+  if not self.iceSet then return end
+  local P_ = P
+  for ty = ty0, ty1 do
+    for tx = tx0, tx1 do
+      if self.iceSet[idx(tx, ty)] then
+        local px, py = tx * T, ty * T
+        g.setColor(P_.ice[1], P_.ice[2], P_.ice[3], 0.30)
+        g.rectangle("fill", px, py, T, T)
+        g.setColor(P_.navy[1], P_.navy[2], P_.navy[3], 0.22)
+        g.rectangle("fill", px, py + T - 5, T, 5)
+        -- the walking surface
+        if self:tileAt(tx, ty - 1) == AIR then
+          g.setColor(0.82, 0.94, 1.00, 0.85)
+          g.rectangle("fill", px, py, T, 2)
+          local ph = (G.time * 26 + tx * 11 + ty * 7) % 220
+          if ph < T then
+            g.setColor(1, 1, 1, 0.75)
+            g.rectangle("fill", px + ph, py, math.min(6, T - ph), 2)
+          end
+          g.setColor(1, 1, 1, 0.18)
+          g.rectangle("fill", px, py + 2, T, 1)
+        end
+      end
+    end
+  end
+end
+
+function World:drawEdges(g, set, tx0, ty0, tx1, ty1)
+  local amt = G.settings.edges or 1
+  if amt <= 0 then return end
+  local zc = set.conf
+  local dk = P[zc.dark] or P.black
+  local cap = P[zc.cap] or P.gray
+  local acc = P[zc.accent] or P.gray
+  local base = P[zc.base] or P.gray
+  local sky = P[zc.sky2] or P.black
+
+  for ty = ty0, ty1 do
+    for tx = tx0, tx1 do
+      local c = self.tiles[ty][tx]
+      local solid = c == SOLID or (c == BREAK and not self.broken[idx(tx, ty)])
+      if solid then
+        local px, py = tx * T, ty * T
+        local up = hardKind(self:tileAt(tx, ty - 1))
+        local dn = hardKind(self:tileAt(tx, ty + 1))
+        local lf = hardKind(self:tileAt(tx - 1, ty))
+        local rt = hardKind(self:tileAt(tx + 1, ty))
+
+        -- DRIP. Wildly varied length is the point: a fringe of equal
+        -- stubs is just a second straight line a few pixels lower.
+        if not dn then
+          for k = 0, 4 do
+            local hx = h01(tx, ty, k + 11)
+            if hx > 0.30 then
+              local dx = math.floor(hx * 14)
+              local r2 = h01(ty, tx, k + 19)
+              local len = (1 + r2 * r2 * 18) * amt      -- squared: mostly short, occasionally long
+              local wdt = r2 > 0.7 and 3 or 2
+              g.setColor(dk[1], dk[2], dk[3], 0.92)
+              g.rectangle("fill", px + dx, py + T, wdt, len)
+              if r2 > 0.55 then
+                g.setColor(base[1], base[2], base[3], 0.5)
+                g.rectangle("fill", px + dx, py + T, wdt, len * 0.4)
+              end
+              if h01(tx, ty, k + 31) > 0.75 then
+                g.setColor(acc[1], acc[2], acc[3], 0.45)
+                g.rectangle("fill", px + dx, py + T + len - 2, wdt, 2)
+              end
+            end
+          end
+        end
+
+        -- CREST over the lip
+        if not up then
+          for k = 0, 3 do
+            local hx = h01(tx, ty, k + 41)
+            if hx > 0.38 then
+              local dx = math.floor(hx * 13)
+              local hh = 1 + math.floor(h01(ty, tx, k + 47) * 4 * amt)
+              g.setColor(cap[1], cap[2], cap[3], 0.9)
+              g.rectangle("fill", px + dx, py - hh, 3, hh)
+            end
+          end
+        end
+
+        -- FACE CREEP. Growth spilling DOWN an exposed vertical face from
+        -- the lip above it. This is the one that stops a wall reading as
+        -- a ruled line -- a straight edge with things hanging over it
+        -- stops being a straight edge.
+        -- Unrolled rather than looping a { {lf,-1}, {rt,1} } table: that
+        -- allocates three tables per solid tile PER FRAME, which is
+        -- roughly fifteen hundred a frame across a full screen, and this
+        -- runs inside the draw loop where the garbage is not free.
+        if not lf then self:faceCreep(g, px - 3, py, tx, ty, -1, up, amt, dk, cap) end
+        if not rt then self:faceCreep(g, px + T, py, tx, ty, 1, up, amt, dk, cap) end
+
+        -- ROUND THE CORNER. A stepped 3px bite in the backdrop colour --
+        -- the only way to take a 90 degree corner off something already
+        -- drawn is to paint the background back over it.
+        local ca = 0.88 * math.min(1, amt)
+        local function bite(cx, cy, sx2, sy2)
+          g.setColor(sky[1], sky[2], sky[3], ca)
+          g.rectangle("fill", cx, cy, 3 * sx2, 1 * sy2)
+          g.rectangle("fill", cx, cy + 1 * sy2, 2 * sx2, 1 * sy2)
+          g.rectangle("fill", cx, cy + 2 * sy2, 1 * sx2, 1 * sy2)
+        end
+        if not up and not lf then bite(px, py, 1, 1) end
+        if not up and not rt then bite(px + T - 1, py, -1, 1) end
+        if not dn and not lf then bite(px, py + T - 1, 1, -1) end
+        if not dn and not rt then bite(px + T - 1, py + T - 1, -1, -1) end
+      end
+    end
+  end
+  g.setColor(1, 1, 1, 1)
+end
+-- ------------------------------------------------------------------
+-- OVERGROWTH -- foreground cover over the impassable.
+--
+-- Drawn in the FOREGROUND slot, so it passes in front of the bots, but
+-- hung only off rock the player can never occupy. That is the trick
+-- that makes heavy foreground safe here: occluding a wall costs nothing,
+-- occluding the floor you are trying to land on costs everything.
+--
+-- Long strands, low density, swaying on per-strand phase. Nearer than
+-- the world (py < 0) so they slide past as you move.
+-- ------------------------------------------------------------------
+function World:drawOvergrowth(g, set, tx0, ty0, tx1, ty1)
+  local amt = G.settings.edges or 1
+  if amt <= 0 then return end
+  local zc = set.conf
+  local dk = P[zc.dark] or P.black
+  local acc = P[zc.accent] or P.gray
+  for ty = ty0, ty1 do
+    for tx = tx0, tx1 do
+      local c = self.tiles[ty][tx]
+      if (c == SOLID or c == BREAK) and not hardKind(self:tileAt(tx, ty + 1)) then
+        local hx = h01(tx, ty, 83)
+        if hx > 0.52 then
+          local px, py = tx * T, ty * T + T
+          local len = (10 + h01(ty, tx, 89) * 26) * amt
+          local sway = math.sin(G.time * 0.6 + tx * 0.7) * 3
+          local segs = 5
+          local ox2, oy2 = px + math.floor(hx * 12), py
+          g.setLineWidth(2)
+          for i = 1, segs do
+            local t = i / segs
+            local nx = px + math.floor(hx * 12) + sway * t * t
+            local ny = py + len * t
+            -- fade along the strand: dark where it leaves the rock,
+            -- picking up the zone accent at the tip, so it reads against
+            -- a dark background instead of vanishing into it
+            g.setColor(dk[1] + (acc[1] - dk[1]) * t * 0.6,
+                       dk[2] + (acc[2] - dk[2]) * t * 0.6,
+                       dk[3] + (acc[3] - dk[3]) * t * 0.6, 0.85)
+            g.line(ox2, oy2, nx, ny)
+            ox2, oy2 = nx, ny
+          end
+          g.setLineWidth(1)
+          g.setColor(acc[1], acc[2], acc[3], 0.5)
+          g.rectangle("fill", ox2 - 1, oy2 - 2, 3, 3)
+        end
+      end
+    end
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
 function World:drawDoorArt(g, set)
   -- edge-door markers: a soft pulsing chevron pointing out of the room,
   -- so exits read at a glance
@@ -1928,27 +2369,133 @@ function World:drawArtLayer(g, list)
     local a = o.a or 1
     -- Parallax INSIDE the camera transform: the offset is added back, so
     -- a factor of 0 is welded to the world and 1 is welded to the screen.
+    -- Above 1 the thing is NEARER than the world, which is what sells a
+    -- foreground -- it should overtake you as you walk.
     local x = o.x + (o.px and Cam.x * o.px or 0)
     local y = o.y + (o.py and Cam.y * o.py or 0)
+    local c = P[o.col or "shadow"] or P.shadow
+    local w, h = o.w or T, o.h or T
+
     if o.kind == "sprite" then
       G.drawSprite(o.name, o.frame or 1, x, y,
         { sx = o.sx, sy = o.sy, alpha = a, flip = o.flip })
+
     elseif o.kind == "band" then
-      local c = P[o.col or "shadow"] or P.shadow
-      local h = o.h or T
+      -- A vertical fade from `a` to `a2`. The cheapest depth cue there
+      -- is: haze is what distance actually looks like.
       local steps = math.max(1, math.min(24, math.floor(h / 4)))
       for i = 0, steps - 1 do
         local t = i / steps
-        g.setColor(c[1], c[2], c[3], a + (( o.a2 or 0) - a) * t)
-        g.rectangle("fill", x, y + h * t, o.w or T, h / steps + 1)
+        g.setColor(c[1], c[2], c[3], a + ((o.a2 or 0) - a) * t)
+        g.rectangle("fill", x, y + h * t, w, h / steps + 1)
       end
-    else
-      local c = P[o.col or "shadow"] or P.shadow
+
+    elseif o.kind == "girder" then
+      -- Horizontal truss: two chords and a zig-zag web between them.
+      -- Reads as structure at any size, which is what a machine city
+      -- that never stopped running is made of.
+      local d = o.step or 24
       g.setColor(c[1], c[2], c[3], a)
-      g.rectangle("fill", x, y, o.w or T, o.h or T)
+      g.rectangle("fill", x, y, w, 3)
+      g.rectangle("fill", x, y + h - 3, w, 3)
+      g.setLineWidth(o.lw or 2)
+      local n = math.max(1, math.floor(w / d))
+      for i = 0, n - 1 do
+        local x0 = x + i * d
+        g.line(x0, y + h - 3, x0 + d / 2, y + 3)
+        g.line(x0 + d / 2, y + 3, x0 + d, y + h - 3)
+      end
+      g.setLineWidth(1)
+
+    elseif o.kind == "column" then
+      -- Vertical pillar with a cap, a foot and rivet rows.
+      g.setColor(c[1], c[2], c[3], a)
+      g.rectangle("fill", x, y, w, h)
+      g.rectangle("fill", x - 3, y, w + 6, 5)
+      g.rectangle("fill", x - 3, y + h - 5, w + 6, 5)
+      local acc = P[o.acc or "gray"] or P.gray
+      g.setColor(acc[1], acc[2], acc[3], a * 0.7)
+      for ry = y + 12, y + h - 12, o.step or 18 do
+        g.rectangle("fill", x + 2, ry, 2, 2)
+        g.rectangle("fill", x + w - 4, ry, 2, 2)
+      end
+
+    elseif o.kind == "rail" then
+      -- Handrail: top bar, mid bar, posts. An industrial stairwell is
+      -- mostly this.
+      g.setColor(c[1], c[2], c[3], a)
+      g.rectangle("fill", x, y, w, 2)
+      g.rectangle("fill", x, y + h * 0.45, w, 2)
+      for px2 = x, x + w, o.step or 20 do
+        g.rectangle("fill", px2, y, 2, h)
+      end
+
+    elseif o.kind == "shaft" then
+      -- A slab of light falling through a gap. Skewed, so it reads as a
+      -- beam rather than a rectangle, and it breathes.
+      local sk = o.skew or 18
+      local br = a * (0.75 + math.sin(G.time * 0.5 + (o.ph or 0)) * 0.25)
+      local steps = 14
+      for i = 0, steps - 1 do
+        local t = i / steps
+        g.setColor(c[1], c[2], c[3], br * (1 - t) * 0.5)
+        g.rectangle("fill", x + sk * t, y + h * t, w * (1 - t * 0.25), h / steps + 1)
+      end
+
+    elseif o.kind == "hang" then
+      -- Something hanging and swaying: chain, cable, root, vine. Phase
+      -- from its own x so a row of them never moves in unison.
+      local sway = math.sin(G.time * (o.rate or 0.8) + (o.ph or x * 0.05)) * (o.sway or 4)
+      g.setColor(c[1], c[2], c[3], a)
+      local segs = math.max(2, math.floor(h / 8))
+      local px2, py2 = x, y
+      for i = 1, segs do
+        local t = i / segs
+        local nx = x + sway * t * t
+        local ny = y + h * t
+        g.setLineWidth(o.lw or 2)
+        g.line(px2, py2, nx, ny)
+        px2, py2 = nx, ny
+      end
+      g.setLineWidth(1)
+      if o.bob then
+        g.rectangle("fill", px2 - 3, py2, 6, 5)
+      end
+
+    elseif o.kind == "stack" then
+      -- A ridge of layered silhouettes: the far wall of a big room, a
+      -- heap of dead machines, a treeline. Seeded so it is stable.
+      local rng = love.math.newRandomGenerator(o.seed or 7)
+      g.setColor(c[1], c[2], c[3], a)
+      local step = o.step or 22
+      local i = 0
+      for sx = x, x + w, step do
+        local hh = h * (0.45 + rng:random() * 0.55)
+        local ww = step * (0.7 + rng:random() * 0.6)
+        g.rectangle("fill", sx, y + h - hh, ww, hh)
+        i = i + 1
+      end
+
+    else
+      g.setColor(c[1], c[2], c[3], a)
+      g.rectangle("fill", x, y, w, h)
     end
   end
   g.setColor(1, 1, 1, 1)
+end
+
+-- THREE layers, and the difference between them is only WHERE IN THE
+-- DRAW ORDER they sit -- which is the whole of it:
+--
+--   backdrop    behind the rock      the far wall, a distant machine
+--   scenery     over rock, behind bodies   haze, glow, things ON the rock
+--   foreground  in front of bodies   what you pass behind
+--
+-- Getting this wrong is silent and looks like a bug in the art: a
+-- "background" in the scenery layer paints straight over the terrain,
+-- which is exactly what the first pass at the deep stairs did.
+function World:drawBackdrop(g)
+  self:drawArtLayer(g, self.room and self.room.backdrop)
 end
 
 function World:drawScenery(g)
@@ -2528,6 +3075,28 @@ local LIGHT_WARM = { 1.00, 0.78, 0.50 }
 --
 -- The mask ignores `col`; it is the entire point of the buffer.
 function World:eachLight(fn)
+  -- Lights the ROOM asks for, in world pixels.
+  --
+  -- Art in scenery/foreground does NOT emit. A lamp you can see and a
+  -- lamp that lights the floor around it are two different things, and a
+  -- room that wants one almost always wants both -- so the art goes in
+  -- room.scenery and the light goes here, at the same coordinates.
+  --
+  --   room.lights = { { x, y, r = 60, col = {1,.8,.5}, flicker = 7 } }
+  --
+  -- `flicker` is a rate: a lamp that breathes a little reads as fire
+  -- rather than as a bulb, and a corridor of them never pulses in step
+  -- because each is phased off its own x.
+  local rl = self.room and self.room.lights
+  if rl then
+    for _, L in ipairs(rl) do
+      local r = L.r or 40
+      if L.flicker then
+        r = r * (1 + math.sin(G.time * L.flicker + (L.ph or L.x * 0.07)) * 0.07)
+      end
+      fn(L.x, L.y, r, L.col or LIGHT_WARM)
+    end
+  end
   for _, pl in ipairs(self.players) do
     if not pl.dead and not pl.idle then
       local r, col

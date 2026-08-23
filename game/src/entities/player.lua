@@ -753,9 +753,21 @@ function Player:update(dt)
   if self:hasEmber() then topSpeed = topSpeed * EMBER_SLOW end
   if self:hasSpark() then topSpeed = topSpeed * Cold.CARRY_SLOW end
   topSpeed = topSpeed * self:chillSpeedMult()
-  -- icy rooms (the Coldstore): grounded control goes slick
+  -- Slick where the ICE is. `room.ice` makes a whole room slippery,
+  -- which is a mood; standing on an ice tile makes one PATCH slippery,
+  -- which is a level. Both count, so the existing icy rooms are
+  -- unchanged and a '_' run in any room now behaves.
+  local onIce = false
+  if self.onGround and not self.inWater then
+    local ty = math.floor((self.y + self.h + 2) / T)
+    local x0 = math.floor((self.x + 2) / T)
+    local x1 = math.floor((self.x + self.w - 2) / T)
+    for tx = x0, x1 do
+      if World:isIce(tx, ty) then onIce = true break end
+    end
+  end
   local icy = self.onGround and not self.inWater
-    and World.room and World.room.ice
+    and ((World.room and World.room.ice) or onIce)
   local accel = self.onGround and (icy and BASE.accel * 0.28 or BASE.accel)
     or BASE.airAccel
 

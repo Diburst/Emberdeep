@@ -127,6 +127,16 @@ function love.load()
     G.settingsEnv.glow = G.settings.glow
     G.settings.glow = gl
   end
+  local ed = tonumber(os.getenv("EMBERDEEP_EDGES") or "")
+  if ed then
+    G.settingsEnv.edges = G.settings.edges
+    G.settings.edges = ed
+  end
+  local st = tonumber(os.getenv("EMBERDEEP_STRATA") or "")
+  if st then
+    G.settingsEnv.strata = G.settings.strata
+    G.settings.strata = st
+  end
   local py = tonumber(os.getenv("EMBERDEEP_PARALLAX_Y") or "")
   if py then
     G.settingsEnv.parallaxY = G.settings.parallaxY
@@ -248,6 +258,11 @@ function love.draw()
   if G.RS == 1 and scale >= 1 then scale = math.floor(scale) end
   local ox = math.floor((ww - cw * scale) / 2)
   local oy = math.floor((wh - ch * scale) / 2)
+  -- Published so anything that has to invert the blit -- the room editor's
+  -- mouse-to-tile mapping is the only caller today -- reads the SAME
+  -- numbers the frame was actually drawn with, rather than recomputing
+  -- them and drifting the moment this rule changes again.
+  G.blitScale, G.blitOX, G.blitOY = scale, ox, oy
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(G.canvas, ox, oy, 0, scale, scale)
 end
@@ -285,6 +300,14 @@ end
 
 function love.keyreleased(key) Input.keyreleased(key) end
 function love.textinput(t) State.event("textinput", t) end
+
+-- Mouse goes straight to the state stack, unbound and unqueued: it is a
+-- TOOL input, not a game input. No state below the editor implements
+-- these, so routing them costs nothing when the editor is not open.
+function love.mousepressed(x, y, b) State.event("mousepressed", x, y, b) end
+function love.mousereleased(x, y, b) State.event("mousereleased", x, y, b) end
+function love.mousemoved(x, y, dx, dy) State.event("mousemoved", x, y, dx, dy) end
+function love.wheelmoved(x, y) State.event("wheelmoved", x, y) end
 
 function love.resize()
 end

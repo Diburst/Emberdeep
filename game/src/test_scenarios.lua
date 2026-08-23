@@ -3677,4 +3677,562 @@ return function(Test, scenarios)
     wait(2)
     Test.log((fails == 0 and "OK" or "FAILED ") .. " sleep")
   end
+
+  -- ----------------------------------------------------------------
+  -- ROOMIO: the room editor's save layer, proven before any UI exists.
+  --
+  -- The load-bearing assertion is IDENTITY: read a room's grid and write
+  -- it back unchanged, and the file must come out BYTE-IDENTICAL. One
+  -- assertion, run over every room in the game, catches comment loss,
+  -- whitespace drift, a mangled trailing newline and quoting bugs all at
+  -- once -- and it is the entire reason the save layer does surgery
+  -- instead of parse-and-reserialise.
+  --
+  -- Dry-run, so proving it costs nothing and touches no files.
+  -- ----------------------------------------------------------------
+  scenarios.roomio = function()
+    local R = require "src.roomio"
+    local WM = require "src.data.worldmap"
+    local fails, checked, widest = 0, 0, 0
+    local function fail(m) Test.log("FAIL " .. m) fails = fails + 1 end
+
+    for _, id in ipairs(WM.ROOMS) do
+      local src = R.readRaw(id)
+      if not src then fail("cannot read " .. id)
+      else
+        local rows, err = R.readRows(id)
+        if not rows then fail(id .. ": " .. tostring(err))
+        else
+          local w, h = R.checkRect(rows)
+          if not w then fail(id .. " is ragged: " .. tostring(h))
+          else
+            if w > widest then widest = w end
+            local out, werr = R.writeMap(id, rows, { dryrun = true })
+            if not out then fail(id .. " write: " .. tostring(werr))
+            elseif out ~= src then
+              fail(id .. " NOT IDENTITY (" .. #src .. " -> " .. #out .. " bytes)")
+            else
+              checked = checked + 1
+            end
+          end
+        end
+      end
+    end
+    Test.log(("identity: %d/%d rooms byte-identical, widest %d"):format(checked, #WM.ROOMS, widest))
+
+    -- EDIT AND REVERT. An edit must land, and undoing it must return the
+    -- file to exactly what it was -- which is the property the editor's
+    -- undo stack is going to lean on all day.
+    local id = "test_arena"
+    local src0 = R.readRaw(id)
+    if src0 then
+      local rows = R.readRows(id)
+      local orig = rows[2]
+      rows[2] = string.rep("#", #orig)
+      local edited = R.writeMap(id, rows, { dryrun = true })
+      if not edited then fail("edit did not produce output")
+      elseif edited == src0 then fail("edit produced no change")
+      else
+        rows[2] = orig
+        local back = R.writeMap(id, rows, { dryrun = true })
+        if back ~= src0 then fail("revert did not restore the original bytes")
+        else Test.log("edit-and-revert restores the original exactly") end
+      end
+
+      -- A ragged map must be REFUSED, not written. This is the check that
+      -- stops a one-character drift becoming a room that parses and is
+      -- nonsense.
+      local bad = R.readRows(id)
+      bad[3] = bad[3] .. "#"
+      local out, werr = R.writeMap(id, bad, { dryrun = true })
+      if out then fail("a ragged map was accepted")
+      else Test.log("ragged map refused: " .. tostring(werr)) end
+    end
+
+    -- BOTH TERMINATOR CONVENTIONS, synthesised.
+    --
+    -- 82 of 83 rooms end their map block with a newline before `]]`;
+    -- camp_hut ends `...####]]` with none, and that single room is the
+    -- only reason the first version of gridToRows was caught dropping a
+    -- final row. If camp_hut is ever normalised, the sweep above stops
+    -- covering the variant and nothing notices -- so the variant is
+    -- constructed here rather than relied upon in the content.
+    for _, tc in ipairs({
+      { name = "trailing newline", body = "###\n#.#\n###\n" },
+      { name = "no terminator",    body = "###\n#.#\n###"   },
+    }) do
+      local rows = R.gridToRows(tc.body)
+      local back = R.rowsToGrid(rows, tc.body:sub(-1) == "\n")
+      if #rows ~= 3 then
+        fail(("%s: got %d rows, expected 3"):format(tc.name, #rows))
+      elseif back ~= tc.body then
+        fail(("%s: round-trip changed the bytes (%q -> %q)"):format(tc.name, tc.body, back))
+      else
+        Test.log(("both conventions: %-17s %d rows, byte-identical"):format(tc.name, #rows))
+      end
+    end
+
+    Test.log((fails == 0 and "OK" or "FAILED ") .. " roomio")
+  end
+
+  -- ----------------------------------------------------------------
+  -- EDITOR -- the parts that have no pixels in them.
+  --
+  -- The editor is a mouse tool, so almost none of it is testable and
+  -- the parts that ARE are exactly the parts that break silently: the
+  -- mouse-to-tile arithmetic (off by one tile and you paint the wrong
+  -- cell forever), the widget hit test, the undo snapshot, and the
+  -- check THREAD, which either round-trips or hangs the editor.
+  -- ----------------------------------------------------------------
+  scenarios.editor = function()
+    local World = require "src.world"
+    local Cam = require "src.camera"
+    local Ed = require "src.states.editor"
+    local fails = 0
+    local function fail(m) Test.log("FAIL " .. m) fails = fails + 1 end
+    local function eq(got, want, what)
+      if got ~= want then fail(("%s: got %s want %s"):format(what, tostring(got), tostring(want))) end
+    end
+
+    World:load("moss_1", nil, true)
+    Ed:enter()
+    if not Ed.rows then fail("no rows for moss_1") return end
+    eq(Ed.id, "moss_1", "room id")
+
+    -- geometry agrees with the engine's own parse
+    eq(Ed:w(), World.w, "width")
+    eq(Ed:h(), World.h, "height")
+
+    -- paint -> text AND live tiles, then undo restores both
+    local tx, ty = 2, 2
+    local before = Ed:get(tx, ty)
+    local target = (before == "#") and "." or "#"
+    Ed:snapshot()
+    Ed:set(tx, ty, target)
+    eq(Ed:get(tx, ty), target, "text after set")
+    eq(World.tiles[ty][tx], World.CHAR_TILE[target], "live tile after set")
+    if not Ed.dirty then fail("set did not mark dirty") end
+    Ed:doUndo()
+    eq(Ed:get(tx, ty), before, "text after undo")
+    eq(World.tiles[ty][tx], World.CHAR_TILE[before], "live tile after undo")
+
+    -- rows must still be rectangular after all that
+    local RoomIO = require "src.roomio"
+    local w = RoomIO.checkRect(Ed.rows)
+    if not w then fail("rows went ragged") end
+
+    -- mouse -> tile. Pin the blit and the camera and check the corners
+    -- rather than trusting the algebra.
+    G.blitOX, G.blitOY, G.blitScale = 100, 50, 2
+    local oldRS = G.RS; G.RS = 1
+    Cam.x, Cam.y, Cam.ox, Cam.oy = 32, 16, 32, 16
+    local realGet = love.mouse.getPosition
+    local function at(mx, my)
+      love.mouse.getPosition = function() return mx, my end
+      return Ed:cursorTile()
+    end
+    -- screen 100,50 is logical 0,0 which is world 32,16 -> tile 2,1
+    local cx, cy = at(100, 50); eq(cx, 2, "cursorTile x at origin") eq(cy, 1, "cursorTile y at origin")
+    -- +32 screen px at scale 2 is +16 logical = one whole tile right
+    cx, cy = at(132, 50); eq(cx, 3, "cursorTile x +1 tile")
+    -- and the widget hit test, in the SAME logical space
+    local hitTool = Ed:hit(6, 26)
+    if not hitTool or hitTool.kind ~= "tool" then fail("tool row does not hit at 6,26") end
+    local hitTile = Ed:hit(6, 8)
+    if not hitTile or hitTile.kind ~= "tile" then fail("tile row does not hit at 6,8") end
+    if Ed:hit(6, 200) then fail("hit test claims a widget in the play area") end
+    -- every widget must carry a tooltip, or hovering it teaches nothing
+    for _, g in ipairs(Ed.widgets) do
+      if not g.tip or #g.tip < 8 then fail("widget " .. tostring(g.label) .. " has no tooltip") end
+    end
+    love.mouse.getPosition = realGet
+    G.RS = oldRS
+
+    -- THE THREAD. One fast validator, real io.popen, real channels.
+    -- If this hangs, the editor hangs, and that is the whole reason
+    -- the thread exists.
+    Ed.job = nil
+    local FASTONE = "checkdoors\tPYTHONPATH=../scripts python3 ../scripts/checkdoors.py"
+    local prog = love.thread.getChannel("edcheck_progress")
+    local res = love.thread.getChannel("edcheck_result")
+    while prog:pop() do end
+    while res:pop() do end
+    local th = love.thread.newThread("src/checkthread.lua")
+    th:start(FASTONE)
+    local t0 = love.timer.getTime()
+    local bad
+    while love.timer.getTime() - t0 < 30 do
+      bad = res:pop()
+      if bad then break end
+      local err = th:getError()
+      if err then fail("check thread error: " .. tostring(err)) break end
+      love.timer.sleep(0.02)
+    end
+    if bad == nil then
+      fail("check thread never returned within 30s")
+    else
+      eq(bad, 0, "checkdoors failure count via thread")
+      Test.log(("thread round-trip in %.2fs"):format(love.timer.getTime() - t0))
+    end
+    local sawProgress = false
+    while true do
+      local p = prog:pop()
+      if not p then break end
+      if p:find("checkdoors", 1, true) then sawProgress = true end
+    end
+    if not sawProgress then fail("thread published no progress line") end
+
+    -- REVERT MUST PUT THE LIVE TILES BACK, not just the text. The first
+    -- version reassigned self.rows only, so the screen kept every
+    -- discarded edit and the status line read "saved" -- a revert
+    -- indistinguishable from a save.
+    local rx, ry = 3, 3
+    local orig = Ed:get(rx, ry)
+    local other = (orig == "#") and "." or "#"
+    Ed:snapshot()
+    Ed:set(rx, ry, other)
+    Ed:loadFromDisk(true)
+    eq(Ed:get(rx, ry), orig, "text after revert")
+    eq(World.tiles[ry][rx], World.CHAR_TILE[orig], "LIVE TILE after revert")
+    if Ed.dirty then fail("revert left the room marked dirty") end
+    -- and the revert is itself undoable
+    Ed:doUndo()
+    eq(Ed:get(rx, ry), other, "undo brings the discarded edit back")
+    Ed:loadFromDisk(true)
+
+    -- F2 must live on the RAW channel. In keypressed it popped the
+    -- editor and then handed the same keypress to the game underneath,
+    -- which pushed it straight back -- F2 did nothing, twice per press.
+    if Ed.keypressed == nil then fail("no keypressed") end
+    if type(Ed.raw) ~= "function" then fail("editor has no raw() -- F2 will not exit") end
+    Ed.confirm = nil
+    Ed.dirty = false
+    local popped = false
+    local realPop = G.State.pop
+    G.State.pop = function() popped = true end
+    Ed:raw({ kind = "rawkey", id = "f2" })
+    if not popped then fail("F2 on a clean room did not exit") end
+    -- ...and with edits pending it must ASK instead of leaving
+    popped = false
+    Ed.dirty = true
+    Ed:raw({ kind = "rawkey", id = "f2" })
+    if popped then fail("F2 discarded unsaved edits without asking") end
+    if not Ed.confirm then fail("F2 with unsaved edits raised no confirm") end
+    if #Ed.confirm.opts < 3 then fail("exit confirm needs save / discard / cancel") end
+    -- ESC takes the LAST option, which must therefore be the safe one
+    local last = Ed.confirm.opts[#Ed.confirm.opts]
+    if last.fn then fail("the escape-hatch option must do nothing, not act") end
+    Ed:answer(last)
+    if Ed.confirm then fail("answering left the modal up") end
+    if popped then fail("cancel exited anyway") end
+    G.State.pop = realPop
+    Ed.dirty = false
+
+    -- ctrl+R must ask too, and every option must be reachable by key
+    Ed:set(rx, ry, other)
+    Ed:askRevert()
+    if not Ed.confirm then fail("ctrl+R raised no confirm") end
+    for _, o in ipairs(Ed.confirm.opts) do
+      if not o.key or #o.key ~= 1 then fail("confirm option without a single-key binding") end
+    end
+    Ed:answer(Ed.confirm.opts[1])          -- DISCARD
+    eq(Ed:get(rx, ry), orig, "confirmed revert restored the tile")
+
+    -- leaving must put the camera back inside the room
+    Cam.x, Cam.y = -300, -300
+    Ed:leave()
+    if Cam.x < 0 or Cam.y < 0 then fail("leave() left the camera outside the room") end
+
+    Test.log((fails == 0 and "OK" or "FAILED ") .. " editor")
+  end
+
+  -- ----------------------------------------------------------------
+  -- RESIZE -- growing a room outward.
+  --
+  -- Every assertion here is for something that fails SILENTLY. A door
+  -- that stopped being an edge door still loads. Art that no longer
+  -- lines up with its terrain still draws. A room one column wider than
+  -- its neighbours' expectations still parses. None of it crashes and
+  -- none of it looks wrong until you are standing in it.
+  -- ----------------------------------------------------------------
+  scenarios.resize = function()
+    local World = require "src.world"
+    local RoomIO = require "src.roomio"
+    local Ed = require "src.states.editor"
+    local fails = 0
+    local function fail(m) Test.log("FAIL " .. m) fails = fails + 1 end
+    local function eq(got, want, what)
+      if got ~= want then fail(("%s: got %s want %s"):format(what, tostring(got), tostring(want))) end
+    end
+
+    -- ---------------------------------------------------------------
+    -- THE DOORS THAT MUST RIDE THE EDGE
+    --
+    -- A door's side is derived from where it sits, so growing an edge
+    -- under one silently turns it into an interior portal and the room
+    -- still loads. One fixture per edge, because the four directions
+    -- are four different code paths -- and each fixture ASSERTS IT HAS
+    -- A DOOR ON THAT EDGE before testing anything, so that re-hanging a
+    -- door in one of these rooms fails this test loudly instead of
+    -- quietly making it prove nothing.
+    -- ---------------------------------------------------------------
+    local FIXTURES = {
+      { "moss_1", "right" },       -- TWO doors on the one edge (B and E)
+      { "moss_1", "left" },
+      { "flood_4", "top" },
+      { "deep_stair_1", "bottom" },-- two again (B and D), and an ART room
+    }
+
+    local function count(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end
+
+    for _, fx in ipairs(FIXTURES) do
+      local room, edge = fx[1], fx[2]
+      local tag = room .. "/" .. edge
+      World:load(room, nil, true)
+      Ed:enter()
+      if not Ed.rows then fail(tag .. ": no rows") break end
+      local w0, h0 = Ed:w(), Ed:h()
+      local doors = Ed:doorsOnEdge(edge)
+      local before, sideBefore = Ed:doorCells(), {}
+      for ch, d in pairs(before) do sideBefore[ch] = Ed:doorSide(d) end
+      if count(doors) == 0 then
+        fail(tag .. " has no door on that edge -- this fixture proves nothing")
+      else
+        local horiz = (edge == "left" or edge == "right")
+        local dx = (edge == "left") and 2 or 0
+        local dy = (edge == "top") and 2 or 0
+
+        Ed:resize(edge, 2)
+        eq(Ed:w(), horiz and w0 + 2 or w0, tag .. " width")
+        eq(Ed:h(), horiz and h0 or h0 + 2, tag .. " height")
+        if not RoomIO.checkRect(Ed.rows) then fail(tag .. ": grid went ragged") end
+        eq(World.w, Ed:w(), tag .. ": World.w followed")
+        eq(World.h, Ed:h(), tag .. ": World.h followed")
+
+        -- new space is ROCK. Growing into air punches the same hole
+        -- through a wall that "reverting" with '.' used to.
+        local probeX = (edge == "left") and 0 or (edge == "right") and (Ed:w() - 1) or 1
+        local probeY = (edge == "top") and 0 or (edge == "bottom") and (Ed:h() - 1) or 1
+        local pc = Ed:get(probeX, probeY)
+        if pc ~= "#" and not World.DOOR_CHARS[pc] then
+          fail(tag .. ": new space is '" .. tostring(pc) .. "', not solid")
+        end
+
+        -- every door that was on the edge is still on it, same size...
+        local after = Ed:doorsOnEdge(edge)
+        local afterAll = Ed:doorCells()
+        for ch, cells in pairs(doors) do
+          if not after[ch] then
+            fail(tag .. ": door " .. ch .. " did not ride the edge out")
+          elseif #after[ch] ~= #cells then
+            fail(tag .. ": door " .. ch .. " changed size riding out")
+          end
+          -- ...and the cells it vacated were filled in, not left as a
+          -- second copy of the door floating inside the room
+          for _, c in ipairs(cells) do
+            local ox, oy = c[1] + dx, c[2] + dy
+            local old = Ed:get(ox, oy)
+            if World.DOOR_CHARS[old] and after[ch] then
+              local still = false
+              for _, n in ipairs(after[ch]) do
+                if n[1] == ox and n[2] == oy then still = true end
+              end
+              if not still then
+                fail(tag .. ": door " .. ch .. " left a copy behind at " ..
+                     ox .. "," .. oy)
+              end
+            end
+          end
+        end
+        -- ...and nothing became an edge door that was not one
+        for ch in pairs(after) do
+          if not doors[ch] then
+            fail(tag .. ": " .. ch .. " became an edge door out of nowhere")
+          end
+        end
+
+        -- THE ONE THAT SHIPPED BROKEN: every door on any OTHER wall
+        -- must be exactly where it was, shifted only by the origin.
+        -- The first version asked which door CELLS touched the growing
+        -- edge, so a left door reaching the bottom row was dragged down
+        -- the wall and buried in the new rock -- and it kept x == 0, so
+        -- checkdoors saw a valid left door and said nothing.
+        for ch, d in pairs(before) do
+          if Ed:doorSide(d) ~= edge then
+            local nd = afterAll[ch]
+            if not nd then
+              fail(tag .. ": door " .. ch .. " vanished from another wall")
+            else
+              eq(#nd.cells, #d.cells, tag .. ": door " .. ch ..
+                 " changed size while another wall grew")
+              eq(nd.x0, d.x0 + dx, tag .. ": door " .. ch .. " moved in x")
+              eq(nd.y0, d.y0 + dy, tag .. ": door " .. ch .. " moved in y")
+              eq(Ed:doorSide(nd), sideBefore[ch], tag .. ": door " .. ch ..
+                 " changed WALL from " .. tostring(sideBefore[ch]))
+            end
+          end
+        end
+        -- and no door may be torn in half: its cells must stay contiguous
+        for ch, nd in pairs(afterAll) do
+          local span = (nd.x1 - nd.x0 + 1) * (nd.y1 - nd.y0 + 1)
+          if span ~= #nd.cells then
+            fail(tag .. ": door " .. ch .. " is in " .. #nd.cells ..
+                 " cells spread over a " .. span .. "-cell box -- it was torn")
+          end
+        end
+
+        -- the origin moves for left and top ONLY
+        eq(Ed.pendDX or 0, dx, tag .. ": pendDX")
+        eq(Ed.pendDY or 0, dy, tag .. ": pendDY")
+
+        -- the edge now carries doors, so a shrink into it must refuse
+        local ww, hh = Ed:w(), Ed:h()
+        Ed:resize(edge, -1)
+        eq(Ed:w(), ww, tag .. ": shrink ate a wall with a door on it (w)")
+        eq(Ed:h(), hh, tag .. ": shrink ate a wall with a door on it (h)")
+        if not (Ed.status or ""):find("in the way", 1, true) then
+          fail(tag .. ": shrink refused without naming what was in the way")
+        end
+
+        -- undo restores the shape, World, and the pending shift
+        Ed:doUndo()
+        eq(Ed:w(), w0, tag .. ": width after undo")
+        eq(Ed:h(), h0, tag .. ": height after undo")
+        eq(World.w, w0, tag .. ": World.w after undo")
+        eq(#Ed.rows[1], w0, tag .. ": row text after undo")
+        eq(Ed.pendDX or 0, 0, tag .. ": undo left a stale origin shift")
+        eq(Ed.pendDY or 0, 0, tag .. ": undo left a stale origin shift (y)")
+      end
+    end
+
+    -- ---------------------------------------------------------------
+    -- THE DERIVED TABLES
+    --
+    -- The live rebuild used to walk CHAR_TILE by hand, which skipped the
+    -- four passes world.lua runs over the finished tile array. The one
+    -- that showed: the settle pass turns the AIR cell an entity spawns
+    -- in back into WATER, so every enemy standing in a lake left an air
+    -- bubble behind the moment the room was resized.
+    -- ---------------------------------------------------------------
+    do
+      local wet = nil
+      for _, room in ipairs({ "flood_2", "flood_3", "flood_4", "flood_5" }) do
+        World:load(room, nil, true)
+        Ed:enter()
+        -- a cell that is WATER in the world but is NOT a water character
+        -- in the text: that is exactly what the settle pass produced
+        for ty = 0, Ed:h() - 1 do
+          for tx = 0, Ed:w() - 1 do
+            if World.tiles[ty][tx] == World.codes.WATER
+               and Ed:get(tx, ty) ~= "~" then
+              wet = { room, tx, ty, Ed:get(tx, ty) }
+              break
+            end
+          end
+          if wet then break end
+        end
+        if wet then break end
+      end
+      if not wet then
+        fail("no room has a settled-water cell -- this test proves nothing")
+      else
+        local room, tx, ty, ch = wet[1], wet[2], wet[3], wet[4]
+        Test.log(("settled water fixture: %s (%d,%d) is '%s' in the text")
+                 :format(room, tx, ty, ch))
+        World:load(room, nil, true)
+        Ed:enter()
+        Ed:resize("bottom", 1)
+        eq(World.tiles[ty][tx], World.codes.WATER,
+           room .. ": settled water at " .. tx .. "," .. ty ..
+           " turned to air across a resize")
+        -- the other derived tables must come back too
+        if not World.waterDepth then fail(room .. ": waterDepth was dropped") end
+        if not World.decor then fail(room .. ": decor was dropped") end
+        local d = Ed:doorCells()
+        for ch2 in pairs(d) do
+          if not World.doors[ch2] then
+            fail(room .. ": door " .. ch2 .. " missing from World.doors after resize")
+          end
+        end
+        Ed:doUndo()
+      end
+    end
+
+    -- back to a known room for the rest
+    World:load("moss_1", nil, true)
+    Ed:enter()
+
+    -- ---------------------------------------------------------------
+    -- THE ART SHIFT. Ten rooms carry absolute world-pixel coordinates;
+    -- a left/top grow slides the terrain out from under them.
+    -- ---------------------------------------------------------------
+    local src = RoomIO.readRaw("deep_stair_1")
+    if not src then fail("cannot read deep_stair_1") else
+      local a, b = RoomIO.fieldSpan(src, "lights")
+      if not a or type(b) ~= "number" then fail("fieldSpan missed lights") else
+        local out = RoomIO.shiftArt(src, 48, 0)
+        if #out < #src - 40 then fail("shiftArt mangled the file") end
+        -- the first light was at x = 46; +48 makes it 94, y untouched
+        local nb = select(2, RoomIO.fieldSpan(out, "lights"))
+        local body = out:sub(select(1, RoomIO.fieldSpan(out, "lights")), nb)
+        if not body:find("x = 94", 1, true) then
+          fail("shiftArt did not move the first light to x = 94")
+        end
+        if not body:find("y = 68", 1, true) then
+          fail("shiftArt moved a y it was told to leave alone")
+        end
+        -- and it must still be Lua
+        if not load(out, "shifted") then fail("shifted file no longer parses") end
+        -- a zero shift is EXACTLY the identity, or every save rewrites
+        -- ten heavily-commented files for nothing
+        local same = RoomIO.shiftArt(src, 0, 0)
+        if same ~= src then fail("a zero shift is not the identity") end
+        -- comments must survive: this file is mostly commentary
+        local cbefore = select(2, src:gsub("\n%s*%-%-", ""))
+        local cafter = select(2, out:gsub("\n%s*%-%-", ""))
+        eq(cafter, cbefore, "comment lines lost to the shift")
+      end
+    end
+
+    -- The awkward cases, synthesised rather than hoped for: a COMMENT
+    -- that contains "x = 10", a negative coordinate, a float, a nested
+    -- colour table, and neighbouring fields (w, h, lw, a2) that share a
+    -- line with the two that move.
+    do
+      local probe = table.concat({
+        "return {",
+        "  zone = \"t\",",
+        "  backdrop = {",
+        "    -- moved this from x = 10, y = 20 back when it was wrong",
+        "    { kind = \"rect\", x = 10, y = 20, w = 4, h = 4, col = \"black\" },",
+        "    { kind = \"band\", x = -6, y = 0, w = 480, h = 544, a2 = 0.5 },",
+        "    { kind = \"hang\", x = 12.5, y = 7, lw = 2, sway = 5 },",
+        "  },",
+        "  lights = { { x = 3, y = 4, r = 9, col = { 1, 0.5, 0.25 } } },",
+        "}",
+      }, "\n")
+      local got = RoomIO.shiftArt(probe, 100, 1000)
+      local want = {
+        { "-- moved this from x = 10, y = 20", "a comment was rewritten" },
+        { "x = 110, y = 1020, w = 4, h = 4", "plain coords, or w/h moved too" },
+        { "x = 94, y = 1000, w = 480, h = 544", "a negative x" },
+        { "x = 112.5, y = 1007, lw = 2", "a float, or lw moved" },
+        { "x = 103, y = 1004, r = 9", "a one-line lights table" },
+        { "col = { 1, 0.5, 0.25 }", "a nested colour table was touched" },
+      }
+      for _, wcase in ipairs(want) do
+        if not got:find(wcase[1], 1, true) then
+          fail("shiftArt got " .. wcase[2] .. " wrong")
+        end
+      end
+      if not load(got, "probe") then fail("shifted probe does not parse") end
+    end
+
+    -- nothing above may have written to disk
+    local now = RoomIO.readRaw("deep_stair_1")
+    if now ~= src then fail("the scenario wrote to deep_stair_1") end
+
+    Ed.pendDX, Ed.pendDY = 0, 0
+    Test.log((fails == 0 and "OK" or "FAILED ") .. " resize")
+  end
 end

@@ -196,13 +196,28 @@ def parse_room(fname):
             ch = rows[y][x]
             if ch not in tile:
                 pre_spawns.setdefault(ch, []).append((x, y))
-    # engine's liquid-settle pass: spawn chars inside a liquid body count
-    # as that liquid (for TILE purposes only)
+    # The engine's liquid-settle pass, and it has to be the ENGINE'S.
+    #
+    # world.lua settles any cell whose TILE is AIR -- which is a plain
+    # '.' just as much as it is an entity spawn character. This copy
+    # settled spawn characters only, so a '.' with water on all four
+    # sides stayed air in the model while the engine flooded it, and
+    # checkrooms then reported the water ABOVE it as
+    #
+    #     flood_4: ~ at (24,16) floats over '.'
+    #
+    # against a room where every neighbouring tile is water in play. A
+    # validator that fails a correct room is worse than one that misses:
+    # the honest response to it is to go and break the level.
+    #
+    # Doors and gates stay out of it. The engine does set a door cell to
+    # AIR and will flood it, but here the character grid IS the door
+    # record -- overwriting it with '~' would delete the door.
     for _ in range(3):
         for y in range(H):
             for x in range(W):
                 ch = rows[y][x]
-                if ch not in tile:
+                if ch == "." or ch not in tile:
                     above = rows[y - 1][x] if y > 0 else "#"
                     left = rows[y][x - 1] if x > 0 else "#"
                     right = rows[y][x + 1] if x < W - 1 else "#"
@@ -280,7 +295,11 @@ class Nav:
         if x < 0 or y < 0 or x >= self.r.W or y >= self.r.H:
             return True
         ch = self.r.g[y][x]
-        if ch == "#":
+        # From the PUBLISHED alphabet, not from the literal '#'. The
+        # engine gained '_' (ice) as a second SOLID character and this
+        # test would have called it air -- the model would have walked
+        # through every frozen wall in the Coldstore and reported nothing.
+        if TILE_KIND.get(ch) == "SOLID":
             return True
         if ch in GATES:
             return self.gate_solid(ch)
@@ -301,8 +320,26 @@ class Nav:
         return ch in "%c="
 
     def standable(self, x, y):
+        # OPENABLE tiles ('%' break, 'c' crumble) are STANDABLE.
+        #
+        # They used to be excluded here, which made a wall of them
+        # impassable to the model: passable() let a body move through one
+        # but nothing could ever stand in one, so there was no node chain
+        # across it. A chest walled in behind three '%' came back as
+        # "ITEM LOCKED ... never obtainable".
+        #
+        # Neither is ability-gated in the engine. Vess's dash breaks
+        # tiles directly ahead of him (player.lua, in the dashT branch)
+        # and every player projectile sets breaksTiles; the dash is
+        # available from the first room of the game, so this is baseline
+        # reach for every run and not an upgrade. Crumble falls away
+        # 0.45s after anything stands on it and leaves air behind.
+        #
+        # This is the one place the model is allowed to assume the player
+        # will remove a tile, and it is allowed because removing it costs
+        # nothing a run can fail to have.
         ch = self.r.g[y][x]
-        if self.solid(x, y) or ch in LIQ or ch in "%c" or ch in SPIKES:
+        if self.solid(x, y) or ch in LIQ or ch in SPIKES:
             return False
         return self.support(x, y + 1)
 

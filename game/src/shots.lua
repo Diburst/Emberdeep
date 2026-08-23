@@ -80,7 +80,7 @@ Shots.ROOMS = {
   -- cradle: dark, and its own zone
   "cradle_1",
   -- connective tissue: the 34-row stair, the gallery, the test arena
-  "deep_stair_1", "gal_2", "test_arena",
+  "deep_stair_1", "deep_stair_2", "gal_2", "test_arena",
 }
 
 -- Ability flags only.  Deliberately NO boss_* flags: those switch whole
@@ -126,8 +126,25 @@ local function reseed()
   G.time = PINNED_TIME
 end
 
+-- EMBERDEEP_SHOTS_ALL=1 shoots EVERY room in the world instead of the
+-- curated set above.
+--
+-- The curated list is right for regression: it is chosen to exercise
+-- every rendering path, and 32 rooms compare in a second. It is exactly
+-- wrong for an art sweep, where the question is not "did anything
+-- change" but "does room 61 of 84 look like the zone it is in" -- and
+-- the 52 rooms the regression set omits are precisely the ones nobody
+-- has looked at.
+local function allRooms()
+  local WM = require "src.data.worldmap"
+  local out = {}
+  for _, id in ipairs(WM.ROOMS) do out[#out + 1] = id end
+  return out
+end
+
 function Shots.init(t)
   tag = t
+  if os.getenv("EMBERDEEP_SHOTS_ALL") then Shots.ROOMS = allRooms() end
   dir = SHOTDIR .. "/" .. tag
   os.execute("mkdir -p '" .. dir .. "'")
   log = io.open(SHOTDIR .. "/shots.log", "a")

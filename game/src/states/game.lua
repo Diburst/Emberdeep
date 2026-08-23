@@ -542,6 +542,12 @@ function S:raw(ev)
       and G.settings.testmode and not self.dialogue then
     G.State.push(require "src.states.progress")
   end
+  -- F2: the ROOM EDITOR, on the room you are standing in. Pushed, not
+  -- switched, so the world underneath keeps drawing and stops updating.
+  if ev.kind == "rawkey" and ev.id == "f2"
+      and G.settings.testmode and not self.dialogue then
+    G.State.push(require "src.states.editor")
+  end
 end
 
 -- pause / map / drop-in are polled in update() so they work identically
