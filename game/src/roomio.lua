@@ -253,6 +253,175 @@ function RoomIO.shiftArt(src, dx, dy)
   return src, hits
 end
 
+-- ------------------------------------------------------------------
+-- THE KEY TABLE
+-- ------------------------------------------------------------------
+-- Placing an entity is TWO edits -- a character in the grid and a line in
+-- `key` -- and they are not independently valid. World:load errors out on
+-- "unmapped map char" the instant it meets a character with no entry, so
+-- a file that has one and not the other does not load at all. They ride
+-- on one write for exactly the reason the origin shift does: two writes
+-- mean two backups and a window in which the room on disk is broken.
+--
+-- Surgical, like everything else here. It rewrites the lines it means to
+-- and leaves the rest of the table -- including its comments, and three
+-- rooms have them -- exactly as it found them.
+--
+-- entries: { ["a"] = "cell" }  sets or replaces
+--          { ["a"] = false }   removes
+-- `key`, `gates` and `gateStyle` are the same shape -- a table of
+-- one-character string keys mapping to strings -- and therefore the same
+-- surgery. Writing it three times would be three chances to fix a bug
+-- twice.
+--
+--   key       ["x"] = "plate:sw_moss_1"     what a map char spawns
+--   gates     G = "sw_moss_1"               which flag opens a gate
+--   gateStyle G = "portcullis"              how it looks doing it
+--
+-- The gates tables are written `G = "flag"` rather than `["G"] = "flag"`,
+-- so both forms are read and each key is rewritten in the form the file
+-- already used. An editor that reformats a table nobody asked it to
+-- touch is an editor whose diffs stop being readable.
+function RoomIO.setKeyEntries(src, entries)
+  return RoomIO.setTableEntries(src, "key", entries)
+end
+
+function RoomIO.setTableEntries(src, field, entries)
+  if not entries or not next(entries) then return src end
+  local a, b = RoomIO.fieldSpan(src, field)
+  if not a then return nil, "no " .. field .. " table" end
+  if type(b) ~= "number" then return nil, tostring(b) end
+
+  local origInner = src:sub(a + 1, b - 1)
+
+  -- SPLIT INTO ENTRIES, NOT LINES.
+  --
+  -- `key` is written one entry per line; `gates` is written on ONE line,
+  -- sometimes with two entries on it -- `gates = { G = "x", H = "y" }`.
+  -- A line-based pass reads that as a single line, matches the first
+  -- entry and silently drops the second. The round-trip caught it on
+  -- crys_2 as a file that no longer parsed, which is the good version of
+  -- that bug; the bad version is a gate quietly disappearing.
+  --
+  -- So: walk the interior, cut it at commas that are not inside a string
+  -- or a nested table, and treat each piece as one entry.
+  local pieces, depth, quote, from = {}, 0, nil, 1
+  local i, n = 1, #origInner
+  while i <= n do
+    local c = origInner:sub(i, i)
+    if quote then
+      if c == "\\" then i = i + 1 elseif c == quote then quote = nil end
+    elseif c == '"' or c == "'" then quote = c
+    elseif c == "-" and origInner:sub(i + 1, i + 1) == "-" then
+      i = (origInner:find("\n", i) or (n + 1)) - 1
+    elseif c == "{" then depth = depth + 1
+    elseif c == "}" then depth = depth - 1
+    elseif c == "," and depth == 0 then
+      pieces[#pieces + 1] = origInner:sub(from, i - 1)
+      from = i + 1
+    end
+    i = i + 1
+  end
+  pieces[#pieces + 1] = origInner:sub(from)
+
+  -- Was it written across lines, and with what indent?
+  local multi = origInner:find("\n") ~= nil
+  local indent = origInner:match("\n(%s*)%S") or "    "
+  local tail = origInner:match("\n(%s*)$") or "  "
+
+  local seen, out, hadEntries, bare = {}, {}, false, false
+  for _, piece in ipairs(pieces) do
+    -- A BLANK SEPARATOR LINE belongs to the piece that FOLLOWS it -- the
+    -- split is on commas, so `a = 1,\n\n  b = 2` puts the blank at the
+    -- head of b's piece, where trimming ate it. Three rooms space their
+    -- key table out that way and the round-trip found all three.
+    local lead = piece:match("^(\n*)") or ""
+    for _ = 2, #lead do out[#out + 1] = { entry = false, text = "" } end
+    -- ["G"] = "..."   or   G = "..."
+    local ch = piece:match('%["(.)"%]%s*=')
+    local plain = false
+    if not ch then
+      ch = piece:match("^%s*(%w)%s*=")
+      plain = ch ~= nil
+    end
+    if ch then
+      hadEntries = true
+      if plain then bare = true end
+      local want = entries[ch]
+      if want == false then
+        seen[ch] = true                              -- drop it
+      elseif type(want) == "string" then
+        seen[ch] = true
+        out[#out + 1] = { entry = true, text = plain
+          and ('%s = "%s"'):format(ch, want)
+          or  ('["%s"] = "%s"'):format(ch, want) }
+      else
+        out[#out + 1] = { entry = true, text = piece:match("^%s*(.-)%s*$") }
+      end
+    else
+      -- A comment or a blank separator line. Kept, and kept WITHOUT a
+      -- comma -- three rooms space their key table out with a blank line
+      -- and the first version of this ate it, which the round-trip
+      -- caught as the only difference in the whole file.
+      for line in (piece .. "\n"):gmatch("([^\n]*)\n") do
+        local t = line:match("^%s*(.-)%s*$")
+        if t ~= "" or #out > 0 then
+          out[#out + 1] = { entry = false, text = t }
+        end
+      end
+      while #out > 0 and not out[#out].entry and out[#out].text == "" do
+        table.remove(out)                     -- no trailing blank run
+      end
+    end
+  end
+
+  local add = {}
+  for ch, spec in pairs(entries) do
+    if type(spec) == "string" and not seen[ch] then add[#add + 1] = ch end
+  end
+  table.sort(add)
+  local barestyle = bare or (field ~= "key" and not hadEntries)
+  for _, ch in ipairs(add) do
+    out[#out + 1] = { entry = true, text = barestyle
+      and ('%s = "%s"'):format(ch, entries[ch])
+      or  ('["%s"] = "%s"'):format(ch, entries[ch]) }
+  end
+
+  local nEntries = 0
+  for _, o in ipairs(out) do if o.entry then nEntries = nEntries + 1 end end
+
+  local inner
+  if #out == 0 and not hadEntries then
+    inner = origInner            -- it was `{}` and it still is
+  elseif #out == 0 then
+    inner = ""                   -- emptied: collapse to `{}`
+  elseif field ~= "key" and #out == nEntries then
+    -- `gates` and `gateStyle` are written on ONE line in all 29 rooms
+    -- that have them, and there are at most four of either. So they go
+    -- back on one line, as long as nothing but entries is in there.
+    -- Without this, adding a gate and then removing it left the table
+    -- permanently expanded -- a file changed by an edit that was undone,
+    -- which is the one thing this module must never do.
+    local t = {}
+    for _, o in ipairs(out) do t[#t + 1] = o.text end
+    inner = " " .. table.concat(t, ", ") .. " "
+  elseif multi or nEntries > 1 then
+    -- A single-line table that GAINS a second entry becomes multi-line.
+    -- That is a reformat, and it is the one this module allows: the file
+    -- is being changed anyway, and `{ G = "a", H = "b", I = "c" }` past
+    -- two entries reads worse than the stacked form every `key` uses.
+    local parts = {}
+    for _, o in ipairs(out) do
+      parts[#parts + 1] = (o.text == "" and "")
+        or (indent .. o.text .. (o.entry and "," or ""))
+    end
+    inner = "\n" .. table.concat(parts, "\n") .. "\n" .. tail
+  else
+    inner = " " .. out[1].text .. " "
+  end
+  return src:sub(1, a) .. inner .. src:sub(b)
+end
+
 -- Replace the map block and NOTHING else.
 --
 -- `opts.dryrun` returns the bytes that WOULD be written instead of
@@ -282,6 +451,16 @@ function RoomIO.writeMap(id, rows, opts)
   -- after the map block.
   if opts.shift and (opts.shift.dx ~= 0 or opts.shift.dy ~= 0) then
     out = RoomIO.shiftArt(out, opts.shift.dx, opts.shift.dy)
+  end
+
+  -- ...and so does the key table, for the same reason. A grid with a new
+  -- character in it and no entry to match is a room that will not load.
+  for _, field in ipairs({ "key", "gates", "gateStyle" }) do
+    if opts[field] then
+      local done, ferr = RoomIO.setTableEntries(out, field, opts[field])
+      if not done then return nil, ferr end
+      out = done
+    end
   end
 
   -- The file must still be loadable Lua afterwards. Cheap, and it turns a

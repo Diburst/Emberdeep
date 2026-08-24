@@ -3442,19 +3442,63 @@ return function(Test, scenarios)
     wait(20)
     local lu = G.game.players[2]
     if G.run.flags.driftvanes then fail("vanes: a new run starts with them") end
-    lu.onGround = false lu.y = lu.y - 40 lu.vy = 120
-    wait(4)
-    Test.log("no vanes: hovering=" .. tostring(lu.hovering))
+    -- FALLING WITH JUMP HELD. Hover is `down("jump")` gated
+    -- (player.lua), and this probe used to drop her without touching the
+    -- button at all -- so the negative case below passed because NOBODY
+    -- PRESSED ANYTHING rather than because the module was missing, and
+    -- the positive case could never have passed at any point.
+    --
+    -- Holding it is not sufficient on its own either, and that is the
+    -- second thing this got wrong. The press EDGE fills `jumpBuf`, and
+    -- `coyote` is still live from standing, so the very next frame she
+    -- JUMPS -- vy = -310, straight up, nowhere near the falling state
+    -- hover needs. So: hold, let that jump resolve, and only then place
+    -- her mid-air with the buffer and the coyote window cleared. The
+    -- button stays down, which is exactly the state being tested.
+    local function fallHolding(p, px, py)
+      hold(2, "jump")
+      wait(3)                       -- let the press edge and its jump resolve
+      p.x, p.y = px, py             -- ...then put her where we meant her
+      p.onGround = false
+      p.coyote, p.jumpBuf = 0, 0    -- no second jump; the button is only HELD
+      p.hoverT = 0
+      p.vy = 120
+      wait(4)
+    end
+
+    fallHolding(lu, lu.x, lu.y - 40)
+    Test.log("no vanes: hovering=" .. tostring(lu.hovering)
+      .. " vy=" .. string.format("%.0f", lu.vy))
     if lu.hovering then fail("vanes: Lu hovered without the module") end
+    -- Catch the rig breaking rather than the game: if she is not
+    -- DESCENDING UNDER GRAVITY then this probe is measuring nothing, and
+    -- it must say so instead of quietly passing.
+    if lu.vy <= 0 then
+      fail("vanes: the no-vanes probe never got her falling (vy "
+        .. string.format("%.0f", lu.vy) .. ") -- it proves nothing")
+    elseif lu.vy < 140 then
+      fail("vanes: falling, but slower than gravity (vy "
+        .. string.format("%.0f", lu.vy) .. ") -- something is already "
+        .. "clamping her without the module")
+    end
+    release(2, "jump")
 
     G.run.flags.driftvanes = true
     wait(20)
     local p = G.game.players[2]
-    p.x, p.y = 300, 60 p.vy = 120 p.onGround = false
-    wait(4)
+    fallHolding(p, 300, 60)
     if not p.hovering then fail("vanes: Lu will not hover WITH the module") end
+    -- The BEHAVIOUR, not the flag: the vanes clamp the fall. This is
+    -- also what proves the rig above really did hold the button -- the
+    -- clamp is the only thing in the game that reacts to it mid-air.
+    if p.vy > 60 then
+      fail("vanes: hovering is set but she is still falling at "
+        .. string.format("%.0f", p.vy) .. " px/s")
+    end
     Test.log("with vanes: hovering=" .. tostring(p.hovering)
-      .. " vy=" .. string.format("%.0f", p.vy))
+      .. " vy=" .. string.format("%.0f", p.vy)
+      .. " -- free fall was clamped, so the button was genuinely held")
+    release(2, "jump")
 
     -- 2. THE NEST holds the module, and the chest is real
     World:load("sky_nest", "A", true)
@@ -3497,17 +3541,61 @@ return function(Test, scenarios)
       if lrise < 8 * 16 then fail("column did not lift Lu") end
       if vrise > 5 * 16 then fail("column lifted VESS -- it must be scenery to him") end
 
-      -- 4. THE CO-OP CAMERA: with Lu at the top and Vess at the bottom,
-      -- both must still be on screen.
+      -- 4. THE CO-OP CAMERA, round three  (COOP-PLAN 13.1-13.3).
+      --
+      -- This assertion used to read "both bots must be on screen at all
+      -- times". That was the OLD rule, and this test was the only thing
+      -- in the game standing guard over it -- which is why it is
+      -- REWRITTEN here rather than deleted.
+      --
+      -- The rule now is HORIZONTALLY BOUNDED, VERTICALLY PERMITTED:
+      --
+      --   * a bot may be abandoned DOWNWARD. Lu rides a thermal column
+      --     twelve tiles up and Vess is left on the floor: that is the
+      --     design, not a bug, and there is no warp coming to fix it.
+      --   * the UPPER bot must never be the one that leaves, because the
+      --     camera favours whoever is pushing the top of the frame. If
+      --     the bot you are actively climbing with goes off screen then
+      --     13.2 is broken, and that IS a failure.
+      --   * horizontal separation stays walled by game.lua's clamp.
+      --   * and the player has to be TOLD, or the rule is invisible --
+      --     so the LINK field has to register it.
       Cam.update(1, { v, l })
       for _ = 1, 30 do Cam.update(1 / 60, { v, l }) end
       local sep = math.abs(l.y - v.y)
-      local lOn = Cam.onScreen(l.x, l.y, 0)
-      local vOn = Cam.onScreen(v.x, v.y, 0)
-      Test.log(string.format("separation %.0f px (budget %.0f), Lu on=%s Vess on=%s",
-        sep, 0.75 * G.VH, tostring(lOn), tostring(vOn)))
-      if not (lOn and vOn) then
-        fail("co-op: a bot left the frame at " .. math.floor(sep) .. " px of separation")
+      local upper = (l.y < v.y) and l or v
+      local lower = (upper == l) and v or l
+      local upOn = Cam.onScreen(upper.x, upper.y, 0)
+      local loOn = Cam.onScreen(lower.x, lower.y, 0)
+      local dxSep = math.abs((l.x + l.w / 2) - (v.x + v.w / 2))
+      Test.log(string.format(
+        "vertical sep %.0f px (budget %.0f): upper on=%s lower on=%s, horizontal %.0f px",
+        sep, 0.75 * G.VH, tostring(upOn), tostring(loOn), dxSep))
+      if not upOn then
+        fail("co-op camera: the UPPER bot left the frame at "
+          .. math.floor(sep) .. " px -- 13.2 says the camera follows them")
+      end
+      if dxSep > G.VW then
+        fail("co-op camera: horizontal separation " .. math.floor(dxSep)
+          .. " px exceeds the frame -- the wall in 13.1 did not hold")
+      end
+      G.game:tetherUpdate(1 / 60)
+      local strain = G.game.tetherStrain or 0
+      Test.log(string.format("LINK field strain %.2f (visible at %.2f)",
+        strain, G.game.TETHER_LIMIT))
+      if sep > 0.75 * G.VH and strain < G.game.TETHER_LIMIT then
+        fail("co-op: past the vertical budget and the LINK field never "
+          .. "severed -- the player is never told they are separated")
+      end
+      -- The field is NOT ambient. Standing together it must be silent,
+      -- and it must not be quietly taxing her regen either.
+      if sep < 0.2 * G.VH and strain >= G.game.TETHER_LIMIT then
+        fail("co-op: the LINK field reads as severed while the pair are "
+          .. "standing together")
+      end
+      if strain < G.game.TETHER_LIMIT and G.game:fieldRegenMult() ~= 1 then
+        fail("co-op: Lu's regen is being taxed below the threshold that "
+          .. "draws the tether -- a penalty with no signal attached")
       end
     end
 

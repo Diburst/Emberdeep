@@ -28,6 +28,7 @@ is required to stand on them.
 """
 import glob
 import sys
+import genprogress as GP
 import roommodel as RM
 
 VW, VH, T = RM.viewport()  # read out of main.lua, never copied
@@ -228,9 +229,133 @@ def fall_audit(room):
     return deep, strand
 
 
+# ======================================================================
+# TWO-BODY DOOR REACHABILITY  (COOP-PLAN 7.4) -- REPORT ONLY
+# ======================================================================
+# checkrooms asks "can A body get from door A to door B". Step 6 makes
+# doors need BOTH bots in the mouth, so the question becomes "can EACH of
+# them", and those are different questions the moment the two bots stop
+# having the same legs -- which, since step 3, they do not.
+#
+# DO NOT ATTEMPT A JOINT SEARCH. The state would be (Vess cell, Lu cell,
+# world bits): about 10^6 position pairs before the bits, which is a
+# research project rather than a validator.
+#
+# Use the monotone fixpoint instead. Every barrier removal in this game is
+# PERMANENT -- a broken block stays broken, a latched plate stays latched
+# -- so the world only ever gains flags, and it settles in at most one
+# round per barrier. Two ordinary single-body runs per round, and Nav is
+# reused unchanged.
+#
+# What the pair START with: every ability the run can hold, plus every
+# gate flag this room does not grant itself. Flags earned in OTHER rooms
+# are checkprogress's business; the question here is whether the pair can
+# work the machinery in front of them and then both get out.
+#
+# BULWARK BLOCKS are in the fixpoint's shape but not in the game yet
+# (build-order step 9). When they land, they enter here as "a block
+# adjacent to Rv becomes air" and nothing else about this changes.
+#
+# REPORT ONLY. Existing rooms were authored against a model where the pair
+# shared one body and a warp bailed them out, so promoting this to FAIL
+# today would fail rooms whose design was never wrong under the old rules.
+
+
+def two_body_audit(room):
+    """Returns (split, stuck) -- two lists of message strings."""
+    split, stuck = [], []
+    doors = sorted(room.doors)
+    if not doors:
+        return split, stuck
+
+    # ---- what this room's own machinery grants, and to whom ----------
+    # target_gives is genprogress's on purpose. It is the ONE place that
+    # knows what touching an entity is worth, and a second copy here would
+    # be correct right up until somebody adds an entity kind -- which is
+    # the exact failure this project has three post-mortems about.
+    earnable = {}
+    for ch, spec in room.key.items():
+        cells = room.spawns.get(ch, [])
+        if not cells:
+            continue
+        gives, _ = GP.target_gives(spec)
+        both = spec.split(":")[0] == "linkcore"   # only the LINK opens it
+        for f in gives:
+            e = earnable.setdefault(f, [set(), False])
+            e[0].update(cells)
+            e[1] = e[1] or both
+
+    world = set(RM.ALL_ABILITIES)
+    for ch, flag in room.gates.items():
+        f = flag[1:] if flag.startswith("!") else flag
+        if f not in earnable:
+            world.add(f)
+
+    def bot_reach(bot, w):
+        nav = RM.Nav(room, w, bot=bot)
+        s = set()
+        for ch in room.doors:
+            s |= set(nav.arrivals(ch)) | set(room.doors[ch])
+        return nav, nav.reach_from(s)
+
+    navv = navl = None
+    Rv = Rl = set()
+    for _ in range(len(earnable) + 1):
+        navv, Rv = bot_reach("vess", world)
+        navl, Rl = bot_reach("lu", world)
+        fired = False
+        for f, (cells, both) in earnable.items():
+            if f in world:
+                continue
+            hv, hl = navv.touches(Rv, cells), navl.touches(Rl, cells)
+            if (hv and hl) if both else (hv or hl):
+                world.add(f)
+                fired = True
+        if not fired:
+            break
+
+    # ---- machinery the pair cannot work ------------------------------
+    for f, (cells, both) in sorted(earnable.items()):
+        if f in world:
+            continue
+        hv, hl = navv.touches(Rv, cells), navl.touches(Rl, cells)
+        if both:
+            who = ("neither bot" if not (hv or hl) else
+                   "only Vess" if hv and not hl else
+                   "only Lu" if hl and not hv else "both")
+            if who != "both":
+                stuck.append("%s: the LINK lattice for '%s' needs both bots "
+                             "beside it and %s can get there"
+                             % (room.name, f, who))
+        elif not (hv or hl):
+            stuck.append("%s: '%s' is granted by machinery neither bot can "
+                         "reach" % (room.name, f))
+
+    # ---- the door matrix, per bot, under the settled world -----------
+    mats = {}
+    for bot in RM.BOTS:
+        nav = RM.Nav(room, world, bot=bot)
+        m = set()
+        for ch in doors:
+            r = nav.reach_from_door(ch)
+            for ch2 in doors:
+                if ch2 != ch and any(c in r for c in room.doors[ch2]):
+                    m.add((ch, ch2))
+        mats[bot] = m
+
+    agreed = mats["vess"] & mats["lu"]
+    for (a, b) in sorted((mats["vess"] | mats["lu"]) - agreed):
+        who = "Vess" if (a, b) in mats["vess"] else "Lu"
+        other = "Lu" if who == "Vess" else "Vess"
+        split.append("%s: door %s -> door %s is a trip only %s can make -- "
+                     "%s cannot follow" % (room.name, a, b, who, other))
+    return split, stuck
+
+
 def main():
     all_fails, all_notes = [], []
     all_deep, all_strand = [], []
+    all_split, all_stuck = [], []
     rooms = 0
     for fname in sorted(glob.glob("src/data/rooms/*.lua")):
         if fname.endswith("test_arena.lua"):
@@ -239,9 +364,13 @@ def main():
         f, n = audit(fname)
         all_fails += f
         all_notes += n
-        d, st = fall_audit(RM.parse_room(fname))
+        room = RM.parse_room(fname)
+        d, st = fall_audit(room)
         all_deep += d
         all_strand += st
+        sp, sk = two_body_audit(room)
+        all_split += sp
+        all_stuck += sk
     print("== CO-OP CAMERA (%d rooms, budget %.1f tiles horizontal / %.1f vertical) =="
           % (rooms, H_BUDGET, V_BUDGET))
     for n in all_notes:
@@ -261,6 +390,17 @@ def main():
     if all_strand:
         print("  ^ these must be zero BEFORE build-order step 6 removes the "
               "co-op warp; today the warp hides them")
+
+    print("== TWO-BODY DOOR REACHABILITY (report only -- fails nothing) ==")
+    for m in all_stuck:
+        print("  STUCK " + m)
+    for m in all_split:
+        print("  SPLIT " + m)
+    print("  %d door trip(s) only one bot can make, %d unworkable "
+          "mechanism(s)" % (len(all_split), len(all_stuck)))
+    if all_split:
+        print("  ^ under step 6 a door needs both bots in its mouth, so each "
+              "of these is a door the pair cannot use together")
 
     return 1 if all_fails else 0
 

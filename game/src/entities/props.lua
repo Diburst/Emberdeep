@@ -58,6 +58,15 @@ function Checkpoint:update(dt)
       G.game:autosave()
       if G.Audio then G.Audio.sfx("checkpoint") end
       World:fx("burst", self.x + 6, self.y + 4, { color = "ember", n = 8 })
+      -- A LANTERN GIVES YOU NOTHING. It banks the run and moves the
+      -- respawn, and that is the whole of it -- no health, and no energy
+      -- either (Thomas, this pass; an energy refill was tried here and
+      -- taken back out). The reasoning in the retirement note above
+      -- holds for both bars: a top-up you get for walking past something
+      -- quietly makes every fight after it easier than it was built to
+      -- be. Energy has its own answer and it is a thing you go and find
+      -- -- the ENERGY CELL in pickup.lua, one on the approach to every
+      -- arena.
       return
     end
   end
@@ -308,12 +317,24 @@ Entity.register("nest", function(x, y) return Nest.new(x, y) end)
 -- a nudge on Vess would quietly change reachability, and roommodel would
 -- never know.
 local Updraft = Entity.extend()
+-- TWO TILES WIDE, centred on the column the map marks. One tile was a
+-- 16px target you had to hold for the length of a twelve-tile climb, and
+-- falling out of it near the top costs the whole ascent. Centring rather
+-- than extending rightwards means no existing room's layout shifts --
+-- the marked tile is still the middle of the shaft.
+--
+-- roommodel still models it as ONE tile wide, deliberately: the model
+-- being narrower than the engine means it under-credits a route, and a
+-- room reported unreachable gets looked at. The other way round passes
+-- rooms nobody can cross.
+local UPDRAFT_W = 32
+
 function Updraft:init(x, y, parts)
   local n = tonumber(parts[2]) or 1
-  Entity.init(self, x, y - (n - 1) * 16)
+  Entity.init(self, x - (UPDRAFT_W - 16) / 2, y - (n - 1) * 16)
   self.kind = "updraft"
   self.tiles = n
-  self.w, self.h = 16, n * 16
+  self.w, self.h = UPDRAFT_W, n * 16
   self.layer = -3
 end
 function Updraft:update(dt) end
@@ -322,13 +343,19 @@ function Updraft:draw()
   local live = G.run.flags.driftvanes
   -- the column: a soft rising wash, brighter once you can use it
   g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], live and 0.10 or 0.05)
-  g.rectangle("fill", self.x + 1, self.y, 14, self.h)
+  g.rectangle("fill", self.x + 1, self.y, self.w - 2, self.h)
+  -- ...with the edges picked out, so the width you have to stay inside
+  -- is a thing you can see rather than a thing you infer from falling
+  -- out of it
+  g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], live and 0.22 or 0.10)
+  g.rectangle("fill", self.x + 1, self.y, 1, self.h)
+  g.rectangle("fill", self.x + self.w - 2, self.y, 1, self.h)
   -- motes riding it, so the direction is never in doubt
-  for i = 0, self.tiles * 2 do
+  for i = 0, self.tiles * 3 do
     local seed = i * 37
     local yy = self.y + self.h
       - ((G.time * (26 + (seed % 13)) + seed * 11) % self.h)
-    local xx = self.x + 3 + ((seed * 7) % 10)
+    local xx = self.x + 3 + ((seed * 7) % (self.w - 6))
       + math.sin(G.time * 1.7 + i) * 1.5
     g.setColor(P.spark[1], P.spark[2], P.spark[3],
       (live and 0.55 or 0.28) * (0.4 + 0.6 * math.sin(i + G.time)))
@@ -336,9 +363,9 @@ function Updraft:draw()
   end
   -- the grate it blows out of
   g.setColor(P.gray)
-  g.rectangle("fill", self.x + 1, self.y + self.h - 3, 14, 3)
+  g.rectangle("fill", self.x + 1, self.y + self.h - 3, self.w - 2, 3)
   g.setColor(P.slate)
-  for i = 0, 3 do
+  for i = 0, math.floor((self.w - 4) / 4) do
     g.rectangle("fill", self.x + 2 + i * 4, self.y + self.h - 3, 2, 3)
   end
   g.setColor(1, 1, 1, 1)

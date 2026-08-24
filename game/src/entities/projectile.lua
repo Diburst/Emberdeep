@@ -86,7 +86,16 @@ end
 function Proj:update(dt)
   local World = require "src.world"
   self.life = self.life - dt
-  if self.life <= 0 then self.dead = true return end
+  if self.life <= 0 then
+    -- Running out of road is a DIFFERENT event from hitting something,
+    -- and it has to look different or a shot that fell short reads as a
+    -- shot that missed. A short sputter where it died is the whole tell.
+    self.dead = true
+    local World = require "src.world"
+    World:fx("spark", self.x + self.w / 2, self.y + self.h / 2,
+      { color = self.side == "player" and "spark" or "ember", n = 3, r = 1 })
+    return
+  end
 
   self.vy = self.vy + self.grav * dt
 

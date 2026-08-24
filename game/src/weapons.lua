@@ -2,6 +2,21 @@
 -- Lu has sparkshot. XP thresholds per level; getting hit loses XP.
 local W = {}
 
+-- HOW FAR AN ORDINARY SHOT CARRIES, in seconds of flight.
+--
+-- Vess's guns used to inherit projectile.lua's generic 2s, which at Bolt
+-- Driver speed is 620px -- more than a screen and a quarter. A gun that
+-- reaches past anything you can see has no range as a property at all,
+-- so positioning stops mattering and every fight is fought at whatever
+-- distance you happen to be standing.
+--
+-- Applied in W.tune to every `user = 1` weapon that does not state its
+-- own, so a weapon with a deliberate lifetime keeps it -- Scatter Hex is
+-- a 0.32s shotgun and the Magnet Mortar's 4.8s roll is the entire point
+-- of the Magnet Mortar -- and a future Vess gun inherits the rule
+-- instead of inheriting the generic default by accident.
+W.SHOT_LIFE = 1.2
+
 W.defs = {
   boltdriver = {
     name = "Bolt Driver", icon = "icon_bolt", user = 1,
@@ -102,10 +117,14 @@ end
 function W.tune(force)
   if W.tuned and not force then return end
 
-  -- 1. Every Vess weapon gets a per-tier rate array so L2 can move.
+  -- 1. Every Vess weapon gets a per-tier rate array so L2 can move,
+  --    and a RANGE if it has not asked for its own.
   for _, def in pairs(W.defs) do
-    if def.user == 1 and type(def.rate) ~= "table" then
-      def.rate = { def.rate, def.rate, def.rate }
+    if def.user == 1 then
+      if type(def.rate) ~= "table" then
+        def.rate = { def.rate, def.rate, def.rate }
+      end
+      def.life = def.life or W.SHOT_LIFE
     end
   end
 

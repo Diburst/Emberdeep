@@ -30,7 +30,7 @@ local T = 16
 local SLACK = 320
 
 -- The palette, in the order a level gets built rather than alphabetical.
-local PALETTE = { ".", "#", "=", "%", "c", "~", "L", "^", "v", "<", ">" }
+local PALETTE = { ".", "#", "=", "%", "*", "c", "~", "L", "^", "v", "<", ">" }
 -- Doors and gates paint like anything else. They are NOT terrain -- a
 -- door cell is air with a letter on it and a link in another table -- so
 -- moving one is only ever safe within the wall it already belongs to,
@@ -38,9 +38,49 @@ local PALETTE = { ".", "#", "=", "%", "c", "~", "L", "^", "v", "<", ">" }
 -- it right.
 local SPECIAL = { "A", "B", "C", "D", "E", "F", "G", "H", "I", "J" }
 local PNAME = { ["."] = "air", ["#"] = "solid", ["="] = "one-way platform",
-  ["%"] = "breakable", ["c"] = "crumbling", ["~"] = "water", ["L"] = "LAVA",
+  ["%"] = "breakable", ["*"] = "BULWARK block -- only Vess's plated charge",
+  ["c"] = "crumbling", ["~"] = "water", ["L"] = "LAVA",
   ["^"] = "spike up", ["v"] = "spike down", ["<"] = "spike left",
   [">"] = "spike right" }
+
+-- ==================================================================
+-- PHASE 2: ENTITIES
+-- ==================================================================
+-- The header above used to say "terrain characters ONLY", because an
+-- entity is two edits that are not independently valid -- a character in
+-- the grid AND a line in `key` -- and a room with one and not the other
+-- does not load at all. RoomIO.setKeyEntries puts both on a single write,
+-- which is what made this safe to build.
+--
+-- THE EDITOR ALLOCATES THE CHARACTER. It is never typed, never chosen for
+-- being mnemonic, and never one the engine already owns: the candidate
+-- set is derived from World's own published alphabet and filtered against
+-- what this room already uses. That is the single most expensive bug in
+-- this project -- twelve known instances, `c` for a brazier and `C` for a
+-- terminal among them -- and it is now impossible to commit by hand,
+-- because there is no hand involved.
+--
+-- Ordered by what you reach for, not alphabetically. Enemies come from
+-- Enemy.TYPES so this list cannot go stale when one is added.
+local PLACEABLE = {
+  { spec = "cell",    name = "ENERGY CELL",
+    tip = "Lu drains it for half her bar. Refreshes when you leave the ZONE, not the room." },
+  { spec = "anchor",  name = "GRAPPLE ANCHOR",
+    tip = "Vess only, 110px reach, needs line of sight. His one mobility upgrade." },
+  { spec = "updraft:6", name = "UPDRAFT x6",
+    tip = "thermal column. Lu rides it with the DRIFT VANES; scenery to Vess. The number is its height in tiles." },
+  { spec = "heart",   name = "HEART", tip = "3 hp." },
+  { spec = "checkpoint", name = "CHECKPOINT",
+    tip = "banks the run and moves the respawn. Gives no health and no energy. NEVER in a room that arms a boss." },
+  { spec = "save",    name = "SAVE (retired)",
+    tip = "resolves to a checkpoint. checkprops fails any room still using it -- here so you can find and replace one." },
+}
+
+for _, n in ipairs(require("src.entities.enemies").TYPES or {}) do
+  PLACEABLE[#PLACEABLE + 1] = { spec = n, name = n:upper(), enemy = true,
+    tip = "enemy. Drops are tunable PER SPAWN -- append :energy=6 or "
+       .. ":shards=0 to this room's key line." }
+end
 
 local TOOLS = {
   { id = "brush",   short = "BRUSH", key = "B",
@@ -103,6 +143,13 @@ function S:loadFromDisk(keepHistory)
   local rows, err
   if self.id then rows, err = RoomIO.readRows(self.id) end
   self.sel, self.stamp = nil, nil
+  -- char -> spec for this room, seeded from the file and added to as
+  -- entities are placed. The grid is authoritative about which of them
+  -- still matter; see S:keyEdits.
+  self.entSpec = {}
+  local def = World.getRoomDef and World.getRoomDef(self.id)
+  for ch, spec in pairs((def and def.key) or {}) do self.entSpec[ch] = spec end
+  self.entIdx = 1
   if not rows then
     self.rows = nil
     -- Say WHICH of the two things failed, and what it tried.
@@ -133,9 +180,11 @@ function S:enter()
   self.tool, self.primary, self.secondary = "brush", "#", "."
   self.deepStale = false
   self.grid = true
-  self.widgets = self:layout()
   self.hover = nil
+  -- AFTER loadFromDisk, not before: the room is what decides entIdx and
+  -- the entity catalogue, and laying out first is what froze the label.
   if self:loadFromDisk(false) then self.status = "editing " .. self.id end
+  self.widgets = self:layout()
   if not shownHelp then self.help = true; shownHelp = true end
 end
 
@@ -173,6 +222,65 @@ function S:set(tx, ty, ch)
   self.needParse = true
   self.dirty, self.deepStale = true, true
   return true
+end
+
+-- Is this character the engine's, rather than free for a spawn? Asked of
+-- World's published tables, never of a list kept here.
+function S:reserved(c)
+  return World.CHAR_TILE[c] ~= nil or World.DOOR_CHARS[c] or World.GATE_CHARS[c]
+end
+
+-- The character for a spec in THIS room: the one already keyed to it if
+-- there is one, otherwise the first candidate the room is not using.
+-- Rooms key entities to alphanumerics by convention, so that is the
+-- candidate set -- minus everything the engine owns, computed.
+local CANDIDATES = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+function S:charFor(spec)
+  for ch, s in pairs(self.entSpec) do
+    if s == spec then return ch end
+  end
+  local used = {}
+  for ch in pairs(self.entSpec) do used[ch] = true end
+  for _, row in ipairs(self.rows) do
+    for i = 1, #row do used[row:sub(i, i)] = true end
+  end
+  for i = 1, #CANDIDATES do
+    local c = CANDIDATES:sub(i, i)
+    if not used[c] and not self:reserved(c) then
+      self.entSpec[c] = spec
+      return c
+    end
+  end
+  return nil, "this room has no free map characters left"
+end
+
+-- What the key table must say once these rows are on disk. Derived from
+-- the GRID rather than from a running tally, so it is self-healing: draw
+-- over the last rollpede in a room and its key line goes with it.
+function S:keyEdits()
+  local def = World.getRoomDef and World.getRoomDef(self.id)
+  local orig = (def and def.key) or {}
+  local present, edits = {}, {}
+  for _, row in ipairs(self.rows) do
+    for i = 1, #row do
+      local c = row:sub(i, i)
+      if not self:reserved(c) then present[c] = true end
+    end
+  end
+  for c in pairs(present) do
+    local spec = self.entSpec[c] or orig[c]
+    if not spec then
+      -- Refuse rather than write it: World:load errors on an unmapped
+      -- map char, so this would be a room that does not open.
+      return nil, ("'%s' is on the map with nothing to spawn"):format(c)
+    end
+    if spec ~= orig[c] then edits[c] = spec end
+  end
+  for c in pairs(orig) do
+    if not present[c] then edits[c] = false end
+  end
+  return edits
 end
 
 function S:snapshot()
@@ -611,7 +719,10 @@ function S:save(deep, exitAfter)
   if not self.rows then return end
   if self.job then self.status = "checks still running -- wait for them" return end
   local shift = { dx = (self.pendDX or 0) * T, dy = (self.pendDY or 0) * T }
-  local ok, err = RoomIO.writeMap(self.id, self.rows, { shift = shift })
+  local edits, kerr = self:keyEdits()
+  if not edits then self.status = "SAVE REFUSED: " .. tostring(kerr) return end
+  local ok, err = RoomIO.writeMap(self.id, self.rows,
+    { shift = shift, key = edits })
   if not ok then self.status = "SAVE REFUSED: " .. tostring(err) return end
   RoomIO.invalidate(self.id)
   self.pendDX, self.pendDY = 0, 0
@@ -627,6 +738,34 @@ function S:uiPos()
   local mx, my = love.mouse.getPosition()
   local sc = (G.blitScale or 1) * (G.RS or 1)
   return (mx - (G.blitOX or 0)) / sc, (my - (G.blitOY or 0)) / sc
+end
+
+-- Choosing an entity just makes its character the brush. Every tool --
+-- brush, rect, fill, the stamp -- then works on it unchanged, which is
+-- why there is no "entity mode" anywhere in this file.
+-- THE WIDGET LIST IS BUILT ONCE, IN S:enter.
+--
+-- Which was fine while every label was a constant, and wrong the moment
+-- one of them showed a selection: the entity name was baked at enter
+-- time -- before loadFromDisk had even set entIdx -- so it read "ENERGY
+-- CELL" forever however many times you clicked the arrows. The selection
+-- moved, the status line moved, and the one piece of chrome that was
+-- supposed to tell you what you were about to place did not.
+--
+-- Anything that changes what a widget SAYS has to rebuild them.
+function S:stepEntity(d)
+  self.entIdx = (((self.entIdx or 1) - 1 + d) % #PLACEABLE) + 1
+  self.widgets = self:layout()
+  self.status = PLACEABLE[self.entIdx].name .. "   (N to make it the brush)"
+end
+
+function S:pickEntity()
+  local e = PLACEABLE[self.entIdx or 1]
+  local ch, err = self:charFor(e.spec)
+  if not ch then self.status = "CANNOT PLACE: " .. tostring(err) return end
+  self.primary = ch
+  self.widgets = self:layout()
+  self.status = e.name .. "  ->  '" .. ch .. "'"
 end
 
 function S:cursorTile()
@@ -677,6 +816,18 @@ function S:layout()
     end
   end
 
+  -- the entity row. Stepping is a pair of buttons rather than a popup
+  -- because the catalogue is forty long and a grid of forty swatches is
+  -- not a thing anybody reads.
+  local ent = PLACEABLE[self.entIdx or 1] or PLACEABLE[1]
+  add { x = 4, y = 58, w = 14, h = 14, kind = "entstep", val = -1, label = "<",
+        tip = "previous placeable   ," }
+  add { x = 20, y = 58, w = 150, h = 14, kind = "ent", val = self.entIdx,
+        label = ent.name,
+        tip = ent.tip .. "   N makes it the brush; , and . step the list" }
+  add { x = 172, y = 58, w = 14, h = 14, kind = "entstep", val = 1, label = ">",
+        tip = "next placeable   ." }
+
   x = 4
   for _, a in ipairs(ACTIONS) do
     local bw = (#a.label * 6) + 8
@@ -697,6 +848,8 @@ function S:hit(ux, uy)
 end
 
 function S:activate(g)
+  if g.kind == "entstep" then return self:stepEntity(g.val) end
+  if g.kind == "ent" then return self:pickEntity() end
   if g.kind == "size" then
     self:resize(g.val, g.n)
   elseif g.kind == "tile" then
@@ -947,6 +1100,9 @@ function S:keypressed(k)
   elseif k == "tab" then self.help = not self.help
   elseif k == "f" then self:frameRoom()
   elseif k == "k" then self.showLegend = not self.showLegend
+  elseif k == "n" then self:pickEntity()
+  elseif k == "," or k == "." then
+    self:stepEntity(k == "." and 1 or -1)
   elseif tonumber(k) then
     local i = tonumber(k); if i == 0 then i = 10 end
     if PALETTE[i] then self.primary = PALETTE[i] end
@@ -1293,7 +1449,7 @@ end
 
 function S:drawHelp()
   local g = love.graphics
-  box(24, 26, G.SW - 48, 240, 0.92)
+  box(24, 26, G.SW - 48, 252, 0.92)
   g.setColor(P.ember)
   g.print("ROOM EDITOR", 32, 32)
   g.setColor(P.cream)
@@ -1302,6 +1458,14 @@ function S:drawHelp()
     "        Click any button up top; hover it for what it does.\n" ..
     "TOOLS   B brush   E erase   G fill   I pick   U rect   M select\n" ..
     "TILES   1-9 0 pick a tile   [ ] cycle   X swap the two\n" ..
+    "ENTITY  , and . step the placeable list, N makes it the brush --\n" ..
+    "        then every tool paints it. THE EDITOR PICKS THE MAP\n" ..
+    "        CHARACTER, never you: it takes one this room is not using\n" ..
+    "        and that the engine does not own, which is the whole of\n" ..
+    "        the shadowed-key bug this project keeps paying for. Paint\n" ..
+    "        over the last one of something and its key line goes too.\n" ..
+    "        Enemy drops are per spawn -- edit the key line to read\n" ..
+    "        \"rollpede:energy=0\" and that one pays nothing.\n" ..
     "PAN     WASD or arrows, SHIFT for fast. You CAN pan off the edge --\n" ..
     "        that is deliberate, so you can build outwards. F re-frames.\n" ..
     "LEGEND  K -- what every letter in THIS room means. Doors and gates\n" ..
@@ -1325,7 +1489,7 @@ function S:drawHelp()
     "        as <room>.<date>-<time>.lua -- nothing is overwritten.",
     32, 44, G.SW - 64)
   g.setColor(P.slate)
-  g.print("TAB or ESC closes this", 32, 254)
+  g.print("TAB or ESC closes this", 32, 266)
 end
 
 return S

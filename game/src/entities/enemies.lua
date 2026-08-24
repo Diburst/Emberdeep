@@ -10,14 +10,61 @@ local Cam = require "src.camera"
 local T = 16
 local Enemy = Entity.extend()
 
-function Enemy:init(x, y, def)
+-- ==================================================================
+-- THE ENERGY ECONOMY  (COOP-PLAN 2, 7.3, 8.2)
+-- ==================================================================
+-- Lu's dome is the co-op verb, and its bar no longer fills itself:
+-- player.lua regenerates her to a reserve and no further. Everything
+-- above that has to be picked up, which makes "how much energy is in
+-- this room" a LEVEL DESIGN number rather than a global constant.
+--
+-- So it is set PER SPAWN, not per type. `drops` used to live on the type
+-- alone, so a scraphusk was worth exactly the same wherever it stood --
+-- and the only lever for "this corridor is starving Lu" was to retune
+-- every scraphusk in the game and hope nothing else broke. A room can
+-- now say what its own fight is worth:
+--
+--     ["h"] = "scraphusk"                    -- the type's default
+--     ["H"] = "scraphusk:energy=6"           -- a generous one
+--     ["k"] = "rollpede:energy=0:shards=0"   -- scenery that pays nothing
+--
+-- Any drop key may be overridden. An unknown one is an ERROR rather than
+-- a shrug: silently ignoring a spec you meant to matter is this
+-- project's single most expensive bug class, and it has cost a
+-- playthrough three separate times.
+--
+-- checkenergy.py audits the totals per room, which is the entire reason
+-- for making this a per-spawn number in the first place.
+Enemy.ENERGY_PER_SHARD = 1   -- default mote count: matches the shard count
+Enemy.DROP_KEYS = { shards = true, energy = true, heart = true,
+                    scrap = true, big = true }
+
+function Enemy:init(x, y, def, parts)
   Entity.init(self, x, y)
   self.kind = "enemy"
   local hpMult = ({ 0.75, 1, 1.3 })[G.run and G.run.difficulty or 2] or 1
   self.maxhp = math.max(1, math.floor((def.hp or 3) * hpMult + 0.5))
   self.hp = self.maxhp
   self.touchDmg = def.touchDmg or 2
-  self.drops = def.drops or { shards = 2, heart = 0.12, scrap = 0.08 }
+  -- COPY before touching. `def.drops` is shared by every instance of
+  -- the type, so a per-spawn override that mutated it in place would
+  -- silently retune every other one of these in the game.
+  local base = def.drops or { shards = 2, heart = 0.12, scrap = 0.08 }
+  local d = {}
+  for k, v in pairs(base) do d[k] = v end
+  if d.energy == nil then
+    d.energy = (d.shards or 0) * Enemy.ENERGY_PER_SHARD
+  end
+  for i = 2, #(parts or {}) do
+    local key, val = tostring(parts[i]):match("^(%a+)=(%-?[%d%.]+)$")
+    if not key or not Enemy.DROP_KEYS[key] then
+      error(("enemy spawn '%s': bad drop override %q -- expected one of "
+        .. "shards, energy, heart, scrap, big (as key=number)")
+        :format(tostring(parts[1]), tostring(parts[i])))
+    end
+    d[key] = tonumber(val)
+  end
+  self.drops = d
   self.sprite = def.sprite
   self.animRate = def.animRate or 4
   self.w = def.w or 12
@@ -81,6 +128,12 @@ function Enemy:onDeath()
   if G.Audio then G.Audio.sfx("enemydie") end
   local d = self.drops
   Pickup.drop(World, cx, cy, "shard", d.shards or 2)
+  -- Lu's half of the kill. A SEPARATE mote rather than a share of the
+  -- shard count, so scrap and dome energy can be tuned independently --
+  -- they are different economies and one number would weld them
+  -- together, which is exactly what 8.2 split apart.
+  local en = math.floor(d.energy or 0)
+  if en > 0 then Pickup.drop(World, cx, cy, "energy", en) end
   if U.chance(d.big or 0.1) then Pickup.drop(World, cx, cy, "bigshard", 1) end
   local heartChance = d.heart or 0.12
   -- pity: more hearts when players are hurting
@@ -132,10 +185,17 @@ function Enemy:speedMult()
   return self.buffed > 0 and 1.5 or 1
 end
 
+-- EVERY ENEMY TYPE, IN DECLARATION ORDER. The room editor needs a list
+-- of what it may place, and the alternative was for it to keep its own
+-- -- which is the copied-constant failure this project has three
+-- post-mortems about. reg() is the only way an enemy comes into
+-- existence, so this cannot go stale.
+Enemy.TYPES = {}
+
 local function reg(name, def, updateFn, drawFn)
   local C = Enemy.extend()
-  C.init = function(self, x, y)
-    Enemy.init(self, x, y, def)
+  C.init = function(self, x, y, parts)
+    Enemy.init(self, x, y, def, parts)
     if def.init then def.init(self) end
   end
   C.update = function(self, dt)
@@ -166,7 +226,10 @@ local function reg(name, def, updateFn, drawFn)
       def.onDeathExtra(self)
     end
   end
-  Entity.register(name, function(x, y) return C.new(x, y) end)
+  -- parts reaches the constructor now: it is what carries a room's
+  -- per-spawn drop tuning. It used to be dropped on the floor here.
+  Enemy.TYPES[#Enemy.TYPES + 1] = name
+  Entity.register(name, function(x, y, parts) return C.new(x, y, parts) end)
   return C
 end
 

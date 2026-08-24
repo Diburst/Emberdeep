@@ -86,6 +86,47 @@ for f in glob.glob("src/data/rooms/*.lua"):
 fails, notes = [], []
 
 
+# ------------------------------------------------------------------
+# THE FORMULA BELOW IS ONLY TRUE IF ARENAS KEEP THE PLAIN MIDPOINT.
+#
+# COOP-PLAN 13.2 gave the camera a second rule: once the upper bot is
+# pushing the top of the frame it stops averaging and follows them. That
+# is right for the four tower fights you climb toward and WRONG for every
+# grounded boss -- a hovering Lu would drag the frame up and push the
+# Bramble Maw off the bottom of it, which is the Archivist's bug again in
+# a new coat.
+#
+# So world.lua exempts any room with an arena, and cam_y() is only
+# trustworthy while it does. This asserts the exemption still exists
+# rather than assuming it, because a silent change there would make every
+# number in this file quietly wrong in the direction that PASSES.
+#
+# Comments are stripped first: prose describing the rule looks exactly
+# like the rule to a regex, and this project has lost three diagnoses
+# that way in one sitting.
+def _arena_keeps_midpoint(path="src/world.lua"):
+    src = re.sub(r"--[^\n]*", "", open(path).read())
+    hits = re.findall(r"Cam\.favourTop\s*=\s*([^\n]+)", src)
+    if not hits:
+        return ("src/world.lua never sets Cam.favourTop -- either the "
+                "camera rule was removed or it moved, and cam_y() below "
+                "is no longer the formula the game uses")
+    if len(hits) > 1:
+        return ("src/world.lua sets Cam.favourTop %d times; there must be "
+                "exactly one owner of the arena exemption" % len(hits))
+    if "arena" not in hits[0]:
+        return ("src/world.lua sets Cam.favourTop to `%s`, which is not "
+                "keyed off the room's arena -- boss visibility is proved "
+                "against the midpoint and nothing guarantees it any more"
+                % hits[0].strip())
+    return None
+
+
+_bad = _arena_keeps_midpoint()
+if _bad:
+    fails.append("CAMERA RULE: " + _bad)
+
+
 def cam_y(fy):
     """Camera top with a bot standing on tile row fy."""
     room_h = ROOM.H * T

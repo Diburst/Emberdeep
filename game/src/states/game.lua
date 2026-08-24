@@ -23,6 +23,9 @@ function S:enter(prev, mode)
   self.announceQueue = {}
   self.linkMeter = 1
   self.linkState = nil   -- {t} charging
+  self.tetherStrain = 0  -- 0 slack .. 1 severed (COOP-PLAN 12.3)
+  self.tetherTaut = 0    -- countdown: the horizontal wall just bit
+  self.tetherPulse = 0   -- countdown: LINK pressed while too far apart
   self.partnerHoldT = 0
   self.pendingSwap = false
   self.respawning = false
@@ -97,8 +100,11 @@ function S:update(dt)
 
   if self.fade > 0.95 then return end -- hold sim during full black
 
-  -- link meter recharge
-  if self.linkMeter < 1 then
+  -- link meter recharge -- but not through a severed field (12.3). This
+  -- is a systemic cost, not a physical one: nothing stops the player
+  -- moving, the connection simply is not there to charge through.
+  self:tetherUpdate(dt)
+  if self.linkMeter < 1 and (self.tetherStrain or 0) < S.TETHER_LIMIT then
     self.linkMeter = math.min(1, self.linkMeter + dt / 16.5)
   end
 
@@ -144,17 +150,26 @@ function S:update(dt)
           -- WORLD space, not UI: this clamps a player inside the visible
           -- window in world units, so it follows the camera, not the HUD.
           local minx, maxx = Cam.x + 2, Cam.x + G.VW - 2 - p.w
+          -- COOP-PLAN 13.1: the stop is not an invisible wall, it is
+          -- the tether going taut and bright at exactly the stop point.
+          -- So the clamp reports that it bit, and drawTether says so.
           if p.x < minx then
             local ox = p.x
             p.x = minx
             if PHc.boxBlocked(p.x, p.y, p.w, p.h) then p.x = ox
-            elseif p.vx < 0 then p.vx = 0 end
+            else
+              if p.vx < 0 then p.vx = 0 end
+              self.tetherTaut = 0.2
+            end
           end
           if p.x > maxx then
             local ox = p.x
             p.x = maxx
             if PHc.boxBlocked(p.x, p.y, p.w, p.h) then p.x = ox
-            elseif p.vx > 0 then p.vx = 0 end
+            else
+              if p.vx > 0 then p.vx = 0 end
+              self.tetherTaut = 0.2
+            end
           end
         end
       end
@@ -416,6 +431,86 @@ function S:onPlayerBledOut(p)
 end
 
 -- ==================================================================
+-- THE LINK FIELD  (COOP-PLAN 12.3, 13.4)
+-- ==================================================================
+-- It is NOT a rope, and the game's own geometry refutes a rope twice.
+-- The Lane Room puts rock between the two lanes, so a physical line
+-- would have to pass through solid tile; and twelve rooms let a bot fall
+-- further than any leash could allow without either yanking the partner
+-- off a ledge (one player's mistake kills both), stopping a fall dead in
+-- mid-air (ropes do not do that), or dragging the anchor (miserable).
+--
+-- So it is a FIELD, which is what the fiction always said: the LINK blast
+-- is a radial nova of energy fired from the midpoint of the pair, and the
+-- linkcore lattice is armour only that energy opens. There has never been
+-- a rope in this world.
+--
+--   * it DRAWS THROUGH TERRAIN -- through the Lane Room wall you can see
+--     where your partner is, which turns the divider from a problem into
+--     something readable
+--   * it APPLIES NO FORCE. Ever. Nothing yanks, nothing arrests, and a
+--     fall is never interrupted. That was the whole reason to fear a
+--     leash and it is answered by construction rather than by tuning
+--   * its cost for being stretched is SYSTEMIC: the LINK meter stops
+--     charging and Lu's energy regen degrades. Closing the distance
+--     restores both, completely and immediately
+--
+-- It is also the entire edge-indicator UI. No arrow, no marker, no new
+-- HUD element: the line already runs between the two bots, so it already
+-- points at whichever one is off screen. One line, four states.
+-- ONE THRESHOLD, and the same number for every consequence, on purpose:
+-- the field becomes VISIBLE at exactly the point it stops WORKING. You
+-- never see the tether while it is doing its job, and the moment you can
+-- see it, it is telling you why something just stopped.
+--
+-- It is not ambient, and it deliberately used to be. Drawn all the time
+-- it is an eyesore -- a line trailing you through the whole game to
+-- report a condition that is almost never interesting. It has exactly
+-- three things to say and stays off the screen otherwise:
+--
+--   * the LINK was pressed and you are too far apart      -- one pulse
+--   * you are further apart than 0.75 of a screen         -- fades in
+--   * a bot has left the frame entirely                   -- full bright
+S.TETHER_LIMIT = 1.0     -- strain == 0.75 of a screen: visible AND severed
+S.TETHER_FULL = 1.25     -- ...and fully bright by here, or the instant a
+                         -- bot actually leaves the frame, whichever first
+S.TETHER_REGEN_MIN = 0.25  -- Lu's regen multiplier once severed
+
+-- Strain is measured against the SAME budget checkcoop.py audits --
+-- 0.75 of the viewport on each axis -- so the thing the player feels and
+-- the thing the validator measures are one number, not two that drift.
+function S:tetherEnds()
+  if not self.coop then return nil end
+  local v, l = self.players[1], self.players[2]
+  if not v or not l then return nil end
+  if v.dead or l.dead or v.idle or l.idle then return nil end
+  return v, l
+end
+
+function S:tetherUpdate(dt)
+  self.tetherTaut = math.max(0, (self.tetherTaut or 0) - dt)
+  self.tetherPulse = math.max(0, (self.tetherPulse or 0) - dt)
+  local v, l = self:tetherEnds()
+  if not v then self.tetherStrain = 0 return end
+  local dx = math.abs((v.x + v.w / 2) - (l.x + l.w / 2))
+  local dy = math.abs((v.y + v.h / 2) - (l.y + l.h / 2))
+  self.tetherStrain = math.max(dx / (0.75 * G.VW), dy / (0.75 * G.VH))
+end
+
+-- The one owner of "how much worse does a stretched field make things".
+-- player.lua asks this rather than keeping its own copy of the curve.
+function S:fieldRegenMult()
+  -- Binary, and it used to be a ramp starting at 0.55. The ramp was a
+  -- penalty with no signal attached: Lu's regen quietly halved at two
+  -- hundred pixels of separation and nothing on screen said so, which is
+  -- indistinguishable from a bug. Now the cost and the thing that
+  -- announces it are the same threshold, so the line appearing IS the
+  -- explanation.
+  if (self.tetherStrain or 0) < S.TETHER_LIMIT then return 1 end
+  return S.TETHER_REGEN_MIN
+end
+
+-- ==================================================================
 -- Co-op verbs
 -- ==================================================================
 function S:partnerPressed(p)
@@ -448,6 +543,9 @@ function S:tryLinkShot()
   if d > 48 then
     self:announce(self.coop and "Get closer to LINK!"
       or "Recall your partner first (hold [PARTNER]), then LINK ([WARP])!", 1.6)
+    -- 13.4: the LINK's own way of saying "not yet, get closer" -- said
+    -- through the connection it was about to fire along.
+    self.tetherPulse = 0.45
     if G.Audio then G.Audio.sfx("deny") end
     return
   end
@@ -631,6 +729,102 @@ end
 -- ==================================================================
 -- Draw
 -- ==================================================================
+-- 13.4: ONE LINE, FOUR STATES, and every piece of feedback the system
+-- needs. It is drawn in screen space after the world, so it crosses
+-- terrain on purpose -- through the Lane Room wall you can still see
+-- where your partner is.
+--
+--   idle              a subtle energy line, barely there
+--   LINK while apart  one pulse -- the LINK saying "not yet, get closer"
+--   at the wall       taut and bright, at exactly the stop point
+--   a bot off screen  pulsing fast along its length, toward the missing
+--                     bot. That IS the edge indicator; there is no arrow
+--                     and no marker anywhere in this game.
+function S:drawTether()
+  local v, l = self:tetherEnds()
+  if not v then return end
+  local g = love.graphics
+  local x1, y1 = Cam.toScreen(v.x + v.w / 2, v.y + v.h / 2)
+  local x2, y2 = Cam.toScreen(l.x + l.w / 2, l.y + l.h / 2)
+  local dx, dy = x2 - x1, y2 - y1
+  local len = math.sqrt(dx * dx + dy * dy)
+  if len < 6 then return end
+
+  local strain = self.tetherStrain or 0
+  local severed = strain >= S.TETHER_LIMIT
+  local taut = (self.tetherTaut or 0) > 0
+  local pulsing = (self.tetherPulse or 0) > 0
+  local vOff = not Cam.onScreen(v.x + v.w / 2, v.y + v.h / 2, 0)
+  local lOff = not Cam.onScreen(l.x + l.w / 2, l.y + l.h / 2, 0)
+  local missing = nil
+  if vOff ~= lOff then missing = vOff and v or l end
+
+  -- NOTHING ON SCREEN unless the field has something to say. See the
+  -- note beside S.TETHER_LIMIT: ambient, this is an eyesore.
+  if not (pulsing or severed or vOff or lOff) then return end
+
+  -- A slack field BOWS and a stretched one straightens, so the one case
+  -- where it appears while still connected -- a LINK pressed a little
+  -- too far apart -- reads as slack rather than as a warning.
+  local sag = (1 - math.min(1, strain)) * math.min(len * 0.14, 22)
+  local mx, my = (x1 + x2) / 2, (y1 + y2) / 2 + sag
+
+  -- Brightness ramps from the moment it becomes visible to the moment a
+  -- bot is genuinely gone, which is the only reading that has to be
+  -- unmistakable across a room you cannot see the other half of.
+  local t = 0
+  if vOff or lOff then
+    t = 1
+  elseif severed then
+    t = U.clamp((strain - S.TETHER_LIMIT)
+      / (S.TETHER_FULL - S.TETHER_LIMIT), 0, 1)
+  end
+  local col, a, w = (severed and P.slate or P.spark), 0.22 + 0.73 * t, 1
+  if pulsing then
+    col = P.cyan
+    a = math.max(a, 0.35 + 0.55 * (self.tetherPulse / 0.45))
+  end
+  if taut then col, a, w = P.spark, math.max(a, 0.95), 2 end
+
+  local N = 16
+  local pts = {}
+  for i = 0, N do
+    local t = i / N
+    local it = 1 - t
+    pts[#pts + 1] = it * it * x1 + 2 * it * t * mx + t * t * x2
+    pts[#pts + 1] = it * it * y1 + 2 * it * t * my + t * t * y2
+  end
+
+  g.setLineWidth(w)
+  g.setColor(col[1], col[2], col[3], a)
+  if severed then
+    -- broken into dashes, and fully reversible: walk back toward each
+    -- other and it knits itself up again with no penalty owed.
+    for i = 1, N, 2 do
+      local k = (i - 1) * 2 + 1
+      g.line(pts[k], pts[k + 1], pts[k + 2], pts[k + 3])
+    end
+  else
+    g.line(pts)
+  end
+
+  if missing then
+    local dir = (missing == l) and 1 or -1
+    for k = 0, 2 do
+      local ph = (G.time * 2.2 + k / 3) % 1
+      local t = dir > 0 and ph or (1 - ph)
+      local it = 1 - t
+      local px = it * it * x1 + 2 * it * t * mx + t * t * x2
+      local py = it * it * y1 + 2 * it * t * my + t * t * y2
+      g.setColor(P.spark[1], P.spark[2], P.spark[3],
+        0.85 * (1 - math.abs(t - 0.5) * 0.6))
+      g.circle("fill", px, py, 2.2)
+    end
+  end
+  g.setLineWidth(1)
+  g.setColor(1, 1, 1, 1)
+end
+
 function S:draw()
   World:draw()
 
@@ -674,6 +868,8 @@ function S:draw()
       g.setColor(1, 1, 1, 1)
     end
   end
+
+  self:drawTether()
 
   -- link charge beam warning
   if self.linkState then

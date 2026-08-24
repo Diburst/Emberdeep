@@ -53,7 +53,26 @@ local CHAR_TILE = {
   ["#"] = SOLID, ["_"] = SOLID, ["."] = AIR, ["="] = ONEWAY,
   ["^"] = SPIKE_U, ["v"] = SPIKE_D, ["<"] = SPIKE_L, [">"] = SPIKE_R,
   ["~"] = WATER, ["L"] = LAVA, ["%"] = BREAK, ["c"] = CRUMBLE,
+  -- THE BULWARK BLOCK (COOP-PLAN 3): the first VESS gate in the game.
+  -- Every mobility gate until now has been Lu's -- spark jump, drift
+  -- vanes -- and all three of Vess's modules bolt onto the charge he has
+  -- had since room one. A block only a PLATED charge opens is the
+  -- missing half of that pair.
+  --
+  -- It is a BREAK, not a twelfth tile kind, and that is the whole trick.
+  -- Eight places in this file ask `== BREAK` for solidity, physics,
+  -- edges and drawing; a new kind would have to be taught to all eight
+  -- and would go stale in whichever one got missed. Hardness rides
+  -- alongside in World.hardSet instead, exactly as ice does, so the only
+  -- thing in the engine that learns anything new is breakTile.
+  ["*"] = BREAK,
 }
+
+-- Published for the same reason the alphabet is: roommodel.py has to
+-- know that '*' is the gated variant or it will model every bulwark
+-- block as free to open, and checkchars fails anyone who writes a second
+-- copy of this.
+local HARD_CHARS = { ["*"] = "bulwark" }
 
 local DOOR_CHARS = { A = true, B = true, C = true, D = true, E = true, F = true }
 local GATE_CHARS = { G = true, H = true, I = true, J = true }
@@ -767,6 +786,7 @@ function World:parseGrid(lines, def, roomId)
   self.gateFlags = {}
   self.gateStyles = {}
   self.iceSet = {}
+  self.hardSet = {}
   local spawnsByChar = {}
   for ty = 0, self.h - 1 do
     self.tiles[ty] = {}
@@ -780,6 +800,8 @@ function World:parseGrid(lines, def, roomId)
       if code then
         self.tiles[ty][tx] = code
         if ch == "_" then self.iceSet[idx(tx, ty)] = true end
+        -- which FLAG opens this particular breakable, if any
+        if HARD_CHARS[ch] then self.hardSet[idx(tx, ty)] = HARD_CHARS[ch] end
       elseif DOOR_CHARS[ch] then
         self.tiles[ty][tx] = AIR
         local d = self.doors[ch]
@@ -892,6 +914,13 @@ end
 function World:load(roomId, doorChar, keepPlayers)
   local def = World.getRoomDef(roomId)
   self.room = def
+  -- ENERGY CELLS ARE ZONE-SCOPED, not room-scoped (see Cell in
+  -- pickup.lua). Room-scoped would be a grind -- walk out, walk back,
+  -- drain it again -- and run-scoped would make every cell a one-shot
+  -- you regret spending. Every path that changes rooms comes through
+  -- here (doors, teleport pads, respawn, loading a save), so this is the
+  -- only place that has to know the rule.
+  if G.run and self.zone ~= def.zone then G.run.usedCells = {} end
   self.zone = def.zone
   self.entities = {}
   self.addQueue = {}
@@ -960,6 +989,12 @@ function World:load(roomId, doorChar, keepPlayers)
   end
 
   Cam.setRoom(self.w * T, self.h * T)
+  -- COOP-PLAN 13.3. An arena keeps the PLAIN MIDPOINT. checksight.py
+  -- proves every boss visible with camY = clamp(centreY - VH/2, ...),
+  -- and favouring the upper bot would let a hovering Lu drag the frame
+  -- up and push a grounded boss off the bottom of the screen. This is
+  -- the only place Cam.favourTop is written.
+  Cam.favourTop = not (self.room and self.room.arena)
   PH.world = self
 
   -- position players at the entry door
@@ -1300,14 +1335,29 @@ function World:startCrumble(tx, ty)
   end
 end
 
-function World:breakTile(tx, ty)
-  if self:tileAt(tx, ty) == BREAK and not self.broken[idx(tx, ty)] then
-    self.broken[idx(tx, ty)] = true
-    self:fx("burst", tx * T + 8, ty * T + 8, { color = "slate", n = 8 })
-    if G.Audio then G.Audio.sfx("break") end
-    return true
+-- `with` is what is opening it: nil for a shot or a plain dash, or the
+-- name of the plate that is doing the work ("bulwark"). A plain '%'
+-- takes anything; a bulwark block takes only its own plate and shrugs
+-- off everything else with a spark, so the player learns the block is
+-- real rather than wondering whether they missed.
+function World:breakTile(tx, ty, with)
+  local i = idx(tx, ty)
+  if self:tileAt(tx, ty) ~= BREAK or self.broken[i] then return false end
+  local need = self.hardSet and self.hardSet[i]
+  if need and need ~= with then
+    -- a refusal has to be VISIBLE or it reads as a dead shot
+    if not self.hardT or (G.time - self.hardT) > 0.18 then
+      self.hardT = G.time
+      self:fx("spark", tx * T + 8, ty * T + 8, { color = "spark", n = 3 })
+      if G.Audio then G.Audio.sfx("deny") end
+    end
+    return false
   end
-  return false
+  self.broken[i] = true
+  self:fx("burst", tx * T + 8, ty * T + 8,
+    { color = need and "vessred" or "slate", n = need and 14 or 8 })
+  if G.Audio then G.Audio.sfx("break") end
+  return true
 end
 
 -- entities of a class within box
@@ -2214,7 +2264,8 @@ function World:drawEntities(g)
   -- entities by layer
   table.sort(self.entities, function(a, b) return (a.layer or 0) < (b.layer or 0) end)
   for _, e in ipairs(self.entities) do
-    if not e.dead and Cam.onScreen(e.x, e.y, 64) then e:draw() end
+    -- the BOX, not the corner: see Cam.boxOnScreen
+    if not e.dead and Cam.boxOnScreen(e.x, e.y, e.w, e.h, 64) then e:draw() end
   end
 end
 

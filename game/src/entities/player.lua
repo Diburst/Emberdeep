@@ -150,6 +150,17 @@ local VAULT_MAX_W = 32         -- wide bosses cannot be vaulted, by design
 -- Measured (tools/hover_test.lua): 1.3s of hover carries Lu 194px across
 -- a hole against 80px without. roommodel's GAP_W_HOVER = 10 tiles models
 -- that with two tiles of margin, and `calibrate` fails if the engine drifts.
+-- THE SPARK JUMP HAS TO LOOK LIKE ONE.
+--
+-- It is 365 against a base 310 -- about a tile of extra height -- which
+-- is a real difference and an almost invisible one, so it read as "Lu
+-- jumps a bit better" rather than as a module you went and found. The
+-- launch throws a ring of sparks off her feet and she trails them for as
+-- long as she is still climbing on it, which is the part a plain jump
+-- never does.
+local SPARK_T = 0.42           -- how long the trail keeps up, seconds
+local SPARK_RING = 9           -- motes thrown at the launch
+
 local HOVER_T = 1.3
 local HOVER_FALL = 26          -- clamped fall speed while the vanes are out
 
@@ -158,6 +169,61 @@ local HOVER_FALL = 26          -- clamped fall speed while the vanes are out
 -- lets the co-op cap in the design doc (12 tiles per column, then a shared
 -- landing) be a level-design rule rather than a physics accident.
 local UPDRAFT_LIFT = 110       -- pre-gravity target; ~96px/s after gravity
+
+-- ==================================================================
+-- ENERGY REGEN UNDER A STRETCHED LINK FIELD  (COOP-PLAN 12.3)
+-- ==================================================================
+-- The field never applies force -- no yank, no arrested fall, no control
+-- taken away. What stretching it costs you is SYSTEMIC, and this is Lu's
+-- share of that: her regen degrades as the field strains and is restored
+-- whole the moment the distance closes.
+--
+-- The CURVE lives in game.lua (S:fieldRegenMult) and is asked for rather
+-- than copied, because a second copy of a tuning curve is correct until
+-- the day somebody retunes one of them. Guarded for headless harnesses,
+-- where there is no G.game at all.
+local EN_REGEN = 13            -- energy/sec, field intact
+local function regenRate()
+  local m = (G.game and G.game.fieldRegenMult and G.game:fieldRegenMult()) or 1
+  return EN_REGEN * m
+end
+
+-- ==================================================================
+-- ENERGY IS FINITE NOW  (COOP-PLAN 2)
+-- ==================================================================
+-- Regen used to refill the whole bar, which made the dome free to anyone
+-- willing to stand still -- and "stand still until it is free" is the
+-- exact opposite of what every other decision in the co-op plan is for.
+--
+-- So regen climbs to a RESERVE and stops. Everything above the reserve
+-- has to be picked up: energy motes off kills (enemies.lua, tuned PER
+-- SPAWN) or an energy cell (pickup.lua, refreshed per ZONE).
+--
+-- The reserve is a FLOOR, not a budget. Its job is to guarantee that a
+-- bad fight never becomes an unrecoverable one -- Lu can always get a
+-- dome up again and always has one repair in hand. Which is why the
+-- floor is DERIVED from what those two verbs actually cost rather than
+-- written down: retune the repair pulse in upgrades.lua and the reserve
+-- follows it, instead of quietly becoming a number that strands her.
+--
+-- EN_RESERVE is the one dial. Raise it and the game gets kinder; set it
+-- to 0 and energy becomes a pure pickup economy with the derived floor
+-- still protecting her. checkenergy.py audits every room against
+-- whatever it is set to.
+local DOME_MIN = 12            -- energy needed to raise the dome at all
+local EN_RESERVE = 0.35        -- fraction of maxenergy regen climbs to
+
+local function reserveFor(p)
+  local r = Up.repair()
+  return math.min(p.maxenergy,
+    math.max(p.maxenergy * EN_RESERVE, (r and r.cost or 25) + DOME_MIN))
+end
+
+local function regenTo(p, dt)
+  local cap = reserveFor(p)
+  if p.energy >= cap then return end
+  p.energy = math.min(cap, p.energy + regenRate() * dt)
+end
 
 function Player:init(idx, x, y)
   Entity.init(self, x, y)
@@ -789,7 +855,11 @@ function Player:update(dt)
       local tx = math.floor((self.x + self.w / 2 + self.facing * 10) / T)
       local ty0 = math.floor(self.y / T)
       local ty1 = math.floor((self.y + self.h - 1) / T)
-      for ty = ty0, ty1 do World:breakTile(tx, ty) end
+      -- A PLATED charge is what opens a bulwark block, and nothing else
+      -- in the game does. `hasPlate()` is already the one question that
+      -- knows whether the plate is live this frame.
+      local with = self:plateUp() and "bulwark" or nil
+      for ty = ty0, ty1 do World:breakTile(tx, ty, with) end
     elseif self.bounceT <= 0 and G.run.flags.bulwark then
       -- the charge simply ran out. If we finished directly over a narrow
       -- body, carry through rather than dropping onto its head.
@@ -874,6 +944,17 @@ function Player:update(dt)
     if waterMode then self.strokeCd = STROKE_CD end
     if G.Audio then G.Audio.sfx("jump") end
     World:fx("puff", self.x + self.w / 2, self.y + self.h)
+    if sparkjump and not waterMode then
+      self.sparkT = SPARK_T
+      local fx, fy = self.x + self.w / 2, self.y + self.h
+      for i = 1, SPARK_RING do
+        local a = (i / SPARK_RING) * math.pi * 2
+        World:fx("trail", fx + math.cos(a) * 5, fy + math.sin(a) * 2.5,
+          { color = "spark", r = 2, t = 0.3 })
+      end
+      World:fx("burst", fx, fy, { color = "spark", n = 6, speed = 70 })
+      if G.Audio then G.Audio.sfx("vanes") end
+    end
   end
   -- variable jump height
   if not down("jump") and self.vy < -80 and not self.grappling then
@@ -918,6 +999,18 @@ function Player:update(dt)
     -- are eleven tiles into a twelve-tile gap
     if wasHovering and G.Audio then G.Audio.sfx("vanesout") end
     self.vanesT = math.max(0, self.vanesT - dt * 5)
+  end
+  -- the trail runs while she is still GOING UP on it. Cutting it at the
+  -- apex rather than on a timer is what makes it read as the jump's own
+  -- energy rather than as a decoration stuck to her feet.
+  if (self.sparkT or 0) > 0 then
+    self.sparkT = self.sparkT - dt
+    if self.vy < -40 and not self.onGround then
+      World:fx("trail", self.x + self.w / 2 + U.rand(-3, 3), self.y + self.h - 1,
+        { color = "spark", r = 1.5, t = 0.22 })
+    else
+      self.sparkT = 0
+    end
   end
   if self.onGround then self.hoverT = 0 self.airDashed = false end
 
@@ -992,7 +1085,7 @@ function Player:update(dt)
       if self.domeActive then
         self.domeActive = false
         if G.Audio then G.Audio.sfx("domeoff") end
-      elseif self.energy > 12 then
+      elseif self.energy > DOME_MIN then
         self.domeActive = true
         if G.Audio then G.Audio.sfx("domeon") end
       else
@@ -1048,7 +1141,7 @@ function Player:update(dt)
     else
       self.energyDelay = self.energyDelay - dt
       if self.energyDelay <= 0 then
-        self.energy = math.min(self.maxenergy, self.energy + 13 * dt)
+        regenTo(self, dt)
       end
     end
     -- REPAIR PULSE. Every number is a forge tier now, read from
@@ -1843,7 +1936,7 @@ function Player:updateIdle(dt, World)
     self.energy = self.energy - 5 * dt
     if self.energy <= 0 then self.energy = 0 self.domeActive = false end
   elseif self.energyDelay <= 0 then
-    self.energy = math.min(self.maxenergy, self.energy + 13 * dt)
+    regenTo(self, dt)
   end
   self:updateAnim(dt)
 end

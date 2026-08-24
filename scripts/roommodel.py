@@ -13,6 +13,10 @@ genprogress.py) reason about the same world the player experiences:
     fall that would end in lava is an invalid move.
   - Spikes '^v<>' are never stood on and never landed on (jumping over
     them is allowed, as in the engine).
+  - Gated breakables ('*', the BULWARK BLOCK) are solid to everyone
+    without the plate and solid to LU FOREVER -- the plate is Vess's.
+    They are BREAK tiles in the engine so nothing in the renderer or the
+    physics changed; only World:breakTile and this model know.
   - Magne-grapple anchors 'n' work only with the 'grapple' flag, radius
     GRAPPLE_R (Chebyshev tiles, matching the engine's 110px rope).
   - Jump height is JUMP_H tiles (JUMP_H_SPARK with 'sparkjump'), gap
@@ -21,6 +25,12 @@ genprogress.py) reason about the same world the player experiences:
   - Updraft columns ('updraft:<tiles>' entities) are ladder-like: with
     'driftvanes' Lu rides them upward one cell at a time and steps off to
     either side. Without the vanes they are ordinary air.
+  - PER-BOT KITS. Nav(room, flags, bot="vess"|"lu") models ONE bot:
+    SPARK JUMP and the DRIFT VANES are Lu's, the mid-air charge and the
+    MAGNE-GRAPPLE are Vess's, and BOT_KITS is derived from player.lua
+    rather than written down. bot=None keeps the old merged body, which
+    is an upper bound on both and is what the shipping validators still
+    ask for.
 
 Physics constants are verified against the real engine by the
 `calibrate` test scenario -- if the engine changes, that test fails and
@@ -51,7 +61,15 @@ def _alphabet(path="src/world.lua"):
         mm = re.search(r"local %s = \{(.*?)\}" % var, src, re.S)
         return set(re.findall(r"(\w)\s*=\s*true", mm.group(1)))
 
-    return tiles, cs("DOOR_CHARS"), cs("GATE_CHARS")
+    # WHICH BREAKABLES ARE GATED. '*' is a BREAK like '%' is -- that is
+    # deliberate, so the engine's eight `== BREAK` sites need no changes --
+    # but only a PLATED charge opens it, and a model that did not know
+    # would walk Lu straight through the first Vess gate in the game.
+    hard = {}
+    hm = re.search(r"local HARD_CHARS = \{(.*?)\}", src, re.S)
+    if hm:
+        hard = dict(re.findall(r'\["(.)"\]\s*=\s*"(\w+)"', hm.group(1)))
+    return tiles, cs("DOOR_CHARS"), cs("GATE_CHARS"), hard
 
 
 # ------------------------------------------------------------------
@@ -80,11 +98,15 @@ def viewport(path="main.lua"):
     return int(m.group(1)), int(m.group(2)), int(t.group(1))
 
 
-TILE_KIND, DOORS, GATES = _alphabet()
+TILE_KIND, DOORS, GATES, HARD = _alphabet()
 TILES = set(TILE_KIND)
 LIQ = set(c for c, k in TILE_KIND.items() if k in ("WATER", "LAVA"))
 SPIKES = set(c for c, k in TILE_KIND.items() if k.startswith("SPIKE"))
 OPENABLE = set(c for c, k in TILE_KIND.items() if k in ("BREAK", "CRUMBLE"))
+# anything that holds a body up while it is still there. Computed rather
+# than typed as "%c=", which is what it used to be -- a literal that was
+# correct until the engine gained a breakable and then silently was not.
+SUPPORTY = OPENABLE | set(c for c, k in TILE_KIND.items() if k == "ONEWAY")
 # every character a room map may hold that is NOT free for an entity
 RESERVED = TILES | DOORS | GATES
 JUMP_H = 3
@@ -111,11 +133,101 @@ GRAPPLE_R = 6  # 110px rope / 16px tiles
 # nobody can actually pass.
 #
 # It costs nothing to own: every run has Vess from the first room, so
-# this is baseline reach, not an ability gate.
+# this is baseline reach for HIM, not an ability gate. It is not Lu's --
+# the whole dash branch is inside `if self.isVess` -- so a kitted Nav
+# takes it from self.dash_gap, which is 0 for her.
 DASH_GAP = GAP_W + 3
 
 ALL_ABILITIES = frozenset({"sparkjump", "grapple", "hydroseals",
                            "heatplating", "telenet", "driftvanes"})
+
+
+# ------------------------------------------------------------------
+# THE PAIR ARE NOT ONE BODY, AND THIS MODEL USED TO THINK THEY WERE.
+#
+# Nav derived every movement number from a single merged flag set, so the
+# body it modelled jumped like Lu (SPARK JUMP), hovered like Lu (DRIFT
+# VANES), charged like Vess and grappled like Vess. That is nobody. It is
+# strictly more capable than either bot, so every verdict it produced was
+# an UPPER BOUND -- a room could pass here while Vess was stranded on the
+# wrong side of a hole, and three rooms were.
+#
+# A kit says which flags a bot may USE. It never says which flags the RUN
+# holds: the abilities are still found in chests, and a gate opened by
+# Lu's vanes is open for Vess too. So the flag set is split in two --
+# `gate_flags` is the state of the WORLD, `flags` is what THIS BODY can do
+# with it -- and gate_solid is the one question answered against the
+# world.
+#
+# Pass bot=None (the default) and nothing changes: the two sets are equal
+# and every number is what it was. That is deliberate. Existing callers
+# keep the merged upper bound until they opt in, so this file can land
+# without moving a single validator verdict.
+# ------------------------------------------------------------------
+def _kits(path="src/entities/player.lua"):
+    """Read the per-bot ability ownership OUT OF THE ENGINE.
+
+    Hand-typing this table would make it another copy of a fact the engine
+    owns, and this project has three post-mortems about exactly that: a
+    copy is correct right up until the engine moves, at which point it
+    goes stale SILENTLY and the guard stops guarding. So it is derived,
+    and it RAISES rather than guessing -- a wrong kit would quietly
+    re-introduce the merged body under a name that claims otherwise.
+
+    Comments are stripped first. Prose describing an ability looks exactly
+    like the ability to a regex, and that has cost this project three
+    wrong diagnoses in one sitting.
+    """
+    src = re.sub(r"--[^\n]*", "", open(path).read())
+
+    def guarded_block(guard):
+        # `if self.isVess then` / `if not self.isVess then` sit at two
+        # spaces inside Player:update; nested ifs close deeper, so the
+        # first `\n  end` at that indent is the outer close.
+        m = re.search(r"\n  if %s then\n(.*?)\n  end\n" % guard, src, re.S)
+        return m.group(1) if m else None
+
+    vess = guarded_block(r"self\.isVess")
+    lu = guarded_block(r"not self\.isVess")
+    owner = {}
+    for guard, flag in re.findall(r"(not\s+self\.isVess|self\.isVess)"
+                                  r"\s+and\s+G\.run\.flags\.(\w+)", src):
+        owner[flag] = "lu" if guard.startswith("not") else "vess"
+    # The dash and the grapple are not inline tests -- they live inside
+    # the `if self.isVess` block, so block scope is the only evidence.
+    if vess and "G.run.flags.grapple" in vess:
+        owner["grapple"] = "vess"
+    dash = "vess" if (vess and "self.dashT = " in vess) else None
+
+    missing = [n for n in ("sparkjump", "driftvanes", "grapple")
+               if owner.get(n) is None]
+    if not lu:
+        missing.append("Lu's own block")
+    if dash is None:
+        missing.append("the dash")
+    if missing:
+        raise SystemExit(
+            "roommodel._kits: %s no longer says who owns %s.\n"
+            "  The movement kits cannot be derived, so every reachability\n"
+            "  verdict in the suite would be a guess. Go and read the\n"
+            "  engine -- do NOT hand-type the answer here."
+            % (path, ", ".join(missing)))
+
+    kits = {"vess": {"denies": set(), "dash": False},
+            "lu": {"denies": set(), "dash": False}}
+    for flag, who in owner.items():
+        # every flag with a known owner, not just the mobility set: the
+        # BULWARK plate is Vess's too, and a bulwark block Lu could open
+        # would be the first Vess gate in the game gating nothing.
+        kits["lu" if who == "vess" else "vess"]["denies"].add(flag)
+    kits[dash]["dash"] = True
+    for k in kits.values():
+        k["denies"] = frozenset(k["denies"])
+    return kits
+
+
+BOT_KITS = _kits()
+BOTS = ("vess", "lu")
 
 
 class Room:
@@ -269,12 +381,23 @@ def parse_room(fname):
 class Nav:
     """Traversal queries for one room under one flag set."""
 
-    def __init__(self, room, flags):
+    def __init__(self, room, flags, bot=None):
         self.r = room
-        self.flags = frozenset(flags)
+        self.bot = bot
+        # THE WORLD'S STATE, not this body's. A gate Lu opened is open for
+        # Vess as well, so gate_solid reads this set and nothing else does.
+        self.gate_flags = frozenset(flags)
+        kit = BOT_KITS[bot] if bot else None
+        # ...and what THIS body can do with it.
+        self.flags = self.gate_flags - kit["denies"] if kit else self.gate_flags
         self.jump_h = JUMP_H_SPARK if "sparkjump" in self.flags else JUMP_H
         # the DRIFT VANES roughly double Lu's reach across a hole
         self.gap_w = GAP_W_HOVER if "driftvanes" in self.flags else GAP_W
+        # Vess's mid-air charge, and ONLY Vess's -- the whole dash branch
+        # in player.lua is inside `if self.isVess`. This used to be read
+        # straight off the module constant in moves(), which handed Lu a
+        # seven-tile gap she has never been able to cross.
+        self.dash_gap = DASH_GAP if (kit is None or kit["dash"]) else 0
         self.transit = set()  # cells the body passes through mid-fall/jump
 
     def riding(self, x, y):
@@ -284,12 +407,14 @@ class Nav:
                 and self.passable(x, y))
 
     def gate_solid(self, ch):
+        # gate_flags, NOT flags: a gate is a property of the world, not of
+        # the bot standing in front of it.
         flag = self.r.gates.get(ch)
         if flag is None:
             return True  # unmapped gate: engine treats as solid
         if flag.startswith("!"):
-            return flag[1:] in self.flags   # bridge: solid while powered
-        return flag not in self.flags        # gate: solid until opened
+            return flag[1:] in self.gate_flags  # bridge: solid while powered
+        return flag not in self.gate_flags      # gate: solid until opened
 
     def solid(self, x, y):
         if x < 0 or y < 0 or x >= self.r.W or y >= self.r.H:
@@ -303,6 +428,14 @@ class Nav:
             return True
         if ch in GATES:
             return self.gate_solid(ch)
+        # A GATED BREAKABLE is solid until this body holds the plate that
+        # opens it. Reads self.flags, not gate_flags, and that is the
+        # point: a gate is a property of the world, but a bulwark block
+        # is a property of the BOT standing in front of it. Lu never
+        # opens one no matter what the run has collected.
+        need = HARD.get(ch)
+        if need is not None:
+            return need not in self.flags
         return False
 
     def passable(self, x, y):
@@ -317,7 +450,7 @@ class Nav:
         if self.solid(x, y):
             return True
         ch = self.r.g[y][x] if 0 <= x < self.r.W and 0 <= y < self.r.H else "#"
-        return ch in "%c="
+        return ch in SUPPORTY
 
     def standable(self, x, y):
         # OPENABLE tiles ('%' break, 'c' crumble) are STANDABLE.
@@ -434,7 +567,7 @@ class Nav:
                 n = self.land(nx, y)
                 if n:
                     out.add(n)
-        reach = max(self.gap_w, DASH_GAP)
+        reach = max(self.gap_w, self.dash_gap)
         # jump up onto ledges within jump_h, horizontal reach GAP_W.
         # BONK-HONEST arcs: the engine rises IMMEDIATELY on jump, so the
         # rise must happen in the launch column (path A) or, at most, the
