@@ -32,8 +32,15 @@ W.defs = {
   },
   sparkshot = {
     name = "Spark Shot", icon = "icon_spark", user = 2,
-    rate = { 0.17, 0.14, 0.12 }, speed = 270, visual = "spark", size = 4,
-    dmg = { 1, 2, 2 }, homing = { nil, nil, 3.5 }, thresholds = { 12, 28 },
+    -- luTuned: these three rates are SOLVED at load from Vess's best DPS
+    -- at each tier (see W.tune). They are written out here so the file
+    -- still reads as a weapon definition and so a change in the solver
+    -- shows up as a diff against a number a human once agreed to.
+    rate = { 0.167, 0.109, 0.138 }, luTuned = true,
+    speed = 270, visual = "spark", size = 4,
+    -- {1,1,2} is the only integer array where every tier is an upgrade
+    -- you can feel: L2 is a FIRE-RATE upgrade, L3 is a DAMAGE upgrade.
+    dmg = { 1, 1, 2 }, homing = { nil, nil, 3.5 }, thresholds = { 12, 28 },
     sfx = "shoot4",
   },
   magnetmortar = {
@@ -52,6 +59,103 @@ W.defs = {
 }
 
 function W.get(id) return W.defs[id] end
+
+-- ------------------------------------------------------------------
+-- TIER SMOOTHING, AND LU HUNG OFF VESS AT A FIXED RATIO
+-- (COOP-PLAN 10.1 / 10.2)
+-- ------------------------------------------------------------------
+-- Two constants. Everything else is SOLVED from them at load. Hardcode
+-- Lu's numbers instead and the ratio becomes a lie the first time any
+-- Vess weapon is retuned -- silently, with nothing to catch it.
+W.LU_DPS_RATIO = 0.40   -- Lu's share of Vess's BEST dps, per tier
+W.TIER_SMOOTH  = true   -- re-derive L2 as the geometric mean of L1 and L3
+W.TIERS = 3
+
+-- Simultaneous hits on ONE target.
+--
+-- Pellets count: a scatter cone all lands at close range, which is where
+-- the weapon is used. Radial deliberately does NOT -- Pulse Bloom throws
+-- a ring outward and at most one arm of it points at anybody, so pricing
+-- it at 8x would make it the strongest gun in the game on paper and
+-- nerf it into uselessness in the hand.
+local function hitsAt(def, lvl)
+  return (def.pellets and def.pellets[lvl]) or 1
+end
+
+-- rate is a scalar on the hand-authored Vess weapons and a 3-array after
+-- W.tune normalises it; every caller must go through this.
+function W.rateAt(def, lvl)
+  local r = def.rate
+  if type(r) == "table" then return r[lvl] end
+  return r
+end
+
+-- Single-target damage per second, ignoring charge time (arclance's 0.7s
+-- wind-up is a handling cost, not a throughput one, and the numbers this
+-- was tuned against were computed without it).
+function W.dps(def, lvl)
+  local r = W.rateAt(def, lvl)
+  if not r or r <= 0 or not def.dmg or not def.dmg[lvl] then return 0 end
+  return def.dmg[lvl] * hitsAt(def, lvl) / r
+end
+
+function W.tune(force)
+  if W.tuned and not force then return end
+
+  -- 1. Every Vess weapon gets a per-tier rate array so L2 can move.
+  for _, def in pairs(W.defs) do
+    if def.user == 1 and type(def.rate) ~= "table" then
+      def.rate = { def.rate, def.rate, def.rate }
+    end
+  end
+
+  -- 2. Smooth: L1 and L3 are authored states worth keeping (the weapon
+  --    as found, and the weapon fully forged). L2 was the only number
+  --    that was ever arbitrary, so it is the only one that moves.
+  --    scatterhex was the outlier -- it DOUBLED at L2 and then grew
+  --    x1.67, and that single step was most of the lumpiness.
+  if W.TIER_SMOOTH then
+    for _, def in pairs(W.defs) do
+      if def.user == 1 then
+        local d1, d3 = W.dps(def, 1), W.dps(def, 3)
+        if d1 > 0 and d3 > 0 then
+          def.rate[2] = def.dmg[2] * hitsAt(def, 2) / math.sqrt(d1 * d3)
+        end
+      end
+    end
+  end
+
+  -- 3. Vess's best dps at each tier -- what Lu is measured against.
+  W.vessBest = {}
+  for t = 1, W.TIERS do
+    local best = 0
+    for _, def in pairs(W.defs) do
+      if def.user == 1 then best = math.max(best, W.dps(def, t)) end
+    end
+    W.vessBest[t] = best
+  end
+
+  -- 4. Solve the rate of every luTuned weapon. Damage stays an integer
+  --    array (it is what the player sees in a hit); rate carries the
+  --    fractional remainder.
+  for _, def in pairs(W.defs) do
+    if def.luTuned then
+      if type(def.rate) ~= "table" then
+        def.rate = { def.rate, def.rate, def.rate }
+      end
+      for t = 1, W.TIERS do
+        local target = W.vessBest[t] * W.LU_DPS_RATIO
+        if target > 0 and def.dmg[t] then
+          def.rate[t] = def.dmg[t] * hitsAt(def, t) / target
+        end
+      end
+    end
+  end
+
+  W.tuned = true
+end
+
+W.tune()
 
 -- v2.0: weapon level = FORGE TIER, bought from Brassa with scrap.
 -- (The old shard-XP auto-leveling is gone; shards are scrap now.)

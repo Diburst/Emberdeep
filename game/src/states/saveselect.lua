@@ -92,12 +92,21 @@ end
 function S:buildPlayersMenu()
   self.list = Menu.new({
     { label = "1 PLAYER  (swap between both bots)",
-      onConfirm = function() self:startGame(false) end },
-    { label = "2 PLAYERS  (pad 1 = Vess, pad 2 = Lu)",
-      onConfirm = function() self:startGame(true) end,
-      hint = (G.Input.pads[2] == nil and G.Input.pads[1] == nil)
-        and "No pads detected - keyboard: P1 WASD+JKL, P2 arrows+numpad"
-        or (G.Input.pads[2] == nil and "Only one pad found - P2 can use keyboard (arrows+numpad)" or nil) },
+      onConfirm = function()
+        -- Solo reads EVERY device at once: one person with a keyboard
+        -- and a pad should be able to use both without being asked to
+        -- choose. This also undoes any exclusivity a previous co-op
+        -- session left behind.
+        G.Input.clearClaims()
+        self:startGame(false)
+      end },
+    { label = "2 PLAYERS",
+      onConfirm = function()
+        -- Ask who is on what rather than guessing. See joinscreen.lua.
+        G.State.push(require "src.states.joinscreen",
+          function() self:startGame(true) end)
+      end,
+      hint = "Choose who plays on what - the keyboard counts as two" },
     { label = "BACK", onConfirm = function()
       self.mode = "slots"
       self:buildMenu()

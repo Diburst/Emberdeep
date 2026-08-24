@@ -530,9 +530,24 @@ function S:warpToPartner(p)
 end
 
 -- second controller drop-in
-function S:joystick(what, joy, slot)
-  if what == "added" and not self.coop and slot == 2 then
+function S:joystick(what, joy, slot, why)
+  if what ~= "added" then return end
+  if why == "unmapped" then
+    self:announce((joy and joy:getName() or "That controller")
+      .. " has no gamepad mapping -- it will not respond", 5)
+    return
+  end
+  if why == "full" then
+    self:announce("Both player slots already have a controller", 3)
+    return
+  end
+  if not self.coop and slot == 2 then
     self:announce("Press START on pad 2 to join!", 3)
+  elseif not self.coop and slot == 1 then
+    -- The pad took player one because nobody was on the keyboard. If a
+    -- second person wants in, they can take the keyboard instead of
+    -- hunting for a second controller.
+    self:announce("Controller = player 1. Player 2: press START, or use the ARROW KEYS", 4)
   end
 end
 

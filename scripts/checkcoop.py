@@ -120,8 +120,117 @@ def audit(fname):
     return fails, notes
 
 
+# ======================================================================
+# FALL SEPARATION  (COOP-PLAN 12.4 / 13.5) -- REPORT ONLY
+# ======================================================================
+# The camera audit above measures GATED CROSSINGS: cells Lu can reach
+# with the vanes that Vess cannot follow to. A FALL IS NOT A CROSSING,
+# so none of it applies to a bot who simply steps off a ledge -- which
+# is how the pair actually separate in the twelve tall rooms.
+#
+# Two different questions, and only the second one is a bug:
+#
+#   DEEP   the drop exceeds the vertical budget, so the falling bot
+#          leaves frame. Under the round-three camera rule (13.1) that
+#          is PERMITTED -- vertical abandonment is allowed and the
+#          tether pulses. This is reported so we know where it happens,
+#          not because it is wrong.
+#
+#   STRAND the landing has no walking route back to ANY door. Today the
+#          co-op warp bails you out. Build-order step 6 removes the warp
+#          and makes doors need both bots, at which point this is a soft
+#          lock. This is the one that has to be zero before step 6 ships.
+#
+# REPORT ONLY, deliberately. Existing rooms were authored against a
+# world with a warp in it, so promoting this to FAIL today would fail a
+# pile of rooms whose design was never wrong under the old rules.
+#
+# ONE-BODY CAVEAT. This runs the merged model -- one body that hovers
+# AND grapples -- so "a route back out" means "a route back out for the
+# most capable bot". Build-order step 3 splits the movement kits, and
+# only after that can this answer the question 13.5 actually asks:
+# a route back out that THAT BOT can walk. Until then a clean result
+# here is necessary, not sufficient.
+
+
+def fall_audit(room):
+    """Returns (deep, strand) -- two lists of message strings."""
+    deep, strand = [], []
+    if not room.doors:
+        return deep, strand
+
+    flags = full_flags(room, True)      # most permissive: everything open
+    nav = RM.Nav(room, flags)
+    start = set()
+    for ch in room.doors:
+        start |= set(nav.arrivals(ch)) | set(room.doors[ch])
+    cells = nav.reach_from(start)
+    if not cells:
+        return deep, strand
+
+    doorcells = set()
+    for cs in room.doors.values():
+        doorcells |= set(cs)
+
+    v_scroll = room.H * T > VH
+
+    # Every distinct landing you can fall to, remembering the HIGHEST
+    # place you can fall to it from -- that is the worst case, and it is
+    # the only one worth printing.
+    drops = {}
+    for (x, y) in cells:
+        cands = []
+        for nx in (x - 1, x + 1):
+            if 0 <= nx < room.W and nav.passable(nx, y):
+                cands.append((nx, y))
+        # straight down off a rope, a door lip or an updraft cell
+        if y + 1 < room.H and nav.passable(x, y + 1) \
+                and not nav.standable(x, y + 1):
+            cands.append((x, y + 1))
+        for (nx, ny) in cands:
+            landed = nav.land(nx, ny)
+            if landed is None:
+                continue        # lava, spikes or the void: a death, not a split
+            drop = landed[1] - y
+            if drop <= 0:
+                continue
+            prev = drops.get(landed)
+            if prev is None or drop > prev[1]:
+                drops[landed] = ((x, y), drop)
+
+    # Which cells can walk back to a door? Answered ONCE, by reversing
+    # the move graph and flooding backwards from the doors -- not by a
+    # fresh BFS per landing, which turned a 6-second check into a
+    # 45-second one.
+    pred = {}
+    for c in cells:
+        for n in nav.moves(*c):
+            if n in cells:
+                pred.setdefault(n, []).append(c)
+    escapable = set(d for d in doorcells if d in cells)
+    queue = list(escapable)
+    while queue:
+        c = queue.pop()
+        for p2 in pred.get(c, ()):
+            if p2 not in escapable:
+                escapable.add(p2)
+                queue.append(p2)
+
+    for landed, (frm, drop) in sorted(drops.items()):
+        if landed not in escapable:
+            strand.append("%s: a bot falling from %s lands at %s (%d tiles) "
+                          "and cannot walk back to ANY door"
+                          % (room.name, frm, landed, drop))
+        elif v_scroll and drop > V_BUDGET:
+            deep.append("%s: %s -> %s is a %d-tile fall (budget %.1f) -- "
+                        "the falling bot leaves frame"
+                        % (room.name, frm, landed, drop, V_BUDGET))
+    return deep, strand
+
+
 def main():
     all_fails, all_notes = [], []
+    all_deep, all_strand = [], []
     rooms = 0
     for fname in sorted(glob.glob("src/data/rooms/*.lua")):
         if fname.endswith("test_arena.lua"):
@@ -130,6 +239,9 @@ def main():
         f, n = audit(fname)
         all_fails += f
         all_notes += n
+        d, st = fall_audit(RM.parse_room(fname))
+        all_deep += d
+        all_strand += st
     print("== CO-OP CAMERA (%d rooms, budget %.1f tiles horizontal / %.1f vertical) =="
           % (rooms, H_BUDGET, V_BUDGET))
     for n in all_notes:
@@ -138,6 +250,18 @@ def main():
         print("  FAIL " + f)
     print("%d co-op split issues (%d notes on unreachable scenery)"
           % (len(all_fails), len(all_notes)))
+
+    print("== FALL SEPARATION (report only -- fails nothing) ==")
+    for m in all_strand:
+        print("  STRAND " + m)
+    for m in all_deep:
+        print("  DEEP   " + m)
+    print("  %d stranding fall(s), %d fall(s) past the vertical budget"
+          % (len(all_strand), len(all_deep)))
+    if all_strand:
+        print("  ^ these must be zero BEFORE build-order step 6 removes the "
+              "co-op warp; today the warp hides them")
+
     return 1 if all_fails else 0
 
 

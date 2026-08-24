@@ -43,6 +43,42 @@ def strip_comments(s):
     return re.sub(r"--[^\n]*", "", s)
 
 
+
+# ------------------------------------------------------------------
+# A FILE LOCAL CALLED ABOVE ITS OWN DECLARATION
+# ------------------------------------------------------------------
+# `local function f` does not exist above the line it is written on. A
+# call to it earlier in the file compiles perfectly -- it becomes a
+# GLOBAL lookup -- and then resolves to nil the first time that path
+# runs. luac -p cannot see it, because there is nothing malformed about
+# calling an undeclared name.
+#
+# This cost a working join screen: Input.profileForKey was written above
+# bindingMatchesKey and died with "attempt to call global
+# 'bindingMatchesKey' (a nil value)" only when the scenario ran it.
+LOCALFN = re.compile(r"^local function ([A-Za-z_]\w*)\s*\(", re.M)
+
+
+def check_local_order(paths):
+    bad = []
+    for path in paths:
+        src = open(path).read()
+        code = strip_comments(src)
+        decl = {}
+        for m in LOCALFN.finditer(code):
+            decl.setdefault(m.group(1), m.start())
+        for name, at in decl.items():
+            for m in re.finditer(r"(?<![\w.:])%s\s*\(" % re.escape(name), code):
+                if m.start() < at:
+                    line = code[:m.start()].count("\n") + 1
+                    dline = code[:at].count("\n") + 1
+                    bad.append("%s:%d calls local '%s' declared at line %d "
+                               "-- it is nil there"
+                               % (path.split("/")[-1], line, name, dline))
+                    break
+    return bad
+
+
 def main():
     if not os.path.isfile(WORLD):
         sys.exit("run from game/ -- no %s here" % WORLD)
@@ -55,6 +91,7 @@ def main():
     # so this stays honest without needing to know about fields.
 
     calls = {}          # name -> [(file, line)]
+    luafiles = ["main.lua"] if os.path.isfile("main.lua") else []
     for root, _dirs, files in os.walk("src"):
         if "rooms" in root:
             continue
@@ -62,6 +99,7 @@ def main():
             if not f.endswith(".lua"):
                 continue
             p = os.path.join(root, f)
+            luafiles.append(p)
             for i, raw in enumerate(open(p), 1):
                 line = strip_comments(raw)
                 names = re.findall(r"\bWorld:(\w+)\s*\(", line)
@@ -83,7 +121,15 @@ def main():
     for n in unused:
         print("  NOTE World:%s is defined but never called in src/" % n)
     print("%d missing method(s), %d unused" % (len(missing), len(unused)))
-    return 1 if missing else 0
+
+    badorder = check_local_order(luafiles)
+    print("== LOCAL ORDER ==")
+    for msg in badorder:
+        print("  FAIL %s" % msg)
+    print("  %d file(s) scanned, %d bad call(s)"
+          % (len(luafiles), len(badorder)))
+
+    return 1 if (missing or badorder) else 0
 
 
 if __name__ == "__main__":

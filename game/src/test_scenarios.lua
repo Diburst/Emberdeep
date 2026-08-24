@@ -4235,4 +4235,234 @@ return function(Test, scenarios)
     Ed.pendDX, Ed.pendDY = 0, 0
     Test.log((fails == 0 and "OK" or "FAILED ") .. " resize")
   end
+
+  -- ----------------------------------------------------------------
+  -- INPUT -- one person on the keyboard, one on a pad.
+  --
+  -- actionValue has always read a slot's pad bindings AND its keyboard
+  -- bindings, so this was architecturally fine. What was broken was the
+  -- SEATING: every new pad took the lowest free slot, so a single
+  -- controller always claimed player one -- the seat the keyboard player
+  -- was already in. Both inputs drove P1 and the pad player got P2's
+  -- arrow keys.
+  -- ----------------------------------------------------------------
+  scenarios.input = function()
+    local Input = require "src.input"
+    local fails = 0
+    local function fail(m) Test.log("FAIL " .. m) fails = fails + 1 end
+    local function eq(got, want, what)
+      if got ~= want then fail(("%s: got %s want %s"):format(what, tostring(got), tostring(want))) end
+    end
+
+    local realPads = { Input.pads[1], Input.pads[2] }
+    local realKb = { Input.kbUsed[1], Input.kbUsed[2] }
+    local now = love.timer.getTime()
+    local fakepad = { isGamepad = function() return true end,
+                      getName = function() return "FakePad" end }
+    local dead = { isGamepad = function() return false end,
+                   getName = function() return "NoMapping" end }
+
+    -- 1. nobody at the keyboard: a lone pad takes player one
+    Input.pads[1], Input.pads[2] = nil, nil
+    Input.kbUsed[1], Input.kbUsed[2] = 0, 0
+    eq(Input.addJoystick(fakepad), 1, "lone pad with no keyboard player")
+
+    -- 2. THE BUG: someone is playing on slot 1's keys. The pad must NOT
+    --    take their seat.
+    Input.pads[1], Input.pads[2] = nil, nil
+    Input.kbUsed[1], Input.kbUsed[2] = now, 0
+    eq(Input.addJoystick(fakepad), 2, "pad must avoid the active keyboard seat")
+
+    -- 3. and the other way round
+    Input.pads[1], Input.pads[2] = nil, nil
+    Input.kbUsed[1], Input.kbUsed[2] = 0, now
+    eq(Input.addJoystick(fakepad), 1, "pad avoids slot 2 when slot 2 is typing")
+
+    -- 4. both seats warm: take the one used longest ago, never nil
+    Input.pads[1], Input.pads[2] = nil, nil
+    Input.kbUsed[1], Input.kbUsed[2] = now, now - 5
+    eq(Input.addJoystick(fakepad), 2, "both keyboards active -> oldest seat")
+
+    -- 5. an unmapped pad is REPORTED, not swallowed
+    Input.pads[1], Input.pads[2] = nil, nil
+    local slot, why = Input.addJoystick(dead)
+    eq(slot, nil, "unmapped pad seated anyway")
+    eq(why, "unmapped", "unmapped pad gave no reason")
+
+    -- 6. full is full
+    Input.pads[1], Input.pads[2] = fakepad, fakepad
+    local s2, w2 = Input.addJoystick(fakepad)
+    eq(s2, nil, "third pad seated")
+    eq(w2, "full", "third pad gave no reason")
+
+    -- 7. the seating is correctable
+    Input.pads[1], Input.pads[2] = "A", "B"
+    Input.swapPads()
+    eq(Input.pads[1], "B", "swapPads did not swap")
+    eq(Input.pads[2], "A", "swapPads did not swap")
+
+    -- 8. and the two slots must not share a keyboard binding, or one
+    --    keypress drives both bots
+    local clash = {}
+    for _, action in ipairs(Input.ACTIONS) do
+      for _, b in ipairs(Input.bindings[1].kb[action] or {}) do
+        for _, b2 in ipairs(Input.bindings[2].kb[action] or {}) do
+          if b.id == b2.id then clash[#clash + 1] = action .. ":" .. tostring(b.id) end
+        end
+      end
+    end
+    if #clash > 0 then
+      fail("slot 1 and slot 2 share keys: " .. table.concat(clash, ", "))
+    else
+      Test.log("keyboard sets are disjoint across the two slots")
+    end
+
+    Input.pads[1], Input.pads[2] = realPads[1], realPads[2]
+    Input.kbUsed[1], Input.kbUsed[2] = realKb[1], realKb[2]
+    Test.log((fails == 0 and "OK" or "FAILED ") .. " input")
+  end
+
+  -- ----------------------------------------------------------------
+  -- JOIN -- a keyboard and two pads is FOUR devices.
+  -- ----------------------------------------------------------------
+  scenarios.join = function()
+    local Input = require "src.input"
+    local fails = 0
+    local function fail(m) Test.log("FAIL " .. m) fails = fails + 1 end
+    local function eq(got, want, what)
+      if got ~= want then fail(("%s: got %s want %s"):format(what, tostring(got), tostring(want))) end
+    end
+
+    local realPads = { Input.pads[1], Input.pads[2] }
+    Input.clearClaims()
+
+    -- the two keyboard halves are separately claimable
+    eq(Input.kbSet[1], 1, "default kb profile for slot 1")
+    eq(Input.kbSet[2], 2, "default kb profile for slot 2")
+
+    -- a key must resolve to the profile that owns it, both ways
+    local p1 = Input.profileForKey("a")
+    local p2 = Input.profileForKey("left")
+    if not p1 or not p2 then fail("profileForKey found no owner for a/left")
+    elseif p1 == p2 then fail("both keyboard halves claim the same key") end
+
+    -- VESS takes the ARROWS, LU takes WASD -- the reverse of the default
+    Input.claimKB(1, p2)
+    Input.claimKB(2, p1)
+    eq(Input.kbSet[1], p2, "slot 1 did not take the arrows")
+    eq(Input.kbSet[2], p1, "slot 2 did not take WASD")
+
+    -- and the bindings themselves must NOT have been rewritten: they are
+    -- persisted into settings, and a session choice must not edit them
+    if Input.bindings[1].kb == Input.bindings[2].kb then
+      fail("the two keyboard profiles are the same table")
+    end
+
+    -- exclusivity: a slot that claimed the keyboard must ignore its pad
+    local fakepad = { isGamepad = function() return true end,
+                      getName = function() return "FakePad" end,
+                      isGamepadDown = function() return true end,
+                      getGamepadAxis = function() return 0 end }
+    Input.exclusive = true
+    Input.claimPad(2, fakepad)
+    eq(Input.claimed[1], "kb", "slot 1 claim")
+    eq(Input.claimed[2], "pad", "slot 2 claim")
+    -- slot 1 claimed the keyboard, so a held pad button must not reach it
+    Input.pads[1] = fakepad
+    local leaked = Input.actionValue(1, "jump")
+    eq(leaked, 0, "pad input LEAKED into a keyboard-claimed slot")
+
+    -- solo turns exclusivity off again
+    Input.clearClaims()
+    eq(Input.exclusive, false, "clearClaims left exclusivity on")
+    eq(Input.kbSet[1], 1, "clearClaims did not restore the kb profiles")
+
+    Input.pads[1], Input.pads[2] = realPads[1], realPads[2]
+    Test.log((fails == 0 and "OK" or "FAILED ") .. " join")
+  end
+
+  -- ----------------------------------------------------------------
+  -- WEAPON CURVES  (COOP-PLAN 10.1/10.2)
+  -- ----------------------------------------------------------------
+  -- Pure arithmetic, no run needed. This exists because the whole point
+  -- of solving Lu's rate at load is that she TRACKS Vess -- and nothing
+  -- else in the suite would notice if the solver stopped running, or if
+  -- somebody hand-edited a rate back into sparkshot.
+  scenarios.weapons = function()
+    local W = require "src.weapons"
+    local fails = 0
+    local function fail(m) Test.log("FAIL " .. m) fails = fails + 1 end
+    local function near(got, want, tol, what)
+      if math.abs(got - want) > tol then
+        fail(("%s: got %.3f want %.3f"):format(what, got, want))
+      end
+    end
+
+    Test.log(("vess best %.1f / %.1f / %.1f"):format(
+      W.vessBest[1], W.vessBest[2], W.vessBest[3]))
+
+    -- 1. Vess's curve is smooth: L2 is the geometric mean of L1 and L3
+    --    for every one of his weapons.
+    for id, def in pairs(W.defs) do
+      if def.user == 1 then
+        local d1, d2, d3 = W.dps(def, 1), W.dps(def, 2), W.dps(def, 3)
+        near(d2, math.sqrt(d1 * d3), 0.05, id .. " L2 not the geometric mean")
+        if not (d1 < d2 and d2 < d3) then
+          fail(id .. " dps is not monotonic: " ..
+            ("%.1f/%.1f/%.1f"):format(d1, d2, d3))
+        end
+      end
+    end
+
+    -- 2. Lu sits at exactly LU_DPS_RATIO of Vess's best, per tier.
+    local spark = W.defs.sparkshot
+    for t = 1, 3 do
+      near(W.dps(spark, t), W.vessBest[t] * W.LU_DPS_RATIO, 0.02,
+        "sparkshot L" .. t .. " off the ratio")
+    end
+    Test.log(("sparkshot dps %.1f / %.1f / %.1f (%.0f%% of vess)"):format(
+      W.dps(spark, 1), W.dps(spark, 2), W.dps(spark, 3),
+      W.LU_DPS_RATIO * 100))
+
+    -- 3. Every sparkshot tier is an upgrade you can FEEL: L2 fires
+    --    faster, L3 hits harder. {1,1,2} is the only array that does
+    --    this -- if the damage array is edited, this catches it.
+    if not (spark.rate[2] < spark.rate[1]) then
+      fail("sparkshot L2 is not a fire-rate upgrade")
+    end
+    if not (spark.dmg[3] > spark.dmg[2]) then
+      fail("sparkshot L3 is not a damage upgrade")
+    end
+
+    -- 4. The solver actually ran. A scalar rate on a Vess weapon means
+    --    W.tune never touched it, and player.lua would index a number.
+    for id, def in pairs(W.defs) do
+      if def.user == 1 and type(def.rate) ~= "table" then
+        fail(id .. " rate is still a scalar -- W.tune did not run")
+      end
+    end
+
+    -- 5. Retuning Vess must MOVE Lu. This is the property the whole
+    --    design exists for, so assert it rather than trusting it.
+    local bolt = W.defs.boltdriver
+    local savedRate = { bolt.rate[1], bolt.rate[2], bolt.rate[3] }
+    local savedDmg = { bolt.dmg[1], bolt.dmg[2], bolt.dmg[3] }
+    local savedSpark = { spark.rate[1], spark.rate[2], spark.rate[3] }
+    bolt.dmg = { 40, 60, 100 }
+    bolt.rate = 0.22
+    W.tune(true)
+    if W.vessBest[1] < 100 then
+      fail("vessBest did not follow a retuned Vess weapon")
+    end
+    near(W.dps(spark, 1), W.vessBest[1] * W.LU_DPS_RATIO, 0.02,
+      "lu did not follow the retune")
+    -- put it back, and prove the restore is exact
+    bolt.dmg, bolt.rate = savedDmg, savedRate
+    W.tune(true)
+    for t = 1, 3 do
+      near(spark.rate[t], savedSpark[t], 0.001, "restore L" .. t)
+    end
+
+    Test.log((fails == 0 and "OK" or "FAILED ") .. " weapons")
+  end
 end

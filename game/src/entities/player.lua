@@ -1681,7 +1681,9 @@ function Player:updateFire(dt, World, slot, down, pressed)
       self.charging = false
       if self.fireCd <= 0 then
         local full = self.charge >= def.charge
-        self.fireCd = def.rate
+        -- W.tune turns every Vess rate into a per-tier array, so this
+        -- cannot read def.rate directly any more.
+        self.fireCd = Weapons.rateAt(def, lvl)
         local dmg = full and def.dmg[lvl] or def.tapdmg
         local pierce = full and def.pierce[lvl] or 0
         self:shoot(World, mx, my, {
@@ -1698,8 +1700,7 @@ function Player:updateFire(dt, World, slot, down, pressed)
     return
   end
 
-  local rate = def.rate
-  if type(rate) == "table" then rate = rate[lvl] end
+  local rate = Weapons.rateAt(def, lvl)
   if self.chilledT and self.chilledT > 0 then rate = rate * 1.6 end
   if down("fire") and self.fireCd <= 0 then
     self.fireCd = rate

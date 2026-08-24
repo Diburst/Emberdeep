@@ -274,8 +274,13 @@ function love.gamepadpressed(joy, button) Input.gamepadpressed(joy, button) end
 function love.gamepadreleased(joy, button) Input.gamepadreleased(joy, button) end
 
 function love.joystickadded(joy)
-  local slot = Input.addJoystick(joy)
-  State.event("joystick", "added", joy, slot)
+  -- addJoystick returns nil plus a reason when it could not seat the pad.
+  -- "unmapped" is the one that matters: SDL has no gamepad mapping for
+  -- this controller, so LOVE reports no buttons by name and the pad does
+  -- nothing. That used to happen in complete silence, which is
+  -- indistinguishable from a flat battery.
+  local slot, why = Input.addJoystick(joy)
+  State.event("joystick", "added", joy, slot, why)
 end
 
 function love.joystickremoved(joy)
