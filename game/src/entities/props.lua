@@ -382,15 +382,46 @@ function Anchor:init(x, y)
   self.w, self.h = 10, 10
   self.layer = -2
 end
+-- `aimed` is stamped by Vess every frame he is targeting this one, and
+-- CLEARED here rather than by him -- he only ever knows about the anchor
+-- he chose, so the one he stopped choosing would stay lit forever if the
+-- clearing lived on his side.
+function Anchor:update(dt)
+  self.lastAimed = self.aimed
+  self.aimed = nil
+  self.aimT = (self.aimT or 0) + (dt or 0)
+end
+
 function Anchor:draw()
   local g = love.graphics
   local cx, cy = self.x + 5, self.y + 5
+  local live = G.run.flags.grapple
+  local on = live and self.lastAimed ~= nil
+
+  -- TARGETED: a breathing ring outside the anchor, so it reads at a
+  -- glance and from across the room. Vess only ever has one -- the
+  -- highlight is the answer to "which one will I catch".
+  if on then
+    local pulse = 0.5 + 0.5 * math.sin((self.aimT or 0) * 9)
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.30 + pulse * 0.35)
+    g.circle("line", cx, cy, 8 + pulse * 1.5)
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.16)
+    g.circle("fill", cx, cy, 7)
+    -- four ticks, like a reticle
+    for i = 0, 3 do
+      local a = i * math.pi / 2 + (self.aimT or 0) * 1.2
+      local ix, iy = math.cos(a), math.sin(a)
+      g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.55 + pulse * 0.35)
+      g.line(cx + ix * 9, cy + iy * 9, cx + ix * 12, cy + iy * 12)
+    end
+  end
+
   g.setColor(P.slate)
   g.circle("line", cx, cy, 5)
   g.setColor(P.silver)
   g.circle("line", cx, cy, 3.5)
-  g.setColor(G.run.flags.grapple and P.cyan or P.gray)
-  g.circle("fill", cx, cy, 2)
+  g.setColor(live and P.cyan or P.gray)
+  g.circle("fill", cx, cy, on and 3 or 2)
   g.setColor(1, 1, 1, 1)
 end
 Entity.register("anchor", function(x, y) return Anchor.new(x, y) end)
@@ -2252,8 +2283,15 @@ function Emitter:energize(p, dt)
   -- one failure mode that would feel like the game cheated.
   if not self.charging then
     if (p.energy or 0) < Emitter.WAKE_COST then
-      if G.game then G.game:announce("Not enough charge in the dome.", 1.5) end
-      if G.Audio then G.Audio.sfx("deny") end
+      -- ONCE, NOT SIXTY TIMES A SECOND. The announce queue de-duplicates
+      -- now, so the message behaves either way -- but the sound does
+      -- not, and a `deny` per frame is a buzz rather than a refusal.
+      self.denyT = (self.denyT or 0) - (dt or 0)
+      if self.denyT <= 0 then
+        self.denyT = 1.0
+        if G.game then G.game:announce("Not enough charge in the shield.", 1.5) end
+        if G.Audio then G.Audio.sfx("deny") end
+      end
       return false
     end
     self.charging = true

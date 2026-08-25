@@ -3,108 +3,117 @@ return {
   zone = "skyroot", music = "skyroot",
   -- BEHIND the rock: stacked wrecks, gantries, haze
   backdrop = {
-    { kind = "band", x = 0, y = 0, w = 960, h = 272, col = "navy", a = 0.05, a2 = 0.34, py = 0.03 },
-    { kind = "band", x = -40, y = 59, w = 116, h = 20, col = "sky", a = 0.2, a2 = 0, py = 0.06 },
-    { kind = "band", x = 114, y = 59, w = 147, h = 14, col = "sky", a = 0.2, a2 = 0, py = 0.06 },
-    { kind = "band", x = 329, y = 59, w = 180, h = 30, col = "sky", a = 0.2, a2 = 0, py = 0.06 },
-    { kind = "band", x = 581, y = 59, w = 220, h = 17, col = "sky", a = 0.2, a2 = 0, py = 0.06 },
-    { kind = "band", x = 860, y = 59, w = 198, h = 22, col = "sky", a = 0.2, a2 = 0, py = 0.06 },
-    { kind = "band", x = -40, y = 119, w = 96, h = 28, col = "sky", a = 0.15, a2 = 0, py = 0.11 },
-    { kind = "band", x = 167, y = 119, w = 112, h = 27, col = "sky", a = 0.15, a2 = 0, py = 0.11 },
-    { kind = "band", x = 343, y = 119, w = 177, h = 14, col = "sky", a = 0.15, a2 = 0, py = 0.11 },
-    { kind = "band", x = 601, y = 119, w = 179, h = 20, col = "sky", a = 0.15, a2 = 0, py = 0.11 },
-    { kind = "band", x = 822, y = 119, w = 209, h = 29, col = "sky", a = 0.15, a2 = 0, py = 0.11 },
-    { kind = "band", x = -40, y = 168, w = 220, h = 24, col = "sky", a = 0.11, a2 = 0, py = 0.16 },
-    { kind = "band", x = 244, y = 168, w = 208, h = 15, col = "sky", a = 0.11, a2 = 0, py = 0.16 },
-    { kind = "band", x = 532, y = 168, w = 114, h = 18, col = "sky", a = 0.11, a2 = 0, py = 0.16 },
-    { kind = "band", x = 752, y = 168, w = 207, h = 17, col = "sky", a = 0.11, a2 = 0, py = 0.16 },
-    { kind = "column", x = -20, y = 0, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 40, acc = "pine" },
-    { kind = "column", x = 139, y = 0, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 44, acc = "pine" },
-    { kind = "column", x = 266, y = 0, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 33, acc = "pine" },
-    { kind = "column", x = 429, y = 0, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 33, acc = "pine" },
-    { kind = "column", x = 531, y = 0, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 41, acc = "pine" },
-    { kind = "column", x = 707, y = 0, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 47, acc = "pine" },
-    { kind = "column", x = 850, y = 0, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 38, acc = "pine" },
-    { kind = "column", x = 13, y = 0, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 52, acc = "pine" },
-    { kind = "column", x = 190, y = 0, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 36, acc = "pine" },
-    { kind = "column", x = 376, y = 0, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 35, acc = "pine" },
-    { kind = "column", x = 563, y = 0, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 52, acc = "pine" },
-    { kind = "column", x = 751, y = 0, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 45, acc = "pine" },
-    { kind = "column", x = 931, y = 0, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 52, acc = "pine" },
-    { kind = "girder", x = -16, y = 81, w = 992, h = 12, col = "black", a = 0.3, py = 0.22, step = 40 },
-    { kind = "girder", x = -16, y = 157, w = 992, h = 12, col = "black", a = 0.3, py = 0.22, step = 41 },
+    { kind = "band", x = 0, y = 144, w = 960, h = 272, col = "navy", a = 0.05, a2 = 0.34, py = 0.03 },
+    { kind = "band", x = -40, y = 203, w = 116, h = 20, col = "sky", a = 0.2, a2 = 0, py = 0.06 },
+    { kind = "band", x = 114, y = 203, w = 147, h = 14, col = "sky", a = 0.2, a2 = 0, py = 0.06 },
+    { kind = "band", x = 329, y = 203, w = 180, h = 30, col = "sky", a = 0.2, a2 = 0, py = 0.06 },
+    { kind = "band", x = 581, y = 203, w = 220, h = 17, col = "sky", a = 0.2, a2 = 0, py = 0.06 },
+    { kind = "band", x = 860, y = 203, w = 198, h = 22, col = "sky", a = 0.2, a2 = 0, py = 0.06 },
+    { kind = "band", x = -40, y = 263, w = 96, h = 28, col = "sky", a = 0.15, a2 = 0, py = 0.11 },
+    { kind = "band", x = 167, y = 263, w = 112, h = 27, col = "sky", a = 0.15, a2 = 0, py = 0.11 },
+    { kind = "band", x = 343, y = 263, w = 177, h = 14, col = "sky", a = 0.15, a2 = 0, py = 0.11 },
+    { kind = "band", x = 601, y = 263, w = 179, h = 20, col = "sky", a = 0.15, a2 = 0, py = 0.11 },
+    { kind = "band", x = 822, y = 263, w = 209, h = 29, col = "sky", a = 0.15, a2 = 0, py = 0.11 },
+    { kind = "band", x = -40, y = 312, w = 220, h = 24, col = "sky", a = 0.11, a2 = 0, py = 0.16 },
+    { kind = "band", x = 244, y = 312, w = 208, h = 15, col = "sky", a = 0.11, a2 = 0, py = 0.16 },
+    { kind = "band", x = 532, y = 312, w = 114, h = 18, col = "sky", a = 0.11, a2 = 0, py = 0.16 },
+    { kind = "band", x = 752, y = 312, w = 207, h = 17, col = "sky", a = 0.11, a2 = 0, py = 0.16 },
+    { kind = "column", x = -20, y = 144, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 40, acc = "pine" },
+    { kind = "column", x = 139, y = 144, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 44, acc = "pine" },
+    { kind = "column", x = 266, y = 144, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 33, acc = "pine" },
+    { kind = "column", x = 429, y = 144, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 33, acc = "pine" },
+    { kind = "column", x = 531, y = 144, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 41, acc = "pine" },
+    { kind = "column", x = 707, y = 144, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 47, acc = "pine" },
+    { kind = "column", x = 850, y = 144, w = 26, h = 272, col = "black", a = 0.42, py = 0.26, step = 38, acc = "pine" },
+    { kind = "column", x = 13, y = 144, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 52, acc = "pine" },
+    { kind = "column", x = 190, y = 144, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 36, acc = "pine" },
+    { kind = "column", x = 376, y = 144, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 35, acc = "pine" },
+    { kind = "column", x = 563, y = 144, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 52, acc = "pine" },
+    { kind = "column", x = 751, y = 144, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 45, acc = "pine" },
+    { kind = "column", x = 931, y = 144, w = 40, h = 272, col = "black", a = 0.24, py = 0.15, step = 52, acc = "pine" },
+    { kind = "girder", x = -16, y = 225, w = 992, h = 12, col = "black", a = 0.3, py = 0.22, step = 40 },
+    { kind = "girder", x = -16, y = 301, w = 992, h = 12, col = "black", a = 0.3, py = 0.22, step = 41 },
   },
   -- welded to the world: rust runs and lamps
   scenery = {
-    { kind = "hang", x = 531, y = 57, w = 2, h = 39, col = "pine", a = 0.35, lw = 2, sway = 8, rate = 0.58, bob = true },
-    { kind = "hang", x = 280, y = 14, w = 2, h = 37, col = "pine", a = 0.4, lw = 2, sway = 5, rate = 0.39, bob = true },
-    { kind = "hang", x = 757, y = 76, w = 2, h = 43, col = "pine", a = 0.41, lw = 2, sway = 5, rate = 0.49, bob = true },
-    { kind = "hang", x = 565, y = 131, w = 2, h = 44, col = "pine", a = 0.58, lw = 2, sway = 3, rate = 0.35, bob = true },
-    { kind = "hang", x = 859, y = 97, w = 2, h = 22, col = "pine", a = 0.35, lw = 2, sway = 6, rate = 0.27, bob = true },
-    { kind = "hang", x = 406, y = 99, w = 2, h = 36, col = "pine", a = 0.42, lw = 2, sway = 4, rate = 0.31, bob = true },
-    { kind = "hang", x = 517, y = 28, w = 2, h = 43, col = "pine", a = 0.46, lw = 2, sway = 6, rate = 0.28, bob = true },
-    { kind = "hang", x = 790, y = 99, w = 2, h = 45, col = "pine", a = 0.39, lw = 2, sway = 4, rate = 0.57, bob = true },
-    { kind = "hang", x = 263, y = 90, w = 2, h = 46, col = "pine", a = 0.58, lw = 2, sway = 5, rate = 0.41, bob = true },
-    { kind = "hang", x = 160, y = 119, w = 2, h = 32, col = "pine", a = 0.54, lw = 2, sway = 5, rate = 0.36, bob = true },
-    { kind = "hang", x = 88, y = 54, w = 2, h = 49, col = "pine", a = 0.42, lw = 2, sway = 7, rate = 0.32, bob = true },
-    { kind = "hang", x = 25, y = 62, w = 2, h = 28, col = "pine", a = 0.44, lw = 2, sway = 6, rate = 0.26, bob = true },
-    { kind = "hang", x = 657, y = 84, w = 2, h = 47, col = "pine", a = 0.36, lw = 2, sway = 3, rate = 0.28, bob = true },
-    { kind = "hang", x = 857, y = 116, w = 2, h = 27, col = "pine", a = 0.61, lw = 2, sway = 3, rate = 0.55, bob = true },
-    { kind = "hang", x = 848, y = 36, w = 2, h = 46, col = "pine", a = 0.59, lw = 2, sway = 3, rate = 0.31, bob = true },
-    { kind = "hang", x = 346, y = 87, w = 2, h = 53, col = "pine", a = 0.62, lw = 2, sway = 8, rate = 0.52, bob = true },
-    { kind = "hang", x = 458, y = 45, w = 2, h = 50, col = "pine", a = 0.49, lw = 2, sway = 6, rate = 0.47, bob = true },
-    { kind = "rect", x = 71, y = 190, w = 6, h = 4, col = "leaf", a = 0.19 },
-    { kind = "rect", x = 924, y = 36, w = 8, h = 2, col = "leaf", a = 0.29 },
-    { kind = "rect", x = 220, y = 94, w = 7, h = 2, col = "leaf", a = 0.21 },
-    { kind = "rect", x = 650, y = 198, w = 7, h = 3, col = "leaf", a = 0.3 },
-    { kind = "rect", x = 612, y = 202, w = 3, h = 4, col = "leaf", a = 0.24 },
-    { kind = "rect", x = 692, y = 71, w = 8, h = 3, col = "leaf", a = 0.21 },
-    { kind = "rect", x = 913, y = 86, w = 5, h = 3, col = "leaf", a = 0.34 },
-    { kind = "rect", x = 812, y = 56, w = 5, h = 2, col = "leaf", a = 0.22 },
-    { kind = "rect", x = 539, y = 177, w = 4, h = 4, col = "leaf", a = 0.33 },
-    { kind = "rect", x = 301, y = 94, w = 6, h = 3, col = "leaf", a = 0.4 },
-    { kind = "rect", x = 31, y = 43, w = 8, h = 2, col = "leaf", a = 0.24 },
-    { kind = "rect", x = 297, y = 142, w = 3, h = 3, col = "leaf", a = 0.28 },
-    { kind = "rect", x = 554, y = 156, w = 8, h = 2, col = "leaf", a = 0.4 },
+    { kind = "hang", x = 531, y = 201, w = 2, h = 39, col = "pine", a = 0.35, lw = 2, sway = 8, rate = 0.58, bob = true },
+    { kind = "hang", x = 280, y = 158, w = 2, h = 37, col = "pine", a = 0.4, lw = 2, sway = 5, rate = 0.39, bob = true },
+    { kind = "hang", x = 757, y = 220, w = 2, h = 43, col = "pine", a = 0.41, lw = 2, sway = 5, rate = 0.49, bob = true },
+    { kind = "hang", x = 565, y = 275, w = 2, h = 44, col = "pine", a = 0.58, lw = 2, sway = 3, rate = 0.35, bob = true },
+    { kind = "hang", x = 859, y = 241, w = 2, h = 22, col = "pine", a = 0.35, lw = 2, sway = 6, rate = 0.27, bob = true },
+    { kind = "hang", x = 406, y = 243, w = 2, h = 36, col = "pine", a = 0.42, lw = 2, sway = 4, rate = 0.31, bob = true },
+    { kind = "hang", x = 517, y = 172, w = 2, h = 43, col = "pine", a = 0.46, lw = 2, sway = 6, rate = 0.28, bob = true },
+    { kind = "hang", x = 790, y = 243, w = 2, h = 45, col = "pine", a = 0.39, lw = 2, sway = 4, rate = 0.57, bob = true },
+    { kind = "hang", x = 263, y = 234, w = 2, h = 46, col = "pine", a = 0.58, lw = 2, sway = 5, rate = 0.41, bob = true },
+    { kind = "hang", x = 160, y = 263, w = 2, h = 32, col = "pine", a = 0.54, lw = 2, sway = 5, rate = 0.36, bob = true },
+    { kind = "hang", x = 88, y = 198, w = 2, h = 49, col = "pine", a = 0.42, lw = 2, sway = 7, rate = 0.32, bob = true },
+    { kind = "hang", x = 25, y = 206, w = 2, h = 28, col = "pine", a = 0.44, lw = 2, sway = 6, rate = 0.26, bob = true },
+    { kind = "hang", x = 657, y = 228, w = 2, h = 47, col = "pine", a = 0.36, lw = 2, sway = 3, rate = 0.28, bob = true },
+    { kind = "hang", x = 857, y = 260, w = 2, h = 27, col = "pine", a = 0.61, lw = 2, sway = 3, rate = 0.55, bob = true },
+    { kind = "hang", x = 848, y = 180, w = 2, h = 46, col = "pine", a = 0.59, lw = 2, sway = 3, rate = 0.31, bob = true },
+    { kind = "hang", x = 346, y = 231, w = 2, h = 53, col = "pine", a = 0.62, lw = 2, sway = 8, rate = 0.52, bob = true },
+    { kind = "hang", x = 458, y = 189, w = 2, h = 50, col = "pine", a = 0.49, lw = 2, sway = 6, rate = 0.47, bob = true },
+    { kind = "rect", x = 71, y = 334, w = 6, h = 4, col = "leaf", a = 0.19 },
+    { kind = "rect", x = 924, y = 180, w = 8, h = 2, col = "leaf", a = 0.29 },
+    { kind = "rect", x = 220, y = 238, w = 7, h = 2, col = "leaf", a = 0.21 },
+    { kind = "rect", x = 650, y = 342, w = 7, h = 3, col = "leaf", a = 0.3 },
+    { kind = "rect", x = 612, y = 346, w = 3, h = 4, col = "leaf", a = 0.24 },
+    { kind = "rect", x = 692, y = 215, w = 8, h = 3, col = "leaf", a = 0.21 },
+    { kind = "rect", x = 913, y = 230, w = 5, h = 3, col = "leaf", a = 0.34 },
+    { kind = "rect", x = 812, y = 200, w = 5, h = 2, col = "leaf", a = 0.22 },
+    { kind = "rect", x = 539, y = 321, w = 4, h = 4, col = "leaf", a = 0.33 },
+    { kind = "rect", x = 301, y = 238, w = 6, h = 3, col = "leaf", a = 0.4 },
+    { kind = "rect", x = 31, y = 187, w = 8, h = 2, col = "leaf", a = 0.24 },
+    { kind = "rect", x = 297, y = 286, w = 3, h = 3, col = "leaf", a = 0.28 },
+    { kind = "rect", x = 554, y = 300, w = 8, h = 2, col = "leaf", a = 0.4 },
   },
   -- NEARER than the world -- it overtakes you
   foreground = {
-    { kind = "girder", x = -24, y = 10, w = 1008, h = 15, col = "black", a = 0.88, py = -0.13, step = 40 },
-    { kind = "hang", x = 802, y = 25, w = 2, h = 54, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 9, rate = 0.47, bob = true },
-    { kind = "hang", x = 136, y = 25, w = 2, h = 33, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 8, rate = 0.65, bob = true },
-    { kind = "hang", x = 580, y = 25, w = 2, h = 52, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 6, rate = 0.74, bob = true },
-    { kind = "hang", x = 419, y = 25, w = 2, h = 44, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 11, rate = 0.4, bob = true },
-    { kind = "hang", x = 946, y = 25, w = 2, h = 29, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 8, rate = 0.7, bob = true },
-    { kind = "hang", x = 870, y = 25, w = 2, h = 41, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 10, rate = 0.71, bob = true },
-    { kind = "hang", x = 775, y = 25, w = 2, h = 34, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 10, rate = 0.43, bob = true },
-    { kind = "hang", x = 62, y = 25, w = 2, h = 56, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 8, rate = 0.53, bob = true },
-    { kind = "band", x = 0, y = 0, w = 20, h = 272, col = "black", a = 0.42, a2 = 0.42, py = -0.05 },
-    { kind = "band", x = 940, y = 0, w = 20, h = 272, col = "black", a = 0.42, a2 = 0.42, py = -0.05 },
+    { kind = "girder", x = -24, y = 154, w = 1008, h = 15, col = "black", a = 0.88, py = -0.13, step = 40 },
+    { kind = "hang", x = 802, y = 169, w = 2, h = 54, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 9, rate = 0.47, bob = true },
+    { kind = "hang", x = 136, y = 169, w = 2, h = 33, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 8, rate = 0.65, bob = true },
+    { kind = "hang", x = 580, y = 169, w = 2, h = 52, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 6, rate = 0.74, bob = true },
+    { kind = "hang", x = 419, y = 169, w = 2, h = 44, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 11, rate = 0.4, bob = true },
+    { kind = "hang", x = 946, y = 169, w = 2, h = 29, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 8, rate = 0.7, bob = true },
+    { kind = "hang", x = 870, y = 169, w = 2, h = 41, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 10, rate = 0.71, bob = true },
+    { kind = "hang", x = 775, y = 169, w = 2, h = 34, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 10, rate = 0.43, bob = true },
+    { kind = "hang", x = 62, y = 169, w = 2, h = 56, col = "black", a = 0.8, py = -0.13, lw = 2, sway = 8, rate = 0.53, bob = true },
+    { kind = "band", x = 0, y = 144, w = 20, h = 272, col = "black", a = 0.42, a2 = 0.42, py = -0.05 },
+    { kind = "band", x = 940, y = 144, w = 20, h = 272, col = "black", a = 0.42, a2 = 0.42, py = -0.05 },
   },
   -- additive; the lamps and one welding arc
   lights = {
-    { x = 160, y = 32, col = { 0.72, 0.86, 1.00 }, r = 86, flicker = 0.45 },
-    { x = 480, y = 32, col = { 0.72, 0.86, 1.00 }, r = 89, flicker = 0.49 },
-    { x = 800, y = 32, col = { 0.72, 0.86, 1.00 }, r = 90, flicker = 0.81 },
+    { x = 160, y = 176, col = { 0.72, 0.86, 1.00 }, r = 86, flicker = 0.45 },
+    { x = 480, y = 176, col = { 0.72, 0.86, 1.00 }, r = 89, flicker = 0.49 },
+    { x = 800, y = 176, col = { 0.72, 0.86, 1.00 }, r = 90, flicker = 0.81 },
   },
-  mapPos = { x = 0, y = 2, w = 3, h = 1 },
+  mapPos = { x = 0, y = 2, w = 3, h = 2 },
   gates = { G = "driftvanes" },
   hasTeleporter = true,
   map = [[
 ############################################################
 ############################################################
-##..G.....................................................##
-##..G.....................................................##
-##..G.....................................................##
-##..G.....................................................##
-##..G...................................q...l..q..........##
-##..G...................................=========.........##
-##..G...............................................p.....##
-##..G...............................................%.....##
-##CCG...............................................%EE...BB
-##CCGp..............t...........k...................%EE...BB
-######...###################################################
-######...###################################################
+#############################...###.......................BB
+#############################....#........................BB
+#############################..............====#############
+#############################......q.................#######
+#############################.....###..................#####
+#############################......l.........q..........####
+#############################...........=======..........###
+##############################...........................###
+###############################..........................###
+##########................#####.............q.............##
+##########.................#####........=========.........##
+########....................#######...q...................##
+#######............p....p...#######.......................##
+#####........................#####l.....q...l..q..........##
+###.G..................p.....#####......=========.........##
+##..G...........p.............###...................p....a##
+##..G....................p....%##...................%....###
+##CCG......................p..%%.........###........%EE..###
+##CCG...............t.........%%k.......######......%EE.####
+######......################################################
+######....##################################################
 ######...###################################################
 ######AAA###################################################
 ######AAA###################################################
@@ -115,6 +124,7 @@ return {
     ["t"] = "teleporter:skyroot",
     ["k"] = "skylancer",
     ["l"] = "sporeballoon",
+    ["a"] = "cell",
   },
   links = {
     A = { "sky_1", "B" },

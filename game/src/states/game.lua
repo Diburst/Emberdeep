@@ -104,6 +104,8 @@ function S:update(dt)
   -- is a systemic cost, not a physical one: nothing stops the player
   -- moving, the connection simply is not there to charge through.
   self:tetherUpdate(dt)
+  self:updateRecall(dt)
+  self:updateStuck(dt)
   if self.linkMeter < 1 and (self.tetherStrain or 0) < S.TETHER_LIMIT then
     self.linkMeter = math.min(1, self.linkMeter + dt / 16.5)
   end
@@ -497,6 +499,134 @@ function S:tetherUpdate(dt)
   self.tetherStrain = math.max(dx / (0.75 * G.VW), dy / (0.75 * G.VH))
 end
 
+-- ==================================================================
+-- THE RECALL: dragging a downed partner back along the field
+-- ==================================================================
+-- The hole this fills: §13.5 permits vertical abandonment, step 6 took
+-- the warp away, and doors need both bots -- so a bot that goes down in
+-- an ability-gated lane the other one cannot enter is a soft lock with
+-- no way out but the title screen. The fall-separation audit proves you
+-- can always WALK back; it says nothing about a body that cannot walk.
+--
+-- This is deliberately NOT the warp coming back:
+--   * only while a partner is DOWN. Two bots on their feet get nothing.
+--   * it costs a channel you must hold, so it is a decision, not a tap.
+--   * it moves a BODY. You still have to walk over and revive it.
+--   * and it reaches half a screen, so it cannot ferry a corpse across
+--     a level to skip the walk -- see RECALL_REACH.
+--
+-- It also does not break §12.3's "the field applies no force, ever".
+-- That rule exists so the game never takes the controls off a PLAYER.
+-- A downed bot has no controls to take: it is already a body on the
+-- floor being dragged by gravity. Pulling it is not a loss of agency,
+-- it is the only agency left in the situation.
+S.RECALL_REACH  = 0.5    -- of a screen width. Half of what the tether
+                         -- tolerates before it is even drawn, so the
+                         -- reach is visibly shorter than the leash.
+S.RECALL_CHARGE = 1.1    -- seconds of held button before it takes
+S.RECALL_PULL   = 220    -- px/s the body travels along the field
+
+-- The living bot and its downed partner, or nil. Exactly one down: with
+-- both down there is nobody to pull, and the run is over anyway.
+function S:recallPair()
+  if not self.coop then return nil end
+  local v, l = self.players[1], self.players[2]
+  if not v or not l then return nil end
+  if v.dead or l.dead then return nil end
+  if v.downed == l.downed then return nil end
+  if v.idle or l.idle then return nil end
+  if v.downed then return l, v end
+  return v, l
+end
+
+function S:recallDist()
+  local live, dn = self:recallPair()
+  if not live then return nil end
+  return U.dist(live.x + live.w / 2, live.y + live.h / 2,
+                dn.x + dn.w / 2, dn.y + dn.h / 2)
+end
+
+function S:updateRecall(dt)
+  local live, dn = self:recallPair()
+  if not live then self.recall = nil return end
+
+  local slot = live.controlSlot and live:controlSlot()
+  local holding = slot and G.Input.down(slot, "warp") or false
+  local d = U.dist(live.x + live.w / 2, live.y + live.h / 2,
+                   dn.x + dn.w / 2, dn.y + dn.h / 2)
+  local reach = S.RECALL_REACH * G.VW
+
+  -- ALREADY PULLING: the body travels whatever the button does now.
+  -- Letting go mid-pull would drop it somewhere arbitrary, quite
+  -- possibly inside the rock it is passing through.
+  if self.recall and self.recall.pulling then
+    local tx = live.x + (live.facing or 1) * -10
+    local ty = live.y
+    local ddx, ddy = tx - dn.x, ty - dn.y
+    local dist = math.sqrt(ddx * ddx + ddy * ddy)
+    if dist <= 4 then
+      dn.x, dn.y = tx, ty
+      dn.vx, dn.vy = 0, 0
+      World:ensureFree(dn)          -- never leave a body inside terrain
+      self.recall = nil
+      -- "grapplehit", not "linkhit": there is no linkhit. Audio.sfx
+      -- no-ops on a name it does not have, so the arrival would have
+      -- been silently silent -- the worst kind of missing sound,
+      -- because nothing ever tells you.
+      if G.Audio then G.Audio.sfx("grapplehit") end
+      self:announce("Recalled. Hold [INTERACT] to revive.", 2)
+      return
+    end
+    local step = math.min(dist, S.RECALL_PULL * dt)
+    -- straight along the field, THROUGH geometry: the LINK is not a
+    -- rope and the whole reason this rescues a gated lane is that the
+    -- wall is not in its way
+    dn.x = dn.x + ddx / dist * step
+    dn.y = dn.y + ddy / dist * step
+    dn.vx, dn.vy = 0, 0
+    World:fx("trail", dn.x + dn.w / 2, dn.y + dn.h / 2,
+      { color = "cyan", r = 2, t = 0.2 })
+    return
+  end
+
+  if not holding then self.recall = nil return end
+
+  if d > reach then
+    -- say why, once a second, rather than charging something that can
+    -- never finish
+    self.tetherPulse = 0.45
+    self.recallFar = (self.recallFar or 0) - dt
+    if self.recallFar <= 0 then
+      self.recallFar = 1.0
+      self:announce("Too far to recall -- get closer.", 1.2)
+      if G.Audio then G.Audio.sfx("deny") end
+    end
+    self.recall = nil
+    return
+  end
+
+  self.recall = self.recall or { t = 0, pulling = false, hum = 0 }
+  self.recall.t = self.recall.t + dt
+  self.recall.hum = (self.recall.hum or 0) - dt
+  if self.recall.hum <= 0 then
+    self.recall.hum = 0.16
+    if G.Audio then
+      G.Audio.sfx("emcharge", 0.7 + (self.recall.t / S.RECALL_CHARGE) * 0.8)
+    end
+  end
+  -- fragments spiralling in along the line, faster as it closes
+  local prog = math.min(1, self.recall.t / S.RECALL_CHARGE)
+  local ang = G.time * 9
+  World:fx("spark", dn.x + dn.w / 2 + math.cos(ang) * 14 * (1 - prog),
+    dn.y + dn.h / 2 + math.sin(ang) * 14 * (1 - prog),
+    { color = "cyan", n = 2 })
+  if self.recall.t >= S.RECALL_CHARGE then
+    self.recall.pulling = true
+    if G.Audio then G.Audio.sfx("grapplelaunch") end
+    Cam.shake(1.5, 0.15)
+  end
+end
+
 -- The one owner of "how much worse does a stretched field make things".
 -- player.lua asks this rather than keeping its own copy of the curve.
 function S:fieldRegenMult()
@@ -602,6 +732,42 @@ function S:swapBots(force)
   World:fx("spark", nxt.x + nxt.w / 2, nxt.y + nxt.h / 2, { color = "spark", n = 6 })
 end
 
+-- NOTHING RECOVERS A SEPARATED PAIR ANY MORE, so a room that cannot be
+-- crossed by both bots is a soft lock. checkcoop reports fourteen door
+-- trips only one of them can make, across eight rooms, and those are
+-- level bugs to fix -- but a player meeting one deserves to be told that
+-- it is a bug rather than left assuming they have missed something.
+--
+-- The test is deliberately dumb: both alive, both controlled, neither
+-- has moved more than a few pixels in a long time, and they are far
+-- apart. Anything cleverer would need a reachability query at runtime.
+S.STUCK_T = 25            -- seconds of nobody getting anywhere
+S.STUCK_D = 120           -- ...while at least this far apart
+
+function S:updateStuck(dt)
+  if not self.coop then self.stuckT = 0 return end
+  local v, l = self.players[1], self.players[2]
+  if not v or not l or v.dead or l.dead or v.idle or l.idle then
+    self.stuckT = 0 return
+  end
+  local moved = false
+  for _, p in ipairs(self.players) do
+    local last = p.stuckLast
+    if not last or math.abs(p.x - last[1]) > 6 or math.abs(p.y - last[2]) > 6 then
+      moved = true
+      p.stuckLast = { p.x, p.y }
+    end
+  end
+  local far = math.abs(v.x - l.x) > S.STUCK_D or math.abs(v.y - l.y) > S.STUCK_D
+  if moved or not far then self.stuckT = 0 return end
+  self.stuckT = (self.stuckT or 0) + dt
+  if self.stuckT > S.STUCK_T then
+    self.stuckT = 0
+    self:announce("Separated with no way back? That is a room bug -- "
+      .. "note the room name.", 4)
+  end
+end
+
 function S:recallIdleBot()
   local active = self.players[self.activeBot]
   local idle = active:partner()
@@ -614,18 +780,26 @@ function S:recallIdleBot()
   if G.Audio then G.Audio.sfx("warp") end
 end
 
-function S:warpToPartner(p)
-  local other = p:partner()
-  if not other or other.dead then return end
-  if not self.coop then return end
-  p.x = other.x + (other.facing > 0 and -12 or 12)
-  p.y = other.y
-  p.vx, p.vy = 0, 0
-  World:ensureFree(p)  -- never warp into a wall
-  p.roomEnterProtect = 0.4
-  World:fx("burst", p.x + p.w / 2, p.y + p.h / 2, { color = "spark", n = 8 })
-  if G.Audio then G.Audio.sfx("warp") end
-end
+-- THE CO-OP WARP IS GONE.  (COOP-PLAN 1)
+--
+-- It was a release valve that let a pair ignore separation entirely --
+-- every camera rule, every lane, every gated crossing in the design was
+-- optional while you could hold a button and be beside your partner. The
+-- budget only bites once this is not here.
+--
+-- Deleting it was cheap: `S:warpToPartner` opened with
+-- `if not self.coop then return end`, so it was co-op-only and nothing
+-- else called it. `S:recallIdleBot` below is the SOLO mechanism and
+-- stays -- it is what makes the both-bots door rule survivable alone.
+--
+-- The anti-frustration valve already existed and is unchanged: a downed
+-- bot is revived by holding INTERACT next to it. So the failure case is
+-- "walk to your partner", not "wait for a timer", which is the correct
+-- cost.
+--
+-- IF THE PAIR GET GENUINELY SEPARATED there is no longer anything to
+-- rescue them, so S:updateStuck below makes that state LOUD instead of
+-- letting a player wonder for five minutes whether the room is broken.
 
 -- second controller drop-in
 function S:joystick(what, joy, slot, why)
@@ -710,15 +884,49 @@ end
 -- ==================================================================
 -- Dialogue / announcements
 -- ==================================================================
+S.ANNOUNCE_MAX = 8
+
+-- THE QUEUE APPENDS, AND SOMETHING CALLS THIS EVERY FRAME.
+--
+-- `Emitter:energize` announces "not enough charge" once per frame while
+-- Lu's dome is on a dormant emitter she cannot afford. Sixty a second,
+-- each queued for 1.5s and drained ONE AT A TIME, so three seconds of
+-- standing there banked 179 entries -- four and a half minutes of screen
+-- time, and 180 lines in the log. The queue lives on the game state, so
+-- it survived the room change and the refill and kept saying a thing
+-- that had stopped being true, which is exactly how it was reported.
+--
+-- Suppressing that one caller would have fixed that one caller. The
+-- queue is what is wrong: a message already in it is REFRESHED rather
+-- than appended, so a per-frame caller holds its message on screen for
+-- as long as the condition lasts and then it goes. Different messages
+-- still queue normally, and saying the same thing again after it has
+-- cleared shows it again.
 function S:announce(text, t)
   local ftext = G.fmtButtons(text)
+  t = t or 2
+  for _, a in ipairs(self.announceQueue) do
+    if a.text == ftext then
+      -- max, not assignment: a long message must not be cut short by a
+      -- short repeat of itself
+      a.t = math.max(a.t, t)
+      return
+    end
+  end
   -- flavor and events go to the log; mechanical chatter does not
   if not (text:find("^%*") or text:find("charging") or text:find("autosaved")
-    or text:find("TEST CHAMBER") or text:find("Not enough scrap")
+    or text:find("TEST CHAMBER") or text:find("^Not enough ")
     or text:find("Get closer")) then
     require("src.ui.textbox").logLine("", ftext)
   end
-  self.announceQueue[#self.announceQueue + 1] = { text = ftext, t = t or 2 }
+  -- AND A CEILING, because de-duplication only covers callers that
+  -- repeat themselves VERBATIM. "LINK charging... 43%" is a different
+  -- string every percent, so a mashed button could still bank a queue
+  -- measured in minutes. Nothing in this game has eight things to say
+  -- at once; past that the newest is dropped rather than the oldest,
+  -- so whatever is already being read finishes being read.
+  if #self.announceQueue >= S.ANNOUNCE_MAX then return end
+  self.announceQueue[#self.announceQueue + 1] = { text = ftext, t = t }
 end
 
 function S:startDialogue(script, npc)
@@ -761,7 +969,13 @@ function S:drawTether()
 
   -- NOTHING ON SCREEN unless the field has something to say. See the
   -- note beside S.TETHER_LIMIT: ambient, this is an eyesore.
-  if not (pulsing or severed or vOff or lOff) then return end
+  --
+  -- A DOWNED PARTNER is the fifth thing it has to say, and the only
+  -- one that is an OFFER rather than a warning: the line is how the
+  -- player learns the recall exists. An ability nothing draws is an
+  -- ability nobody finds.
+  local recallLive = self:recallPair()
+  if not (pulsing or severed or vOff or lOff or recallLive) then return end
 
   -- A slack field BOWS and a stretched one straightens, so the one case
   -- where it appears while still connected -- a LINK pressed a little
@@ -785,6 +999,25 @@ function S:drawTether()
     a = math.max(a, 0.35 + 0.55 * (self.tetherPulse / 0.45))
   end
   if taut then col, a, w = P.spark, math.max(a, 0.95), 2 end
+  -- CHARGING THE RECALL: the field brightens and thickens as the
+  -- channel closes, and goes solid white the instant it takes. The
+  -- progress is the line itself, so there is no second widget to
+  -- find on a screen that already has a downed bot on it.
+  if recallLive then
+    local r = self.recall
+    if r and r.pulling then
+      col, a, w = P.cream, 1, 3
+    elseif r then
+      local prog = math.min(1, r.t / S.RECALL_CHARGE)
+      col = P.cyan
+      a = math.max(a, 0.45 + 0.55 * prog)
+      w = 1 + prog * 2
+    else
+      -- idle offer: present, and quiet enough not to shout
+      col = P.cyan
+      a = math.max(a, 0.30 + 0.10 * math.sin(G.time * 3))
+    end
+  end
 
   local N = 16
   local pts = {}

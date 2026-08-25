@@ -595,7 +595,7 @@ function Rustwarden:update(dt)
       if G.Audio then G.Audio.sfx("domehit") end
       if not self.stunHinted then
         self.stunHinted = true
-        if G.game then G.game:announce("The dome staggers the Warden!", 2) end
+        if G.game then G.game:announce("The shield staggers the Warden!", 2) end
       end
       self:setState("stunned", 3.0)
     elseif self.hitWall then
@@ -860,7 +860,7 @@ function Tideengine:beginSurge()
   self.surgeHit = {}
   if G.Audio then G.Audio.sfx("surgecharge") end
   if G.game then
-    G.game:announce("THE TIDE ENGINE INHALES -- get inside the dome!", 2.4)
+    G.game:announce("THE TIDE ENGINE INHALES -- get inside the shield!", 2.4)
   end
 end
 
@@ -1097,16 +1097,177 @@ Bosses.tideengine = Tideengine
 -- ==================================================================
 -- 4. SLAG GOLEM (Furnace miniboss)
 -- ==================================================================
+-- REBALANCED (Thomas, Aug 2026): "much tougher, because we've progressed
+-- further in the game." Health +50%, every damage number it owns +30%,
+-- a swarm of cinderbats off the roof at each quarter of its health, and
+-- a lava patch left behind by every slam.
+--
+-- The multipliers are applied HERE, at the definition, and not folded
+-- into new literals -- so the next person can see that 240 is 160 raised
+-- by half, and so a difficulty pass can move one number instead of six.
+local GOLEM_HP   = math.floor(160 * 1.5)   -- 240
+local GOLEM_DMG  = 1.3                     -- everything it hits you with
+local function golemDmg(n) return math.floor(n * GOLEM_DMG + 0.5) end
+
+-- THE SLAM PATCHES.
+--
+-- Cap, and FIFO past it: the eleventh patch retires the first. Without a
+-- cap a long fight tiles the whole floor and the fight stops being a
+-- fight -- there is nowhere to stand and no decision left to make. Ten
+-- patches at 26px is 260px of a 640px arena, so there is always floor.
+local GOLEM_PATCH_CAP  = 10
+local GOLEM_PATCH_W    = 26
+local GOLEM_PATCH_H    = 7
+local GOLEM_PATCH_FADE = 0.45   -- seconds a retired patch takes to cool
+
+-- THE SWARMS. One per quarter of its health, so three across the fight
+-- (75%, 50%, 25%) -- the fourth quarter is the kill. The concurrent cap
+-- is the Crucible's lesson: a wall of adds between you and the boss is
+-- not difficulty, it is a wall.
+local GOLEM_SWARM     = 6
+local GOLEM_BAT_CAP   = 12
+local GOLEM_SWARM_GAP = 1.2     -- a burst big enough to cross two
+                                -- thresholds sends the second swarm late,
+                                -- rather than both in the same frame
+
 local Slaggolem = Boss.extend()
 function Slaggolem:init(x, y)
   Boss.init(self, x, y, { id = "slaggolem", name = "SLAG GOLEM",
-    hp = 160, touchDmg = 8, w = 30, h = 26 })
+    hp = GOLEM_HP, touchDmg = golemDmg(8), w = 30, h = 26 })
+  self.patches = {}      -- oldest first; see retirePatch
+  self.swarms = 0
+  self.swarmT = 0
+end
+
+-- ---- the ceiling above a point, in the room actually being fought in
+-- Not a constant: the golem's arena has a two-tile roof, but a miniboss
+-- that ever gets reused somewhere lower would drop its bats inside the
+-- rock. Walk down from the top until the world lets a body exist.
+function Slaggolem:roofY(World, px)
+  local tx = math.max(0, math.min(World.w - 1, math.floor(px / T)))
+  for ty = 0, World.h - 1 do
+    if not World:isSolid(tx, ty) then return ty * T + 2 end
+  end
+  return T
+end
+
+function Slaggolem:batCount(World)
+  local n = 0
+  for _, e in ipairs(World.entities) do
+    if not e.dead and e.golemBat then n = n + 1 end
+  end
+  return n
+end
+
+-- A SWARM OFF THE ROOF. They are spawned already swooping and already
+-- facing a player, because a cinderbat's own idle is to HANG -- left to
+-- its default it would bob against the ceiling until somebody walked
+-- within 120px of it, which in a ten-tile arena is never.
+function Slaggolem:swarm(World)
+  local room = GOLEM_BAT_CAP - self:batCount(World)
+  if room <= 0 then return 0 end
+  local n = math.min(GOLEM_SWARM, room)
+  local targets = self:aliveTargets()
+  local left, right = 3 * T, (World.w - 3) * T
+  for i = 1, n do
+    local px = left + (right - left) * ((i - 0.5) / n) + U.rand(-10, 10)
+    local bat = Entity.make("cinderbat", px, self:roofY(World, px))
+    bat.golemBat = true
+    local p = targets[1 + (i - 1) % math.max(1, #targets)]
+    bat.swooping = true
+    bat.swoopT = 0
+    bat.facing = p and U.sign((p.x + p.w / 2) - px) or 1
+    if bat.facing == 0 then bat.facing = 1 end
+    self:addSpawn(bat)
+    World:fx("burst", px, self:roofY(World, px), { color = "magma", n = 4, speed = 60 })
+  end
+  if G.Audio then G.Audio.sfx("roar") end
+  if G.game then G.game:announce("The roof comes alive!", 1.6) end
+  return n
+end
+
+-- ---- lava patches -------------------------------------------------
+function Slaggolem:retirePatch()
+  -- drop dead ones off the front first: a patch killed by clearAdds or by
+  -- anything else must not hold a slot in the queue it no longer occupies
+  while self.patches[1] and (self.patches[1].dead or self.patches[1].retiring) do
+    table.remove(self.patches, 1)
+  end
+  local old = self.patches[1]
+  if not old then return false end
+  table.remove(self.patches, 1)
+  old.retiring = GOLEM_PATCH_FADE    -- stops burning NOW, cools visibly
+  return true
+end
+
+function Slaggolem:dropPatch(World, cx, footY)
+  if #self.patches >= GOLEM_PATCH_CAP then self:retirePatch() end
+  local LAVA = (require "src.entities.player").LAVA_DMG
+  local TICK = (require "src.entities.player").LAVA_TICK
+  local patch = self:addSpawn({
+    kind = "hazard", x = cx - GOLEM_PATCH_W / 2, y = footY - GOLEM_PATCH_H,
+    w = GOLEM_PATCH_W, h = GOLEM_PATCH_H, t = 0, cool = 0,
+    -- under everything: it is a pool on the floor, and a body standing in
+    -- it must be drawn in it, not behind it (World sorts ascending)
+    dead = false, layer = -1, golemPatch = true, retiring = nil,
+    update = function(h, dt2)
+      h.t = h.t + dt2
+      if h.retiring then
+        h.retiring = h.retiring - dt2
+        if h.retiring <= 0 then h.dead = true end
+        return                       -- a cooling patch does not burn
+      end
+      h.cool = math.max(0, h.cool - dt2)
+      if h.cool > 0 then return end
+      local World2 = require "src.world"
+      for _, pl in ipairs(World2.players) do
+        -- STANDING IN IT: feet inside the pool, not merely overlapping it.
+        -- A body jumping over a patch is not in the lava.
+        local feet = pl.y + pl.h
+        if not pl.dead and not pl.downed and not pl.idle
+          and pl.x + pl.w > h.x and pl.x < h.x + h.w
+          and feet > h.y and feet < h.y + h.h + 6 then
+          pl:takeDamage(LAVA, nil, { pierceDash = true, lava = true })
+          h.cool = TICK
+          if G.Audio then G.Audio.sfx("hitenemy") end
+        end
+      end
+    end,
+    draw = function(h)
+      local g2 = love.graphics
+      local a = h.retiring and (h.retiring / GOLEM_PATCH_FADE) or 1
+      local pulse = 0.10 * math.sin(G.time * 7 + h.x)
+      g2.setColor(P.magma[1], P.magma[2], P.magma[3], (0.80 + pulse) * a)
+      g2.rectangle("fill", h.x, h.y, h.w, h.h)
+      g2.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3], (0.75 + pulse) * a)
+      g2.rectangle("fill", h.x + 2, h.y + 1, h.w - 4, h.h - 3)
+      g2.setColor(1, 1, 1, 1)
+    end,
+  })
+  self.patches[#self.patches + 1] = patch
+  World:fx("burst", cx, footY - 2, { color = "magma", n = 7, speed = 70 })
+  return patch
 end
 function Slaggolem:update(dt)
   local World = require "src.world"
   self.t = self.t + dt
   self.stateT = self.stateT - dt
   self.vy = math.min((self.vy or 0) + 640 * dt, 280)
+
+  -- EACH QUARTER OF ITS HEALTH, A SWARM.
+  --
+  -- Driven off hp here rather than out of a hurt() override, because hp
+  -- moves for reasons that are not hits -- and because ONE test, run
+  -- every frame, cannot be routed around by a new damage source later.
+  -- `if` and not `while`: a hit big enough to cross two thresholds sends
+  -- the second swarm on the next tick past the gap, not both at once.
+  self.swarmT = math.max(0, (self.swarmT or 0) - dt)
+  if self.state ~= "intro" and self.swarms < 3 and self.swarmT <= 0
+    and self.hp <= self.maxhp * (1 - 0.25 * (self.swarms + 1)) then
+    self.swarms = self.swarms + 1
+    self.swarmT = GOLEM_SWARM_GAP
+    self:swarm(World)
+  end
 
   if self.state == "intro" then
     PH.move(self, 0, self.vy * dt)
@@ -1137,11 +1298,13 @@ function Slaggolem:update(dt)
     if self.onGround then
       Cam.shake(4, 0.3)
       if G.Audio then G.Audio.sfx("quake") end
+      -- the slam pours a pool where it lands, and it stays there
+      self:dropPatch(World, self.x + self.w / 2, self.y + self.h)
       -- landing splash of lava pellets
       for i = -4, 4 do
         if i ~= 0 then
           Proj.spawn(World, self.x + self.w / 2, self.y + 4, {
-            side = "enemy", dmg = 5, kind = "fireball", size = 6,
+            side = "enemy", dmg = golemDmg(5), kind = "fireball", size = 6,
             vx = i * 55, vy = -170, gravity = 330, life = 4,
           })
         end
@@ -1177,7 +1340,7 @@ function Slaggolem:update(dt)
               for _, pl in ipairs(World2.players) do
                 if not pl.dead and not pl.downed and not pl.idle
                   and pl.x + pl.w > h.x and pl.x < h.x + h.w then
-                  pl:takeDamage(8, h.x)
+                  pl:takeDamage(golemDmg(8), h.x)
                 end
               end
               if G.Audio then G.Audio.sfx("explode") end

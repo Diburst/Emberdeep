@@ -2,20 +2,29 @@
 -- Lu has sparkshot. XP thresholds per level; getting hit loses XP.
 local W = {}
 
--- HOW FAR AN ORDINARY SHOT CARRIES, in seconds of flight.
+-- HOW FAR AN ORDINARY SHOT CARRIES, IN PIXELS.
 --
--- Vess's guns used to inherit projectile.lua's generic 2s, which at Bolt
--- Driver speed is 620px -- more than a screen and a quarter. A gun that
--- reaches past anything you can see has no range as a property at all,
--- so positioning stops mattering and every fight is fought at whatever
--- distance you happen to be standing.
+-- It was written in SECONDS, which is the wrong unit: a lifetime in
+-- seconds means the fast gun out-ranges the slow one by exactly its
+-- speed ratio, so "every Vess gun gets 1.2s" quietly gave the Bolt
+-- Driver 372px and the Arc Lance 552px. Range is the property the
+-- player experiences; the lifetime is how the engine spends it. So the
+-- range is the number, and `life` is SOLVED from it per weapon.
 --
--- Applied in W.tune to every `user = 1` weapon that does not state its
--- own, so a weapon with a deliberate lifetime keeps it -- Scatter Hex is
--- a 0.32s shotgun and the Magnet Mortar's 4.8s roll is the entire point
--- of the Magnet Mortar -- and a future Vess gun inherits the rule
--- instead of inheriting the generic default by accident.
-W.SHOT_LIFE = 1.2
+-- 224px is 14 tiles, and it is picked against the camera rather than
+-- against taste: the view is 480px wide and follows the pair's
+-- midpoint, so a bot standing dead centre has 240px of screen ahead of
+-- it. A shot must die inside that or it leaves the frame, and a gun
+-- that reaches past anything you can see has no range as a property at
+-- all -- positioning stops mattering and every fight is fought from
+-- wherever you happen to be standing.
+--
+-- Applied in W.tune to every weapon that does not state its own `life`,
+-- so a deliberate lifetime still wins -- Scatter Hex is a 0.32s shotgun
+-- and the Magnet Mortar's 4.8s roll is the entire point of the Magnet
+-- Mortar. A weapon wanting a different REACH sets `range = n` and keeps
+-- the solving.
+W.SHOT_RANGE = 224
 
 W.defs = {
   boltdriver = {
@@ -55,7 +64,20 @@ W.defs = {
     speed = 270, visual = "spark", size = 4,
     -- {1,1,2} is the only integer array where every tier is an upgrade
     -- you can feel: L2 is a FIRE-RATE upgrade, L3 is a DAMAGE upgrade.
-    dmg = { 1, 1, 2 }, homing = { nil, nil, 3.5 }, thresholds = { 12, 28 },
+    --
+    -- L3 USED TO SEEK, TOO (`homing = { nil, nil, 3.5 }`), and that was
+    -- one upgrade too many. Removed (Thomas, Aug 2026: "too powerful").
+    -- The reason it ran away is that the seeker compounded with the rate:
+    -- sparkshot is the fastest-firing weapon in the game by a distance --
+    -- 0.138s a shot at L3, solved off Vess's best DPS -- so homing was
+    -- not "some of your shots now connect", it was "all of them do,
+    -- forever, without aiming". Doubling the damage is the tier.
+    --
+    -- Nothing else in the file needs to move: the rates are SOLVED from
+    -- Vess's DPS (W.tune) and the solver has never known about homing,
+    -- so removing it changes what the weapon feels like without touching
+    -- the ratio the tuning is built on.
+    dmg = { 1, 1, 2 }, thresholds = { 12, 28 },
     sfx = "shoot4",
   },
   magnetmortar = {
@@ -124,7 +146,17 @@ function W.tune(force)
       if type(def.rate) ~= "table" then
         def.rate = { def.rate, def.rate, def.rate }
       end
-      def.life = def.life or W.SHOT_LIFE
+    end
+  end
+
+  -- Solve every weapon's lifetime from its RANGE and its own speed.
+  -- Both bots: the ordinary firing path in player.lua hardcoded 1.2s for
+  -- whoever pulled the trigger, so Lu was never on the generic default
+  -- the old comment assumed, and the tuned value it did write was read
+  -- by nothing.
+  for _, def in pairs(W.defs) do
+    if not def.life and def.speed then
+      def.life = (def.range or W.SHOT_RANGE) / def.speed
     end
   end
 

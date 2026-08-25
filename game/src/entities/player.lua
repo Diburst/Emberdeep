@@ -16,6 +16,12 @@ local Player = Entity.extend()
 -- Crucible's pouring stream, which is the same substance in mid-air.
 local LAVA_DMG = 10
 local LAVA_TICK = 0.25
+-- ...and with the Slag Golem's slam patches, which are the same substance
+-- poured on the floor. Published rather than copied: a pool that burns
+-- for a different number than the lava two tiles away is a bug nobody
+-- reports, they just say the fight "feels off".
+Player.LAVA_DMG = LAVA_DMG
+Player.LAVA_TICK = LAVA_TICK
 
 local BASE = {
   runSpeed = 112, accel = 950, airAccel = 620, friction = 800,
@@ -210,6 +216,36 @@ end
 -- to 0 and energy becomes a pure pickup economy with the derived floor
 -- still protecting her. checkenergy.py audits every room against
 -- whatever it is set to.
+-- ==================================================================
+-- VESS'S BACKPACK  (COOP-PLAN 8.2, 10.3)
+-- ==================================================================
+-- Energy is Lu's, and it drops where the fighting is -- which is exactly
+-- where she should not have to be. So Vess carries it.
+--
+-- He picks motes up into a pack that holds 100% of LU'S CURRENT MAX, not
+-- his own number: upgrade her tank and his pack grows with it, one
+-- number with two effects. On CONTACT it moves across. No button, no
+-- menu -- the bots touch and the energy flows.
+--
+-- This is the best co-op verb of the lot and it is worth saying why: the
+-- pair are already forced together by the camera wall and the both-bots
+-- door rule, and this gives that proximity a PAYOFF instead of only a
+-- constraint. A full pack and a distant Lu is a visible problem before
+-- it is a mechanical one.
+--
+-- TWO SECONDS, IN TWENTY TICKS, and the tick rate is the design. It is
+-- not instant because two seconds of contact is a window a boss can
+-- interrupt: resupply becomes a thing you have to MAKE TIME for
+-- mid-fight, which is a beat no instant version can produce. Each tick
+-- is a mote arcing across, a notch off his bar, a notch onto her ring
+-- and a rising tone -- countable rather than a beam.
+--
+-- Interrupting keeps what has landed. The cost of being interrupted is
+-- the time, never the energy.
+local XFER_TIME = 2.0          -- seconds for a full pack
+local XFER_TICKS = 20          -- ...in this many discrete steps
+local XFER_REACH = 16          -- how close counts as contact, px
+
 local DOME_MIN = 12            -- energy needed to raise the dome at all
 local EN_RESERVE = 0.35        -- fraction of maxenergy regen climbs to
 
@@ -271,6 +307,9 @@ function Player:init(idx, x, y)
   self.dashCd = 0
   self.airDashed = false
   self.grappling = nil
+  self.hook = nil
+  self.aimAnchor = nil
+  self.launchT = 0
   -- bulwark / cinder ram
   self.bulwarkT = 0      -- plate live (dash + follow-through)
   self.bounceT = 0       -- recoil: reduced horizontal authority
@@ -285,6 +324,9 @@ function Player:init(idx, x, y)
   -- Lu kit
   self.maxenergy = pd.maxenergy or 100
   self.energy = self.maxenergy
+  self.pack = 0                -- Vess only; see the note above
+  self.xferT = 0
+  self.xferFlash = 0
   self.energyDelay = 0
   self.domeActive = false
   self.domeRadius = 36
@@ -337,6 +379,65 @@ end
 -- ==================================================================
 -- Live during a charge and for a short follow-through afterwards, so the
 -- bounce recovery is not a free hit on you.
+-- 100% of LU'S max, so upgrading her tank upgrades his pack.
+function Player:packMax()
+  local World = require "src.world"
+  for _, p in ipairs(World.players or {}) do
+    if not p.isVess then return p.maxenergy or 100 end
+  end
+  return 100
+end
+
+-- Returns how much actually went in, so a mote that only half fits is
+-- not silently swallowed.
+function Player:packTake(n)
+  local cap = self:packMax()
+  local room = math.max(0, cap - (self.pack or 0))
+  local got = math.min(room, n)
+  self.pack = (self.pack or 0) + got
+  return got
+end
+
+function Player:updateTransfer(dt, World)
+  self.xferFlash = math.max(0, (self.xferFlash or 0) - dt)
+  if not self.isVess or (self.pack or 0) <= 0 then self.xferT = 0 return end
+  local lu
+  for _, p in ipairs(World.players or {}) do
+    if not p.isVess and not p.dead and not p.downed then lu = p end
+  end
+  if not lu or lu.energy >= lu.maxenergy then self.xferT = 0 return end
+  -- CONTACT. Deliberately generous by a couple of pixels: this is a
+  -- resupply, not a precision input, and having to line up exactly would
+  -- make it a chore in the middle of the fight it exists for.
+  local dx = (self.x + self.w / 2) - (lu.x + lu.w / 2)
+  local dy = (self.y + self.h / 2) - (lu.y + lu.h / 2)
+  if dx * dx + dy * dy > XFER_REACH * XFER_REACH then self.xferT = 0 return end
+
+  local per = XFER_TIME / XFER_TICKS
+  self.xferT = (self.xferT or 0) + dt
+  while self.xferT >= per do
+    self.xferT = self.xferT - per
+    local step = math.min(self.pack, self:packMax() / XFER_TICKS,
+      lu.maxenergy - lu.energy)
+    if step <= 0 then break end
+    self.pack = self.pack - step
+    lu.energy = math.min(lu.maxenergy, lu.energy + step)
+    -- one mote per tick, so the stream reads as countable
+    World:fx("trail", self.x + self.w / 2, self.y + self.h / 2,
+      { color = "lublue", r = 2, t = 0.22 })
+    World:fx("trail", U.lerp(self.x, lu.x, 0.5) + 5,
+      U.lerp(self.y, lu.y, 0.5) + 7, { color = "spark", r = 1.5, t = 0.18 })
+    if G.Audio then G.Audio.sfx("shard") end
+    if self.pack <= 0 or lu.energy >= lu.maxenergy then
+      -- "done" is unmistakable without a UI element
+      self.xferFlash = 0.35
+      World:fx("burst", lu.x + lu.w / 2, lu.y + lu.h / 2,
+        { color = "spark", n = 10 })
+      break
+    end
+  end
+end
+
 function Player:plateUp()
   return self.isVess and G.run.flags.bulwark and (self.bulwarkT or 0) > 0
 end
@@ -439,6 +540,48 @@ function Player:iced() return (self.icedT or 0) > 0 end
 -- cracks are the mash meter: without them there is no way to tell being
 -- frozen from being stuck, and no sign that hitting buttons is doing
 -- anything at all.
+-- HOOK AND LINE.
+--
+-- Two phases and they look different on purpose: on the way OUT the line
+-- is thin and straight and the hook is a claw with the point leading; on
+-- the way IN it is taut, brighter, and it sags less the closer he gets,
+-- so the move reads as being reeled rather than as flying.
+function Player:drawHook(g)
+  local h = self.hook
+  if not h then return end
+  local cx, cy = self.x + self.w / 2, self.y + self.h / 2 - 2
+  local hx, hy = h.hx, h.hy
+  local reeling = h.phase == "reel"
+  local ang = math.atan2(hy - cy, hx - cx)
+
+  -- the line, with a little slack while the hook is still travelling
+  local slack = reeling and 0 or 3
+  local mx, my = (cx + hx) / 2, (cy + hy) / 2 + slack
+  g.setColor(P.silver[1], P.silver[2], P.silver[3], reeling and 0.95 or 0.7)
+  g.setLineWidth(reeling and 1.6 or 1)
+  -- a two-segment line through the sag point is enough of a curve at
+  -- this scale and costs nothing
+  g.line(cx, cy, mx, my, hx, hy)
+  g.setLineWidth(1)
+
+  -- the claw: a shaft and two tines, pointed the way it is flying
+  local ca, sa = math.cos(ang), math.sin(ang)
+  local px, py = -sa, ca                       -- perpendicular
+  g.setColor(P.cyan)
+  g.line(hx - ca * 4, hy - sa * 4, hx + ca * 2, hy + sa * 2)
+  for _, sgn in ipairs({ 1, -1 }) do
+    g.line(hx + ca * 2, hy + sa * 2,
+           hx - ca * 1 + px * 3 * sgn, hy - sa * 1 + py * 3 * sgn)
+  end
+  if reeling then
+    -- BITTEN: a bright ring where it is holding on
+    local pulse = 0.6 + 0.4 * math.sin(G.time * 22)
+    g.setColor(P.cyan[1], P.cyan[2], P.cyan[3], 0.5 * pulse)
+    g.circle("line", hx, hy, 5)
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
 function Player:drawIce(g)
   if (self.icedT or 0) <= 0 then return end
   local x, y = self.x - 5, self.y - 6
@@ -470,6 +613,27 @@ end
 function Player:goDown()
   self.downed = true
   self.icedT = 0
+  -- A BOT ON THE FLOOR IS NOT BEING HELD, EITHER.
+  --
+  -- Player:update returns at the `downed` branch, which sits ABOVE the
+  -- pinned branch -- so a bot that went down while something had hold of
+  -- it stopped ticking pinnedT and, worse, stopped READING THE MASH. Every
+  -- press was swallowed by code that could not be reached, which from the
+  -- chair is indistinguishable from a grip that simply cannot be broken
+  -- this time. Then the revive cleared `downed`, the pinned branch woke up
+  -- with the full timer still on it, and the bot came back stuck to a bat
+  -- that had long since let go and flown away.
+  --
+  -- All three of the reported symptoms are this one line missing. It goes
+  -- HERE rather than in the bat, because every holder in the game routes
+  -- through Player:pin -- the Sentinel's talons, the Scrapyard dragger, a
+  -- roostfang -- and fixing it per holder is how you get two of them right
+  -- and the third wrong.
+  --
+  -- The ICE branch four lines down documents this exact failure for a
+  -- parked bot ("used to return above this and never tick") and was moved
+  -- above `idle` to fix it. Same trap, one state along.
+  if self.pinnedT > 0 then self:freeFromPin(false) end
   -- a bot on the floor is not holding a flame
   if self:hasSpark() then
     self:dropSpark(require "src.world", nil)
@@ -518,6 +682,7 @@ function Player:pin(by, dur)
   self.domeActive = false
   self.charging = false
   self.grappling = nil
+  self.hook = nil
   self.dashT = 0
   return true
 end
@@ -936,6 +1101,34 @@ function Player:update(dt)
     self.strokeCd = self.strokeCd - dt
   end
   local canStroke = not waterMode or (self.strokeCd or 0) <= 0
+
+  -- ------------------------------------------------------------------
+  -- THE GRAPPLE IS AIR-ONLY, AND THAT IS WHAT MAKES IT SAFE ON JUMP
+  -- ------------------------------------------------------------------
+  -- JUMP is the most-pressed button in the game, so a grapple that could
+  -- eat a grounded jump would be a worse bug than the one it fixes:
+  -- Vess would be unable to jump while standing next to an anchor. The
+  -- rule is therefore "on the ground JUMP always jumps" -- checked with
+  -- coyote, so it holds for the forgiveness window after a ledge too --
+  -- and the grapple is something you commit to once you are already in
+  -- the air, like a double jump that needs an anchor.
+  --
+  -- The AIM is resolved every frame rather than only on the press, so
+  -- the anchor the highlight promises is the anchor the throw takes.
+  self.aimAnchor = nil
+  if self.isVess and G.run.flags.grapple and not waterMode
+     and not self:hasEmber() and not self:hasSpark() then
+    self.aimAnchor = self:findAnchor(World)
+    if self.aimAnchor then self.aimAnchor.aimed = self.idx end
+    local airborne = not self.onGround and self.coyote <= 0
+    if self.jumpBuf > 0 and airborne and not self.hook and self.aimAnchor then
+      if self:throwHook(World, self.aimAnchor) then
+        -- eat the buffer, or it fires a jump the moment he lands
+        self.jumpBuf = 0
+      end
+    end
+  end
+
   if self.jumpBuf > 0 and (self.coyote > 0 or waterMode) and canStroke then
     self.vy = jumpVel
     self.jumpBuf = 0
@@ -957,7 +1150,17 @@ function Player:update(dt)
     end
   end
   -- variable jump height
-  if not down("jump") and self.vy < -80 and not self.grappling then
+  --
+  -- launchT as well as grappling: the grapple launch fires ON the frame
+  -- the reel arrives, and the player is usually still holding JUMP for
+  -- an instant and then lets go -- which would cut -430 straight back to
+  -- -80 and delete the whole move. A launch is not a jump and is not
+  -- variable; it gets a quarter second of immunity.
+  if self.launchT and self.launchT > 0 then
+    self.launchT = self.launchT - dt
+  end
+  if not down("jump") and self.vy < -80 and not self.grappling
+     and not (self.launchT and self.launchT > 0) then
     self.vy = -80
   end
 
@@ -1012,10 +1215,14 @@ function Player:update(dt)
       self.sparkT = 0
     end
   end
+  self:updateTransfer(dt, World)
   if self.onGround then self.hoverT = 0 self.airDashed = false end
 
   -- ---- gravity
-  if self.dashT <= 0 and self.vaultT <= 0 and not self.grappling then
+  -- the hook's flight hangs him for its 0.12s too, so the throw does not
+  -- drop him out from under his own line
+  if self.dashT <= 0 and self.vaultT <= 0 and not self.grappling
+     and not self.hook then
     local grav = waterMode and BASE.waterGravity or BASE.gravity
     if self.inUpdraft then grav = grav * 0.45 end   -- the column is winning
     local maxFall = waterMode and BASE.waterMaxFall or BASE.maxFall
@@ -1024,14 +1231,17 @@ function Player:update(dt)
 
   -- ---- Vess dash / grapple
   if self.isVess then
+    -- SPECIAL IS THE CHARGE AND NOTHING ELSE NOW.
+    --
+    -- The grapple used to pre-empt it: standing anywhere near an anchor,
+    -- pressing SPECIAL threw a rope instead of charging, so Vess simply
+    -- could not use his baseline movement in exactly the rooms built
+    -- around anchors. The grapple lives on JUMP now (below), which frees
+    -- this button completely and makes the pair of verbs read as what
+    -- they are -- charge goes across, grapple goes up.
     if pressed("special") and self.dashCd <= 0 and self.dashT <= 0
       and not self:hasEmber() and not self:hasSpark() then
-      -- try grapple first if module owned and anchor in range
-      local anchor = G.run.flags.grapple and self:findAnchor(World)
-      if anchor then
-        self.grappling = anchor
-        if G.Audio then G.Audio.sfx("grapple") end
-      elseif not self.airDashed or self.onGround then
+      if not self.airDashed or self.onGround then
         self.dashT = 0.2
         self.dashCd = 0.65
         self.dashHits = {}
@@ -1062,21 +1272,7 @@ function Player:update(dt)
         G.Input.rumble(slot or 1, 0.3, 0.1)
       end
     end
-    if self.grappling then
-      local a = self.grappling
-      local cx, cy = self.x + self.w / 2, self.y + self.h / 2
-      local ax, ay = a.x + a.w / 2, a.y + a.h / 2
-      local d = U.dist(cx, cy, ax, ay)
-      if d < 14 or not down("special") then
-        self.grappling = nil
-        if d < 20 then self.vy = math.min(self.vy, -150) end
-      else
-        local ang = math.atan2(ay - cy, ax - cx)
-        self.vx = math.cos(ang) * 330
-        self.vy = math.sin(ang) * 330
-        World:fx("trail", cx, cy, { color = "cyan", r = 2, t = 0.15 })
-      end
-    end
+    self:updateHook(World, dt, down)
   end
 
   -- ---- Lu dome + repair
@@ -1184,8 +1380,10 @@ function Player:update(dt)
   -- bounce feel like it weighed something.
   local moveScale = (self.hitstopT or 0) > 0 and 0 or 1
   PH.move(self, self.vx * dt * moveScale, self.vy * dt * moveScale)
-  if self.grappling and (self.hitWall or self.onGround or self.hitCeil) then
+  if (self.grappling or self.hook)
+     and (self.hitWall or self.onGround or self.hitCeil) then
     self.grappling = nil
+    self.hook = nil
   end
   -- a plated charge into unbreakable tile RECOILS; without the plate it
   -- still just stops dead, exactly as it always has
@@ -1375,15 +1573,11 @@ function Player:update(dt)
   -- ---- co-op verbs (link, warp) & solo handled by game state via buttons
   if pressed("partner") and G.game then G.game:partnerPressed(self) end
   if G.game and G.game.coop then
-    if down("warp") then
-      self.warpHold = self.warpHold + dt
-      if self.warpHold > 0.7 then
-        self.warpHold = 0
-        G.game:warpToPartner(self)
-      end
-    else
-      self.warpHold = 0
-    end
+    -- The WARP button is the LINK in co-op too now. Holding it used to
+    -- teleport you to your partner (COOP-PLAN 1) and that is gone: with
+    -- it, none of the separation rules meant anything.
+    self.warpHold = 0
+    if pressed("warp") then G.game:tryLinkShot() end
   else
     -- solo: warp button fires the Link Shot (bots must be synced up close)
     if pressed("warp") and G.game then G.game:tryLinkShot() end
@@ -1446,20 +1640,160 @@ function Player:checkSpikes(World)
   end
 end
 
+-- ------------------------------------------------------------------
+-- THE MAGNE-GRAPPLE
+-- ------------------------------------------------------------------
+-- It used to pull along a unit vector at a flat 330, which meant it
+-- TRAVELLED TO THE ANCHOR and did nothing else -- so the rise could
+-- never exceed the anchor's own height, and a level anchor six tiles
+-- away moved Vess 0.16 TILES upward. Measured, before any of this:
+--
+--     anchor at            rise   lateral
+--     6 across, level      0.16     5.16
+--     5 across, 2 up       1.82     4.47
+--     straight up          5.16     0.00
+--
+-- Vess never gets a better jump -- the spark jump and the vanes are both
+-- Lu's -- so the grapple is his ONLY answer to height, and it was the
+-- one thing it could not give him.
+--
+-- Three changes, and the height comes from the third:
+--   1. SELECTION prefers anchors above. Nearest was picking the level
+--      one beside him over the one he actually wanted.
+--   2. The REEL still runs along the line, because a rope that pulls
+--      you somewhere other than where it is attached is nonsense and
+--      because travelling the line is what guarantees he ARRIVES.
+--   3. ARRIVAL LAUNCHES HIM THROUGH IT, mostly upward, whatever angle
+--      the line was. That is where the vertical bias lives: a level
+--      anchor is now worth its full launch, so anchors are a climbing
+--      tool rather than a zip line.
+Player.GRAPPLE_RANGE = 110      -- px. roommodel models 6 tiles; do not widen
+Player.HOOK_SPEED    = 900      -- px/s, the hook flying out
+Player.REEL_SPEED    = 400      -- px/s, Vess coming in
+-- THE LAUNCH, SIZED AGAINST THE JUMPS THAT ALREADY EXIST.
+--
+-- The first pass used -430 and measured 12.6 tiles of rise off an
+-- overhead anchor -- most of a screen, and enough to trivialise every
+-- vertical room in the game, all of which were built for a Vess who
+-- climbs three. The launch has to be clearly better than a jump and
+-- clearly not a flight:
+--
+--     plain jump   -310  ->  3.2 tiles
+--     spark jump   -365  ->  4.1 tiles   (Lu's, and her best)
+--     LAUNCH       -340  ->  4.3 tiles   ABOVE the anchor
+--
+-- So one anchor beats Lu's best jump by a hair, and the height past
+-- that comes from CHAINING anchors -- which is the move being a route
+-- rather than a button.
+Player.LAUNCH_UP     = -340
+-- Sideways is deliberately meagre. Vess already has the charge for
+-- across; if the launch threw him as far sideways as it does upward the
+-- two verbs would blur again, which is the thing moving the grapple off
+-- SPECIAL was meant to stop.
+Player.LAUNCH_SIDE   = 110
+Player.CLIMB_PREF    = 1.6      -- how much height is worth in selection
+
+-- The anchor Vess would catch right now, or nil. Called every frame for
+-- the highlight as well as on the press, so what he sees and what he
+-- gets are the same query.
 function Player:findAnchor(World)
-  local best, bd
+  local best, bs
   local cx, cy = self.x + self.w / 2, self.y + self.h / 2
   World:each("anchor", function(a)
     local ax, ay = a.x + a.w / 2, a.y + a.h / 2
     local d = U.dist(cx, cy, ax, ay)
-    -- roughly in facing direction or above
     local dx = ax - cx
-    local ok = d < 110 and (U.sign(dx) == self.facing or math.abs(dx) < 24 or ay < cy)
-    if ok and PH.lineOfSight(cx, cy, ax, ay) and (not bd or d < bd) then
-      best, bd = a, d
+    local ok = d < Player.GRAPPLE_RANGE
+      and (U.sign(dx) == self.facing or math.abs(dx) < 24 or ay < cy)
+    if ok and PH.lineOfSight(cx, cy, ax, ay) then
+      -- HEIGHT IS WORTH DISTANCE. Nearest-wins kept handing him the
+      -- anchor beside his head when the one he was reaching for was
+      -- above it, which is the whole complaint about this move.
+      local score = d - math.max(0, cy - ay) * Player.CLIMB_PREF
+      if not bs or score < bs then best, bs = a, score end
     end
   end)
   return best
+end
+
+-- Fire it. Returns true if a hook went out.
+function Player:throwHook(World, a)
+  if not a then return false end
+  local cx, cy = self.x + self.w / 2, self.y + self.h / 2
+  local ax, ay = a.x + a.w / 2, a.y + a.h / 2
+  self.hook = { a = a, phase = "out", t = 0,
+                d = U.dist(cx, cy, ax, ay), hx = cx, hy = cy }
+  self.grappling = nil
+  if G.Audio then G.Audio.sfx("grapple") end
+  return true
+end
+
+-- THE HOOK IS A TWO-PHASE MOVE and the first phase must be SHORT. At
+-- 900px/s the longest legal throw is 110px, so the hook is in the air
+-- for 0.12s at worst -- long enough to see the line go out and bite,
+-- short enough that it never reads as input lag.
+function Player:updateHook(World, dt, down)
+  local h = self.hook
+  if not h then return end
+  local cx, cy = self.x + self.w / 2, self.y + self.h / 2
+  local ax, ay = h.a.x + h.a.w / 2, h.a.y + h.a.h / 2
+  if h.a.dead then self.hook = nil self.grappling = nil return end
+
+  if h.phase == "out" then
+    h.t = h.t + dt
+    local travel = math.min(1, (h.t * Player.HOOK_SPEED) / math.max(1, h.d))
+    h.hx = cx + (ax - cx) * travel
+    h.hy = cy + (ay - cy) * travel
+    if travel >= 1 then
+      h.phase = "reel"
+      self.grappling = h.a
+      World:fx("burst", ax, ay, { color = "cyan", n = 6, speed = 60 })
+      if G.Audio then G.Audio.sfx("grapplehit") end
+    end
+    return
+  end
+
+  -- reeling
+  h.hx, h.hy = ax, ay
+  local d = U.dist(cx, cy, ax, ay)
+  -- LET GO and he keeps whatever the reel gave him -- no launch. The
+  -- launch is the reward for riding it all the way in.
+  if not down("jump") then
+    self.hook = nil
+    self.grappling = nil
+    return
+  end
+  if d < 14 then
+    self:grappleLaunch(World, ax, cx)
+    return
+  end
+  local ang = math.atan2(ay - cy, ax - cx)
+  self.vx = math.cos(ang) * Player.REEL_SPEED
+  self.vy = math.sin(ang) * Player.REEL_SPEED
+  World:fx("trail", cx, cy, { color = "cyan", r = 2, t = 0.15 })
+end
+
+-- THROUGH the anchor, not to it. Mostly up whatever the line's angle
+-- was, because Vess's problem is height and every other tool he owns is
+-- horizontal.
+function Player:grappleLaunch(World, ax, cx)
+  self.hook = nil
+  self.grappling = nil
+  self.vy = Player.LAUNCH_UP
+  -- a little of the direction he came from, so a sideways swing still
+  -- carries him onward rather than parking him dead over the anchor
+  local dir = (ax - cx) >= 0 and 1 or -1
+  self.vx = dir * Player.LAUNCH_SIDE
+  -- and the variable-height cut must not eat it: releasing JUMP the
+  -- instant the launch fires would drop -430 straight back to -80.
+  self.launchT = 0.25
+  self.airDashed = false        -- a launch re-arms the charge, so a
+                                -- chain of anchors is a real route
+  World:fx("burst", self.x + self.w / 2, self.y + self.h / 2,
+    { color = "cyan", n = 14, speed = 150 })
+  if G.Audio then G.Audio.sfx("grapplelaunch") end
+  local Cam = require "src.camera"
+  Cam.shake(1.2, 0.12)
 end
 
 -- ==================================================================
@@ -1782,7 +2116,12 @@ function Player:updateFire(dt, World, slot, down, pressed)
         self:shoot(World, mx, my, {
           side = "player", dmg = dmg, owner = self,
           vx = dx * def.speed, vy = dy * def.speed,
-          kind = "lance", size = full and 6 or 4, pierce = pierce, life = 0.8,
+          -- def.life, not a literal: W.tune solves it from the
+          -- weapon's RANGE and its own speed, so the charged lance dies
+          -- at the same 14 tiles as everything else rather than at
+          -- whatever 0.8s happened to be worth at speed 460 (368px).
+          kind = "lance", size = full and 6 or 4, pierce = pierce,
+          life = def.life,
         })
         if G.Audio then G.Audio.sfx(full and "shoot3" or "shoot1") end
         self.vx = self.vx - dx * (full and 60 or 15)
@@ -1844,7 +2183,11 @@ function Player:updateFire(dt, World, slot, down, pressed)
         kind = def.visual, size = def.size,
         pierce = def.pierce and def.pierce[lvl] or 0,
         homing = def.homing and def.homing[lvl] or nil,
-        life = 1.2,
+        -- THE BUG: this was the literal 1.2, so W.SHOT_LIFE was written
+        -- into def.life by W.tune and then read by nothing on the path
+        -- every ordinary shot in the game takes. A weapon declaring its
+        -- own lifetime was ignored here too.
+        life = def.life,
       })
     end
     if G.Audio then G.Audio.sfx(def.sfx) end
@@ -1970,6 +2313,10 @@ function Player:draw()
   local g = love.graphics
   local World = require "src.world"
 
+  -- THE LINE GOES UNDER THE BOT, so the hook reads as coming from his
+  -- hand rather than being pasted over his chest.
+  self:drawHook(g)
+
   -- the Ember goes UNDER the bot, so the sprite reads as holding it
   self:drawEmber(g)
   self:drawSpark(g)
@@ -2050,6 +2397,31 @@ function Player:draw()
       g.circle("line", self.x + self.w / 2, self.y - 6, 3)
       g.setColor(1, 1, 1, 1)
     end
+  end
+
+  -- THE PACK, ON HIS BACK. A bar that fills is the whole readout: full
+  -- pack plus distant Lu is meant to be a thing you SEE before it is a
+  -- thing you feel, and a HUD number would not do that -- you would be
+  -- looking at the fight, not at the corner of the screen.
+  if self.isVess and (self.pack or 0) > 0 then
+    local cap = self:packMax()
+    local frac = U.clamp(self.pack / math.max(1, cap), 0, 1)
+    local bx = self.x + (self.facing > 0 and -3 or self.w + 1)
+    local by = self.y + 3
+    g.setColor(P.dark)
+    g.rectangle("fill", bx, by, 3, 9)
+    g.setColor(P.lublue)
+    g.rectangle("fill", bx, by + 9 * (1 - frac), 3, 9 * frac)
+    if (self.xferFlash or 0) > 0 then
+      g.setColor(P.spark[1], P.spark[2], P.spark[3], self.xferFlash / 0.35)
+      g.rectangle("fill", bx - 1, by - 1, 5, 11)
+    elseif frac >= 1 then
+      -- full and nowhere to put it: that is the thing to notice
+      local pulse = 0.4 + math.sin(G.time * 7) * 0.35
+      g.setColor(P.spark[1], P.spark[2], P.spark[3], pulse)
+      g.rectangle("fill", bx - 1, by - 1, 5, 11)
+    end
+    g.setColor(1, 1, 1, 1)
   end
 
   -- ---- the DRIFT VANES: four fins that snap open when the hover engages

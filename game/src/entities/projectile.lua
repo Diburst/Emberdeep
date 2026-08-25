@@ -133,7 +133,12 @@ function Proj:update(dt)
   local cx, cy = nx + self.w / 2, ny + self.h / 2
   local tx, ty = math.floor(cx / T), math.floor(cy / T)
   if World:isSolid(tx, ty, self) then
-    if self.breaksTiles and World:breakTile(tx, ty) then
+    -- PASS THE CAPABILITY. breakTile takes a `with` and this passed
+    -- nothing, so a hard tile refused every projectile in the game --
+    -- including the LINK nova, which is the one thing meant to open the
+    -- lattice. Vess's dash was the only caller that ever supplied it.
+    if self.breaksTiles
+       and World:breakTile(tx, ty, self.link and "linkblast" or nil) then
       -- continue through broken tile
     elseif self.bounces > 0 or self.rolls then
       -- WHICH WALL DID IT HIT? The old code flipped whichever axis was

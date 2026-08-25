@@ -101,6 +101,7 @@ end
 
 function Pickup:collect(p, World)
   self.dead = true
+  -- (an energy mote may un-set this if the pack is full; see below)
   if self.sub == "shard" then
     G.run.scrap = G.run.scrap + 1
     if G.Audio then G.Audio.sfx("shard") end
@@ -114,9 +115,21 @@ function Pickup:collect(p, World)
     G.run.scrap = G.run.scrap + 1
     if G.Audio then G.Audio.sfx("scrap") end
   elseif self.sub == "energy" then
-    local lu = luOf(World)
-    if lu then
-      lu.energy = math.min(lu.maxenergy, lu.energy + Pickup.EN_VALUE)
+    -- WHOEVER PICKS IT UP KEEPS IT. Lu banks it straight into the bar;
+    -- Vess banks it into the pack and carries it to her (8.2). It used
+    -- to teleport into her bar from wherever he stood, which was the
+    -- interim while the pack did not exist -- and which quietly deleted
+    -- the negotiation this whole economy is for.
+    if p.isVess then
+      local got = p:packTake(Pickup.EN_VALUE)
+      if got <= 0 then
+        -- his pack is full: leave it on the floor rather than eat it
+        self.dead = false
+        self.magnetDelay = 0.8
+        return
+      end
+    else
+      p.energy = math.min(p.maxenergy, p.energy + Pickup.EN_VALUE)
     end
     if G.Audio then G.Audio.sfx("shard") end
   end

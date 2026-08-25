@@ -29,7 +29,14 @@ local Up = {}
 Up.COST = {
   -- cost to REACH tier 2 / tier 3 of a weapon (index 1 is unused: you
   -- start at tier 1)
-  weapon = { nil, 50, 120 },
+  --
+  -- Raised 50% on top of the doubling (Thomas, Aug 2026): 25/60 -> 50/120
+  -- -> 75/180, so a weapon tier is now THREE times its original price
+  -- while the rest of the forge stays at two. Weapons are the track
+  -- everybody buys first and the one that most changes how a fight goes;
+  -- the point of the forge is choosing what to give up, and a weapon
+  -- line that a zone's scrap pays for on its own is not a choice.
+  weapon = { nil, 75, 180 },
   -- Lu's dome
   dome = { nil, 60, 140 },
   -- health and energy scale with how many you already own, so the tenth

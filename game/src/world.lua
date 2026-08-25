@@ -66,13 +66,19 @@ local CHAR_TILE = {
   -- alongside in World.hardSet instead, exactly as ice does, so the only
   -- thing in the engine that learns anything new is breakTile.
   ["*"] = BREAK,
+  -- ...and the same trick a second time, for the other half of the
+  -- pair. "&" is a BREAK that only the LINK blast opens: the lattice
+  -- the pair shot their way out of Ember Camp through. It is a TILE,
+  -- not a prop and not a gate -- there is nothing to bind, nothing to
+  -- flag and nothing to open. You shoot it together and it is gone.
+  ["&"] = BREAK,
 }
 
 -- Published for the same reason the alphabet is: roommodel.py has to
 -- know that '*' is the gated variant or it will model every bulwark
 -- block as free to open, and checkchars fails anyone who writes a second
 -- copy of this.
-local HARD_CHARS = { ["*"] = "bulwark" }
+local HARD_CHARS = { ["*"] = "bulwark", ["&"] = "linkblast" }
 
 local DOOR_CHARS = { A = true, B = true, C = true, D = true, E = true, F = true }
 local GATE_CHARS = { G = true, H = true, I = true, J = true }
@@ -86,6 +92,37 @@ local GATE_CHARS = { G = true, H = true, I = true, J = true }
 -- hand-typed copies, and a copy is correct only until this table
 -- changes. Anything that needs to know what a character means reads it
 -- from here. See scripts/checkchars.py.
+-- ==================================================================
+-- ANIMATED GATES  (COOP-PLAN 9)
+-- ==================================================================
+-- An entity cannot be solid in this engine: physics.lua reads TILES and
+-- nothing else, and Platform moves its riders itself rather than being a
+-- wall you can walk into. A sliding door built as an entity would need a
+-- whole entity-collision layer, which touches every moving thing in the
+-- game for a feature that does not deserve it.
+--
+-- So the GATE TILES stay the source of truth and their retraction is
+-- animated PER CELL. Collision is already quantised to 16px, so it does
+-- not need to be continuous: each cell's visual slides smoothly while
+-- only that cell's solidity snaps, and it snaps at the moment its own
+-- segment has visually cleared. A five-cell portcullis retracting over
+-- half a second flips five times, a tenth of a second apart, each one
+-- hidden behind its own animation.
+--
+-- That is better than a monolithic sliding door rather than a
+-- compromise for one: cell-by-cell retraction is what a portcullis, an
+-- iris and a shutter all actually do.
+--
+-- NOTHING IN THE VALIDATORS CHANGES. The character grid is untouched, a
+-- gate is still G-J with a flag, so checkprogress still proves the gate
+-- gates and roommodel still reads the published alphabet. This is
+-- presentation over a model that already works, which is the whole
+-- reason to build it this way: it upgrades every gate in all 84 rooms at
+-- once, with no room edits and no validator changes.
+World.GATE_TIME = 0.5      -- seconds for a whole gate to open or close
+World.GATE_SPAN = 0.6      -- the share of that one cell takes
+World.GATE_CLEAR = 0.55    -- the phase at which a cell stops being solid
+
 World.CHAR_TILE = CHAR_TILE
 World.DOOR_CHARS = DOOR_CHARS
 World.GATE_CHARS = GATE_CHARS
@@ -123,14 +160,16 @@ function World:isSolid(tx, ty, ent)
     return not (st and st.gone)
   end
   if c == GATE then
-    local flag = self.gateFlags and self.gateFlags[idx(tx, ty)]
+    local i = idx(tx, ty)
+    local flag = self.gateFlags and self.gateFlags[i]
     if not flag or not G.run then return true end
-    local inverted = flag:sub(1, 1) == "!"
-    local set = G.run.flags[inverted and flag:sub(2) or flag]
-    if inverted then
-      return set and true or false -- energy bridge: solid only while powered
+    if flag:sub(1, 1) == "!" then
+      -- an energy bridge is a platform APPEARING, not a door retracting,
+      -- so it keeps its instant behaviour
+      return G.run.flags[flag:sub(2)] and true or false
     end
-    return not set
+    -- ...otherwise this cell is solid until its OWN segment has cleared
+    return self:gateCellPhase(i) < World.GATE_CLEAR
   end
   return false
 end
@@ -467,12 +506,173 @@ end
 -- so they run straight through the tile seams, and the edge posts are
 -- only drawn on the tiles that actually end the run.
 -- ------------------------------------------------------------------
-function World:drawCurtainTile(g, px, py, tx, ty)
+-- THE STYLE VOCABULARY.
+--
+-- Drawn as geometry rather than as the gate sprite offset, because an
+-- offset sprite spills into the neighbouring cell and would need
+-- clipping -- and love's scissor is in SCREEN space, which means undoing
+-- the camera transform and the render scale for every tile of every
+-- gate. Procedural bars cost nothing and stay inside their own cell by
+-- construction, which is also how the rest of this game draws.
+--
+-- `p` is the cell's own phase: 0 shut, 1 gone.
+-- A GATE THAT OPENS IS RETRACTED, NOT DELETED.
+--
+-- Every style used to shrink its moving part to nothing and return, so a
+-- fully open gate drew zero pixels and the doorway simply forgot it had
+-- ever been a doorway. That loses the thing the animation was for: you
+-- come back through a room and there is no sign of what you opened, or
+-- of what would shut again if the flag flipped.
+--
+-- So each style now has a PARKED SIZE it never shrinks below -- the
+-- mechanism sitting in its housing -- and the parked geometry is pushed
+-- to the edges of the cell so it never covers the passage. A 16px cell
+-- keeps at least 12 clear in every style, which is wider than the bots
+-- (10px) and read as walkable in play.
+local GATE_PARK = {
+  portcullis = 3,      -- the bars, stacked up under their head
+  shutter    = 2,      -- a jamb down each side
+  piston     = 3,      -- the plate, sunk in its recess
+  blast      = 2,      -- a lintel top and bottom
+}
+
+-- PARKED HARDWARE BELONGS ON THE RUN'S ENDS, NOT ON EVERY CELL.
+--
+-- The first version drew the housing per cell, so a three-tile
+-- portcullis parked as three stacked heads and there was no clear cell
+-- anywhere in the column -- a doorway you could see through and not walk
+-- through. A run retracts into ONE housing: the head of a portcullis is
+-- at the top of the whole run, a shutter's jambs are at its two ends.
+-- Middle cells keep only the channel the mechanism travels in.
+local function runEnd(seq, which)
+  if not seq or seq.n <= 1 then return true end       -- a lone cell is both ends
+  if which == "first" then return seq.i == 1 end
+  return seq.i == seq.n
+end
+
+function World:drawGateStyle(g, style, px, py, p, seq)
+  local rust, dark, steel = P.rust, P.dark, P.slate
+  local open = p
+  if style == "portcullis" then
+    -- retracts UPWARD into the head at the top of the run, teeth last
+    local head = runEnd(seq, "first")
+    local park = head and GATE_PARK.portcullis or 0
+    local h = math.max(park, T * (1 - open))
+    if h > 0.5 then
+      g.setColor(dark[1], dark[2], dark[3], 0.9)
+      g.rectangle("fill", px, py, T, h)
+      g.setColor(rust)
+      for b = 0, 3 do g.rectangle("fill", px + 1 + b * 4, py, 2, h) end
+    end
+    -- the CHANNEL the bars run in, on every cell: 1px each side, so an
+    -- open gate still shows exactly where the bars come down and 14 of
+    -- the 16 pixels stay clear
+    g.setColor(steel[1], steel[2], steel[3], 0.45)
+    g.rectangle("fill", px, py, 1, T)
+    g.rectangle("fill", px + T - 1, py, 1, T)
+    -- the HEAD, only at the top of the run, and always
+    if head then
+      g.setColor(steel)
+      g.rectangle("fill", px, py, T, 2)
+    end
+    -- the teeth, on the last cell of the run and only while it is down
+    if runEnd(seq, "last") and h > park + 3 then
+      g.setColor(rust)
+      for b = 0, 3 do
+        g.polygon("fill", px + 1 + b * 4, py + h - 3,
+          px + 3 + b * 4, py + h, px + 3 + b * 4, py + h - 3)
+      end
+    end
+
+  elseif style == "shutter" then
+    -- parts from the centre outward, into a jamb at each END of the run
+    --
+    -- ...and for a HORIZONTAL run that means the two OUTER edges, not
+    -- both edges of both end cells. Parking a jamb on each side of the
+    -- first and last tile left four posts standing in a three-tile
+    -- opening -- a fence, not a parted shutter.
+    local horiz = seq and seq.n > 1 and not seq.vert
+    local first, last = runEnd(seq, "first"), runEnd(seq, "last")
+    local parkL = ((horiz and first) or (not horiz and (first or last)))
+                  and GATE_PARK.shutter or 0
+    local parkR = ((horiz and last) or (not horiz and (first or last)))
+                  and GATE_PARK.shutter or 0
+    local moving = (T / 2) * (1 - open)
+    local wl, wr = math.max(parkL, moving), math.max(parkR, moving)
+    g.setColor(dark[1], dark[2], dark[3], 0.9)
+    if wl > 0.5 then g.rectangle("fill", px, py, wl, T) end
+    if wr > 0.5 then g.rectangle("fill", px + T - wr, py, wr, T) end
+    g.setColor(steel)
+    if wl > 0.5 then g.rectangle("fill", px + wl - 1, py, 1, T) end
+    if wr > 0.5 then g.rectangle("fill", px + T - wr, py, 1, T) end
+    -- NO RAIL ACROSS THE MIDDLE CELLS. A shutter usually runs
+    -- HORIZONTALLY -- a one-tile-tall hatch -- and a 1px rail on the top
+    -- and bottom of every cell seals it: there is then no full-height
+    -- column anywhere in the run and nothing can pass through a gate
+    -- that is supposed to be open. The jambs at the two ends are the
+    -- hardware; the middle is the hole.
+
+  elseif style == "piston" then
+    -- slides sideways into a recess it stays visible in
+    local home = runEnd(seq, "first")
+    local park = home and GATE_PARK.piston or 0
+    local w = math.max(park, T * (1 - open))
+    if w > 0.5 then
+      g.setColor(dark[1], dark[2], dark[3], 0.9)
+      g.rectangle("fill", px, py, w, T)
+      g.setColor(steel)
+      g.rectangle("fill", px + w - 2, py, 2, T)
+      g.setColor(rust[1], rust[2], rust[3], 0.7)
+      g.rectangle("fill", px, py + T / 2 - 1, w, 2)
+    end
+    -- same reason as the shutter: the plate parked in its recess at the
+    -- head of the run is the cue, and the rest of the run stays clear.
+    -- The far end keeps the jamb the plate seals against, so the travel
+    -- reads as a distance rather than as a lump on one side.
+    if runEnd(seq, "last") then
+      g.setColor(steel[1], steel[2], steel[3], 0.5)
+      g.rectangle("fill", px + T - 1, py, 1, T)
+    end
+
+  elseif style == "blast" then
+    -- two halves part vertically, and they SLAM: the last of the travel
+    -- happens in the first fifth of the phase, so it stops hard.
+    local topEnd, botEnd = runEnd(seq, "first"), runEnd(seq, "last")
+    local e = 1 - (1 - open) * (1 - open)
+    local moving = (T / 2) * (1 - e)
+    local ht = math.max(topEnd and GATE_PARK.blast or 0, moving)
+    local hb = math.max(botEnd and GATE_PARK.blast or 0, moving)
+    g.setColor(dark[1], dark[2], dark[3], 0.95)
+    if ht > 0.5 then g.rectangle("fill", px, py, T, ht) end
+    if hb > 0.5 then g.rectangle("fill", px, py + T - hb, T, hb) end
+    g.setColor(steel)
+    if ht > 0.5 then g.rectangle("fill", px, py + ht - 1, T, 1) end
+    if hb > 0.5 then g.rectangle("fill", px, py + T - hb, T, 1) end
+    -- hazard stripes on the parked lintels: this is the one that kills
+    -- you if it shuts, and it should still say so when it is open
+    g.setColor(rust[1], rust[2], rust[3], 0.75)
+    for b = 0, 3 do
+      if ht > 0.5 then g.rectangle("fill", px + b * 4 + (b % 2), py, 2, 1) end
+      if hb > 0.5 then g.rectangle("fill", px + b * 4 + (b % 2), py + T - 1, 2, 1) end
+    end
+    -- the jamb the halves slide against
+    g.setColor(steel[1], steel[2], steel[3], 0.45)
+    g.rectangle("fill", px, py, 1, T)
+    g.rectangle("fill", px + T - 1, py, 1, T)
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
+function World:drawCurtainTile(g, px, py, tx, ty, open)
+  open = open or 0
   local function curtainAt(ax, ay)
     if self:tileAt(ax, ay) ~= GATE then return false end
-    if self.gateStyles[idx(ax, ay)] ~= "curtain" then return false end
-    local f = self.gateFlags[idx(ax, ay)]
-    return not (f and G.run and G.run.flags[f])
+    return self.gateStyles[idx(ax, ay)] == "curtain"
+    -- GEOMETRY, NOT STATE. This used to also require the neighbour's
+    -- flag to be unset, so the moment a run opened every cell stopped
+    -- seeing its neighbours and a horizontal sheet decided it was
+    -- vertical -- the posts jumped to the wrong two ends on the last
+    -- frame of the animation.
   end
   local up, down = curtainAt(tx, ty - 1), curtainAt(tx, ty + 1)
   local left, right = curtainAt(tx - 1, ty), curtainAt(tx + 1, ty)
@@ -480,7 +680,8 @@ function World:drawCurtainTile(g, px, py, tx, ty)
   -- left-to-right has to draw as a sheet lying flat and not as three
   -- unrelated bars standing next to each other. A lone tile is vertical.
   local vert = (up or down) or not (left or right)
-  local pulse = 0.55 + math.sin(G.time * 5 + (vert and tx or ty) * 0.7) * 0.15
+  local pulse = (0.55 + math.sin(G.time * 5 + (vert and tx or ty) * 0.7) * 0.15)
+                * (1 - open)
   local period, speed = 11, 26
   local phase = (G.time * speed) % period
 
@@ -785,6 +986,8 @@ function World:parseGrid(lines, def, roomId)
   self.doors = {}
   self.gateFlags = {}
   self.gateStyles = {}
+  self.gateT = {}          -- flag -> 0..1, how far this mechanism has run
+  self.gateSeq = {}        -- cell -> { i = order in its run, n = run length }
   self.iceSet = {}
   self.hardSet = {}
   local spawnsByChar = {}
@@ -891,12 +1094,83 @@ function World:parseGrid(lines, def, roomId)
     end
   end
 
-  -- classify doors (edge if touching boundary)
+  -- WHERE EACH CELL SITS IN ITS OWN RUN, so a column retracts in order
+  -- rather than all at once. Computed here, once: it is a property of
+  -- the geometry and never changes.
+  do
+    local seen = {}
+    for ty = 0, self.h - 1 do
+      for tx = 0, self.w - 1 do
+        local i = idx(tx, ty)
+        if self.tiles[ty][tx] == GATE and not seen[i] then
+          local cells = {}
+          local vert = self:tileAt(tx, ty - 1) == GATE
+            or self:tileAt(tx, ty + 1) == GATE
+          if vert then
+            local y0 = ty
+            while self:tileAt(tx, y0 - 1) == GATE do y0 = y0 - 1 end
+            local y = y0
+            while self:tileAt(tx, y) == GATE do
+              cells[#cells + 1] = idx(tx, y)
+              y = y + 1
+            end
+          else
+            local x0 = tx
+            while self:tileAt(x0 - 1, ty) == GATE do x0 = x0 - 1 end
+            local x = x0
+            while self:tileAt(x, ty) == GATE do
+              cells[#cells + 1] = idx(x, ty)
+              x = x + 1
+            end
+          end
+          for k, ci in ipairs(cells) do
+            seen[ci] = true
+            self.gateSeq[ci] = { i = k, n = #cells, vert = vert }
+          end
+        end
+      end
+    end
+  end
+
+  -- SEED THE MECHANISMS TO MATCH THE WORLD AS FOUND.
+  --
+  -- Lazily seeding this on the first update was wrong in the one case
+  -- that matters: a gate whose flag is ALREADY set when you walk in got
+  -- initialised to "open" on frame one and never animated. Worse, it
+  -- made the animation depend on when the first update happened to run.
+  -- A gate you have already opened is open when you come back; a gate
+  -- that opens while you are standing there animates. Seeding at parse
+  -- is what separates those two.
+  self.gateT = {}
+  for _, flag in pairs(self.gateFlags) do
+    if self.gateT[flag] == nil then
+      self.gateT[flag] = self:gateOpenFlag(flag) and 1 or 0
+    end
+  end
+
+  -- CLASSIFY DOORS. Position derives it; `doorKind` overrides it.
+  --
+  -- The side used to be derived from the bounding box and nothing else,
+  -- with the precedence left > right > top > bottom > portal. That is a
+  -- good default and a bad law: it means a door in a corner is silently
+  -- a LEFT door however you meant it, and it means an interior door can
+  -- never pair with a wall door, because the pairing rule was written
+  -- against the derivation rather than against intent.
+  --
+  -- `doorKind = { B = "portal" }` states it instead. The engine cares
+  -- because `edge` decides where an arriving bot is PUT, which way it is
+  -- nudged, and whether the door draws a frame or a portal ring -- so a
+  -- declared kind that the engine ignored would be a note-to-self, not a
+  -- setting. checkdoors enforces the half that has to stay true: a door
+  -- calling itself a WALL door has to actually be on that wall.
   for ch, d in pairs(self.doors) do
     if d.x0 == 0 then d.edge = "left"
     elseif d.x1 == self.w - 1 then d.edge = "right"
     elseif d.y0 == 0 then d.edge = "top"
     elseif d.y1 == self.h - 1 then d.edge = "bottom" end
+    local declared = def.doorKind and def.doorKind[ch]
+    if declared == "portal" then d.edge = nil
+    elseif declared then d.edge = declared end
     d.link = def.links and def.links[ch]
     -- A SEALED DOOR: `links = { B = { "room", "D", req = "boss_crucible" } }`.
     -- Used for the boss-room shortcuts, which must not be walkable until
@@ -1200,7 +1474,66 @@ end
 -- ------------------------------------------------------------------
 -- Update
 -- ------------------------------------------------------------------
+-- WHICH CELL MOVES WHEN. The style decides the order, and the order
+-- decides the delay: a portcullis lifts from the top so its teeth are
+-- the last thing to leave the floor; a shutter parts from the middle.
+local GATE_ORDER = {
+  portcullis = function(s) return s.i - 1 end,
+  piston     = function(s) return s.i - 1 end,
+  shutter    = function(s) return math.abs(s.i - (s.n + 1) / 2) end,
+  blast      = function(s) return math.abs(s.i - (s.n + 1) / 2) end,
+  curtain    = function() return 0 end,
+}
+
+function World:gateOpenFlag(flag)
+  if not flag or not G.run then return false end
+  if flag:sub(1, 1) == "!" then return false end   -- bridges do not animate
+  return G.run.flags[flag] and true or false
+end
+
+-- 0 = fully shut, 1 = fully retracted, for ONE cell.
+function World:gateCellPhase(i)
+  local flag = self.gateFlags and self.gateFlags[i]
+  if not flag then return 0 end
+  local t = self.gateT and self.gateT[flag]
+  if t == nil then t = self:gateOpenFlag(flag) and 1 or 0 end
+  local s = self.gateSeq and self.gateSeq[i]
+  if not s or s.n <= 1 then return t end
+  local style = (self.gateStyles and self.gateStyles[i]) or "portcullis"
+  local order = (GATE_ORDER[style] or GATE_ORDER.portcullis)(s)
+  local off = (order / (s.n - 1)) * (1 - World.GATE_SPAN)
+  return U.clamp((t - off) / World.GATE_SPAN, 0, 1)
+end
+
+-- CLOSED -> OPENING -> OPEN -> CLOSING -> CLOSED, with reversal allowed
+-- from ANY point. Non-latching plates are reconciled every frame with OR
+-- semantics, so a gate really can be told to shut while it is still
+-- opening. Running ONE timer toward a target -- rather than playing an
+-- animation -- is what makes that free: it resumes from the current
+-- phase instead of restarting, and a door never teleports shut on a
+-- player standing in it, which is the exact bug a tile-quantised door
+-- exists to avoid.
+function World:updateGates(dt)
+  if not self.gateFlags then return end
+  self.gateT = self.gateT or {}
+  for _, flag in pairs(self.gateFlags) do
+    if self.gateT[flag] == nil then
+      self.gateT[flag] = self:gateOpenFlag(flag) and 1 or 0
+    end
+  end
+  local step = dt / World.GATE_TIME
+  for flag, t in pairs(self.gateT) do
+    local target = self:gateOpenFlag(flag) and 1 or 0
+    if t < target then
+      self.gateT[flag] = math.min(target, t + step)
+    elseif t > target then
+      self.gateT[flag] = math.max(target, t - step)
+    end
+  end
+end
+
 function World:update(dt)
+  self:updateGates(dt)
   self:updateFlood(dt)
   self:updateBeams(dt)
   -- flush add queue
@@ -1715,6 +2048,27 @@ function World:drawTerrain(g, set, tx0, ty0, tx1, ty1, frozen)
           g.draw((tx * 7 + ty * 13) % 3 == 0 and set.solid2 or set.solid, px, py)
         else
           g.draw(set.breakable, px, py)
+          -- HARDNESS HAS TO LOOK LIKE SOMETHING.
+          --
+          -- Every BREAK drew the same sprite, so a bulwark block and an
+          -- ordinary breakable were pixel-identical and the only way to
+          -- tell them apart was to shoot one and watch it refuse. A block
+          -- whose whole point is "not that tool" has to say so BEFORE the
+          -- player spends the tool on it.
+          local hk = self.hardSet and self.hardSet[idx(tx, ty)]
+          if hk then
+            local link = hk == "linkblast"
+            local col = link and P.violet or P.vessred
+            local acc = link and P.orchid or P.rust
+            g.setColor(col[1], col[2], col[3], 0.5)
+            g.rectangle("fill", px + 1, py + 1, T - 2, T - 2)
+            g.setColor(acc[1], acc[2], acc[3], 0.85)
+            g.line(px + 3, py + 3, px + T - 3, py + T - 3)
+            g.line(px + T - 3, py + 3, px + 3, py + T - 3)
+            g.setColor(acc[1], acc[2], acc[3], 0.5)
+            g.rectangle("line", px + 1.5, py + 1.5, T - 3, T - 3)
+            g.setColor(1, 1, 1, 1)
+          end
         end
         -- neighbor-aware shading
         local function hard(t2)
@@ -1791,11 +2145,24 @@ function World:drawTerrain(g, set, tx0, ty0, tx1, ty1, frozen)
             g.rectangle("fill", px, py + 2, T, 1.5)
             g.setColor(1, 1, 1, 1)
           end
-        elseif not (flag and G.run and G.run.flags[flag]) then
-          if self.gateStyles[idx(tx, ty)] == "curtain" then
-            self:drawCurtainTile(g, px, py, tx, ty)
+        else
+          local i = idx(tx, ty)
+          local style = self.gateStyles[i]
+          local p = self:gateCellPhase(i)
+          if style == "curtain" then
+            -- light, not stone: the sheet fades rather than retracting,
+            -- and the posts stay whatever it does
+            self:drawCurtainTile(g, px, py, tx, ty, p)
+          elseif style then
+            self:drawGateStyle(g, style, px, py, p, self.gateSeq[i])
           else
-            g.draw(set.gate, px, py)
+            -- a gate with no style stated is the plain slab it always
+            -- was, and it still animates: it slides up out of the way,
+            -- which is the least surprising thing an unlabelled gate can
+            -- do and needs no room edits anywhere. Drawn at every phase,
+            -- including fully open, so it parks in its head like the
+            -- rest rather than disappearing.
+            self:drawGateStyle(g, "portcullis", px, py, p, self.gateSeq[i])
           end
         end
       elseif c == ONEWAY then
@@ -3475,9 +3842,50 @@ function World:doorSealed(d)
   return d and d.req and not G.run.flags[d.req]
 end
 
+-- IS EVERY BOT IN THIS DOOR'S MOUTH?  (COOP-PLAN 7.1)
+--
+-- A door is a shared decision now: it does not fire until both bodies
+-- are in it. Readable, and it makes every transition something the pair
+-- agree to rather than something one of them does to the other.
+--
+-- SOLO COUNTS THE PARKED BOT AS PRESENT, or solo play stops at the first
+-- door in the game. `S:recallIdleBot` already teleports the idle bot to
+-- you, so the solo loop is: walk to the door, recall, step through --
+-- which is the right amount of friction. The test is on `idle`, not on
+-- position, precisely so that loop keeps working.
+--
+-- A DOWNED bot also counts. A rescue that has to happen before you can
+-- leave the room is a death sentence rather than a mechanic, and the
+-- revive is already a thing you choose to do.
+function World:doorHasEveryone(d)
+  local n, inside = 0, 0
+  for _, p in ipairs(self.players or {}) do
+    if not p.dead then
+      n = n + 1
+      if p.idle or p.downed
+        or U.aabb(p.x, p.y, p.w, p.h, d.x0 * T, d.y0 * T,
+                  (d.x1 - d.x0 + 1) * T, (d.y1 - d.y0 + 1) * T) then
+        inside = inside + 1
+      end
+    end
+  end
+  return n == 0 or inside >= n
+end
+
 function World:requestTransition(doorChar)
   local d = self.doors[doorChar]
   if not d or not d.link then return end
+  if not self:doorHasEveryone(d) then
+    -- Say so, but not every frame: standing in a door with your partner
+    -- across the room is a state you can be in for a while.
+    if not self.bothNagT or G.time - self.bothNagT > 2.5 then
+      self.bothNagT = G.time
+      if G.game then
+        G.game:announce("This door needs BOTH bots.", 1.6)
+      end
+    end
+    return
+  end
   if self:doorSealed(d) then
     if not self.sealNagT or G.time - self.sealNagT > 2 then
       self.sealNagT = G.time

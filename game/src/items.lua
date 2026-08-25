@@ -13,13 +13,24 @@ local Items = {}
 -- either on, and no way to win. `short` is the name the chamber shows.
 Items.MODULES = {
   sparkjump = { ability = true, short = "SPARK JUMP", name = "SPARK JUMP MODULE", desc = "Increases LUMEN robot jumping capability." },
-  grapple = { ability = true, short = "GRAPPLE", name = "MAGNE-GRAPPLE", desc = "VESSEL robot grapple apparatus. Press DASH near an anchor ring to zip to it." },
+  grapple = { ability = true, short = "GRAPPLE", name = "MAGNE-GRAPPLE", desc = "VESSEL robot grapple apparatus. JUMP again in mid-air near an anchor ring: the hook takes you to it and throws you up past it." },
   heatplating = { ability = true, short = "HEAT SHIELDING", name = "HEAT SHIELDING", desc = "Ceramic heat shields. Compatible with both robots." },
   hydroseals = { ability = true, short = "HYDRO SEALS", name = "HYDRO SEALS", desc = "Original hull seals, good as new. Both bots can dive underwater indefinitely!" },
   telenet = { ability = true, short = "TELEPORTER KEY", name = "TELEPORTER KEY", desc = "The old teleporter network is yours to use!" },
-  corekey1 = { name = "CORE KEY FRAGMENT (1/3)", desc = "A piece of the seal on the heart of Emberdeep." },
-  corekey2 = { name = "CORE KEY FRAGMENT (2/3)", desc = "A piece of the seal on the heart of Emberdeep." },
-  corekey3 = { name = "CORE KEY FRAGMENT (3/3)", desc = "A piece of the seal on the heart of Emberdeep." },
+  -- THE NUMBER WAS THE FRAGMENT'S IDENTITY, NOT YOUR COUNT.
+  --
+  -- corekey3 is the Spire fragment, so killing the Aerie Sentinel FIRST
+  -- announced "CORE KEY FRAGMENT (3/3)" and read as "you have all three"
+  -- when it was your first. There is no ordering between them -- the
+  -- three zones can be done in any order -- so any counter in the name
+  -- is a lie in five of the six possible orders.
+  --
+  -- Named for where they come from instead, which is what Maro and the
+  -- Core terminal already call them and which cannot be wrong. The real
+  -- tally lives on the pause screen, where it counts what you HAVE.
+  corekey1 = { name = "CORE KEY FRAGMENT -- FURNACE", desc = "A piece of the seal on the heart of Emberdeep." },
+  corekey2 = { name = "CORE KEY FRAGMENT -- HOLLOWS", desc = "A piece of the seal on the heart of Emberdeep." },
+  corekey3 = { name = "CORE KEY FRAGMENT -- SPIRE", desc = "A piece of the seal on the heart of Emberdeep." },
   musicbox = { name = "RUSTED MUSIC BOX", desc = "Tikka's treasure. It still plinks faintly." },
   moldcap = { name = "GIANT MOLDCAP", desc = "A mushroom the size of a hat. Root will love it." },
   lumecore = { ability = true, short = "LUME CORE", name = "LUME CORE", desc = "Lu's original light assembly! She radiates in the dark, and the Undergrove's deep doors will open to her." },
@@ -30,7 +41,7 @@ Items.MODULES = {
   arcplate3 = { name = "ARCHIVE PLATE: THE BURNING WING", desc = "A catalog plate, mis-shelved a century ago. Curator Lock wants it home." },
   arcplate4 = { name = "ARCHIVE PLATE: THE SINGING WING", desc = "A catalog plate, mis-shelved a century ago. Curator Lock wants it home." },
   bulwark = { ability = true, short = "BULWARK PLATE", name = "BULWARK PLATE", desc = "Vess's own forward plate. His CHARGE now carries a shield." },
-  driftvanes = { ability = true, short = "DRIFT VANES", name = "DRIFT VANES", desc = "Lu's original attitude assembly, recovered from the Sentinel's nest. Hold JUMP while falling and she falls slowly, with full control, for a long way. She can also ride thermal columns upward. Vess can WARP to her across the gaps he cannot jump." },
+  driftvanes = { ability = true, short = "DRIFT VANES", name = "DRIFT VANES", desc = "Lu's original attitude assembly, recovered from the Sentinel's nest. Hold JUMP while falling and she falls slowly, with full control, for a long way. She can also ride thermal columns upward. Vess cannot follow her across them -- find him another way round." },
   cinderram = { ability = true, short = "CINDER RAM", name = "CINDER RAM", desc = "Recovered from VESSEL-8. The CHARGE is an attack now. It damages what it hits, shatters a raised guard outright, and burns a chevron through the dark." },
 }
 

@@ -204,6 +204,58 @@ SETTLE = [
 ]
 
 
+# ------------------------------------------------------------------
+# THE REACH ENVELOPE IS A CLAIM ABOUT THE ENGINE, SO SOMETHING HAS TO
+# CHECK IT.
+#
+# tools/envelope_test.lua drives a real Player off a real lip and records
+# how far across it is while its feet are at or above each tile of rise;
+# tools/climbgap_test.lua widens a real gap until it stops LANDING it.
+# Worst case of the two, floor()ed, in tiles. The model may sit anywhere
+# at or below these; it may never sit above one, because over-crediting
+# is the direction that strands a player in a room the validator called
+# fine. Both rigs read this table back and fail if it drifts from what
+# they measure, so there is one copy to keep honest and it is this one.
+#
+# This replaced a check in dash_test that matched a LINE OF SOURCE in
+# roommodel. That check went red the moment the line it quoted was made
+# more correct, which is worse than having no check at all.
+# Re-measured Aug 2026 after the rig was rewritten: it used to press JUMP
+# on frame one and never sweep the timing, and it stood the body back from
+# the edge so its own floor counted as reach. Both are fixed; every kit
+# came out wider. The old numbers were vess (10,10,9,7), lu (13,13,11,8,5).
+MEASURED_ENVELOPE = {
+    "vess": (11, 10, 10, 8),        # base jump + the mid-air charge
+    "lu":   (14, 14, 11, 9, 6),     # spark jump + drift vanes
+}
+FLAT = ["####################"] * 2 + [
+        "A..................#",
+        "A..................#",
+        "####################"]
+
+
+def reach_cases():
+    fails = []
+    room = build(FLAT)
+    kits = [(b, MEASURED_ENVELOPE[b]) for b in sorted(MEASURED_ENVELOPE)]
+    # the merged model is one body holding everything, so the widest
+    # measurement any real bot produced is its ceiling too
+    kits.append((None, MEASURED_ENVELOPE["lu"]))
+    for bot, env in kits:
+        nav = RM.Nav(room, flags=set(RM.ALL_ABILITIES), bot=bot)
+        tbl = nav.reach_by_rise
+        for dy, modelled in enumerate(tbl):
+            limit = env[dy] if dy < len(env) else 0
+            ok = modelled <= limit
+            print("  %s %-8s rise %d: model %2d, engine %s"
+                  % ("ok  " if ok else "FAIL", bot or "merged", dy, modelled,
+                     limit if limit else "CANNOT RISE THAT FAR"))
+            if not ok:
+                fails.append("%s reach at rise %d: %d > %d"
+                             % (bot or "merged", dy, modelled, limit))
+    return fails
+
+
 def settle_cases():
     fails = []
     for name, rows, (x, y), want in SETTLE:
@@ -248,10 +300,14 @@ def main():
     fails += settle_cases()
 
     print()
+    fails += reach_cases()
+
+    print()
     if fails:
         print("FAIL %d movement-model case(s): %s" % (len(fails), "; ".join(fails)))
         return 1
-    print("%d movement-model cases hold" % (len(CASES) + len(SETTLE)))
+    print("%d movement-model cases hold, and the reach envelope is "
+          "never wider than the engine" % (len(CASES) + len(SETTLE)))
     return 0
 
 

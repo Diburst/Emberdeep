@@ -65,8 +65,8 @@ function S:rebuild()
   items[#items + 1] = {
     label = function()
       local tier = f.dome or 1
-      if tier >= Up.MAX.dome then return "LU'S SHIELD DOME  Lv" .. Up.MAX.dome .. " (MAX)" end
-      return "LU'S SHIELD DOME  Lv" .. tier .. " > Lv" .. (tier + 1)
+      if tier >= Up.MAX.dome then return "LU'S SHIELD  Lv" .. Up.MAX.dome .. " (MAX)" end
+      return "LU'S SHIELD  Lv" .. tier .. " > Lv" .. (tier + 1)
         .. "   " .. Up.cost("dome", tier + 1) .. " scrap"
     end,
     onConfirm = function()
@@ -74,10 +74,10 @@ function S:rebuild()
       if tier >= Up.MAX.dome then return end
       if pay(Up.cost("dome", tier + 1)) then
         f.dome = tier + 1
-        G.game:announce("Shield dome reinforced to Lv" .. f.dome .. "!", 2)
+        G.game:announce("Shield reinforced to Lv" .. f.dome .. "!", 2)
       end
     end,
-    hint = "The dome drains far less energy per hit it soaks.",
+    hint = "The shield drains far less energy per hit it soaks.",
   }
 
   items[#items + 1] = {

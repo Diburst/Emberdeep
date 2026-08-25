@@ -109,8 +109,10 @@ end
 local PRETTY = {
   sparkjump = "SPARK JUMP module", grapple = "MAGNE-GRAPPLE module",
   hydroseals = "HYDRO SEALS module", heatplating = "HEAT PLATING module",
-  telenet = "TELE-NET master key", corekey1 = "CORE KEY 1",
-  corekey2 = "CORE KEY 2", corekey3 = "CORE KEY 3",
+  telenet = "TELE-NET master key",
+  -- named for their zone, not numbered: see items.lua
+  corekey1 = "Core key: Furnace", corekey2 = "Core key: Hollows",
+  corekey3 = "Core key: Spire",
   moldcap = "Root's moldcap", musicbox = "Tikka's music box",
 }
 local function labelFor(give)

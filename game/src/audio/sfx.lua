@@ -131,7 +131,26 @@ function SFX.buildAll()
       return last * env(t, 0.01, d) * 0.45
     end)
   end)()
-  S.grapple = blip(300, 900, 0.12, 0.25, 0.35)
+  -- THE GRAPPLE IS THREE SOUNDS NOW, because it is three moments: the
+  -- throw, the bite, and the launch. One sound for all three made the
+  -- hook's flight and its landing indistinguishable, which is the half
+  -- of the move the player has to time.
+  S.grapple = blip(300, 900, 0.12, 0.25, 0.35)          -- the throw
+  S.grapplehit = blip(1200, 700, 0.05, 0.5, 0.32)       -- the bite: short and metallic
+  S.grapplelaunch = sweepTri(260, 1000, 0.22, 0.45)     -- the yeet: up, and it keeps going up
+
+  -- THREE SOUNDS THE GAME ASKS FOR AND NEVER HAD.
+  --
+  -- Audio.sfx no-ops on a name it does not know, so `sfx("emitter")` has
+  -- always been a silent statement rather than an error -- the worst
+  -- kind of missing sound, because nothing ever tells you. A sweep over
+  -- every sfx() call in the entity files found these.
+  --
+  -- `break` is a LUA KEYWORD, so `S.break = ...` will not compile. That
+  -- is almost certainly why the tile-break sound was never written: the
+  -- obvious line is a syntax error and the bracket form is not obvious.
+  S.emitter = sweepTri(220, 880, 0.26, 0.4)             -- a beam catching
+  S["break"] = noiseBurst(0.13, 0.4, 0.5)               -- a tile giving way
   S.domeon = sweepTri(300, 700, 0.18, 0.4)
   S.domeoff = sweepTri(700, 250, 0.15, 0.35)
   S.domehit = blip(800, 500, 0.07, 0.5, 0.3)

@@ -250,7 +250,7 @@ D.sign_hub = { { script = {
   { who = "sys", text = "Works dry deck. Teleport pad certified 100 years ago. Probably fine." },
 } } }
 D.sign_furnace = { { script = {
-  { who = "sys", text = "FURNACE DEPTHS. Anchor rings certified for crew transit. The rings outlived the crews." },
+  { who = "sys", text = "FURNACE DEPTHS. Anchor rings and Updrafts certified for robot crew transit." },
 } } }
 D.sign_junction = { { script = {
   { who = "sys", text = "SERVICE STAIRWELL, MIDDLE LANDING" },
@@ -261,7 +261,7 @@ D.sign_crystal = { { script = {
 D.sign_dormant = { { script = {
   { who = "sys", text = "RACK 12. Idle. Awaiting work order. -- the plate has said this for a hundred years" },
   { who = "lu", text = "It is not broken. Nobody has asked it for anything." },
-  { who = "lu", text = "My dome will wake one. It costs me to hold it awake, so pick which one." },
+  { who = "lu", text = "My shield will wake one. It costs me to hold it awake, so pick which one." },
 } } }
 D.sign_panel = { { script = {
   { who = "sys", text = "REFLECTOR, RAIL-MOUNTED. Two hundred kilos. Do not attempt to move by hand." },
@@ -395,7 +395,7 @@ D.sol = {
   { need = { "met_elder" }, script = {
     { who = "sol", text = "Listen close, this keeps you alive: when a bot's core gives out, it goes DOWN -- but not gone. The other can hold [INTERACT] beside them to restart it." },
     { who = "sol", text = "Alone? Tap [PARTNER] to swap bots, HOLD it to call the idle one to you. A standing bot can hold plates and doors, too." },
-    { who = "sol", text = "And Lu -- your repair pulse mends Vess. Vess, your dome-sister keeps the bullets off. Neither of you wins the deep alone." },
+    { who = "sol", text = "And Lu -- your repair pulse mends Vess. Vess, your shield-sister keeps the bullets off. Neither of you wins the deep alone." },
   } },
   { script = {
     { who = "sol", text = "New chassis in camp! I'm Sol. I patch people, and evidently now robots. Same tools, oddly enough. Talk to Maro by the big lantern first." },
@@ -406,7 +406,7 @@ D.brassa = {
   { need = { "brassa_hammer" }, notflag = { "brassa_thanks" }, once = "brassa_thanks", script = {
     { who = "brassa", text = "..." },
     { who = "brassa", text = "You fished it out. My good hammer. Where exactly was it ly-- no. Don't tell me. Doesn't matter." },
-    { who = "brassa", text = "Forge is roaring again. Bring me SCRAP and I'll work it: weapon tiers, Lu's dome, chassis plating, energy cells. Capsule and tank cores you find unlock the deeper work." },
+    { who = "brassa", text = "Forge is roaring again. Bring me SCRAP and I'll work it: weapon tiers, Lu's shield, chassis plating, energy cells. Capsule and tank cores you find unlock the deeper work." },
     { choice = "Open the forge?", yes = {
       { fn = function() if G.game then G.game.forgeQueued = true end end },
     }, no = {
@@ -414,7 +414,7 @@ D.brassa = {
     } },
   } },
   { need = { "brassa_hammer" }, script = {
-    { who = "brassa", text = "Forge is roaring. Jun says you're still half wire and prayer inside -- so bring me SCRAP and I'll keep working it: weapon tiers, Lu's dome, chassis plating, energy cells. Capsule and tank cores unlock the deeper work." },
+    { who = "brassa", text = "Forge is roaring. Jun says you're still half wire and prayer inside -- so bring me SCRAP and I'll keep working it: weapon tiers, Lu's shield, chassis plating, energy cells. Capsule and tank cores unlock the deeper work." },
     { choice = "Open the forge?", yes = {
       { fn = function() if G.game then G.game.forgeQueued = true end end },
     }, no = {
@@ -532,7 +532,7 @@ D.jun = {
     { who = "jun", text = "Jun. Teleporter tech, unemployed, on account of the teleporters being dead. Found your vault years back and I've been sneaking down to tinker ever since. Getting you two on your feet is the only work I've finished in a century." },
     { who = "jun", text = "Right. Legs first. [MOVE] to walk, [JUMP] to jump. Go on -- the floor's clear, mostly." },
     { who = "jun", text = "Now the arm. [FIRE] shoots. Vess, that's you -- you're the one with the gun in your wrist. Try not to point it at the lathe." },
-    { who = "jun", text = "Lu, you've got the other half of the job. [SPECIAL] throws your shield dome up. Keep it between him and whatever's shooting." },
+    { who = "jun", text = "Lu, you've got the other half of the job. [SPECIAL] throws your shield up. Keep it between him and whatever's shooting." },
     { who = "jun", text = "You'll fall like a dropped spanner, mind. Both of you. There WAS a set of vanes for that, and I never found them. Sorry." },
     { who = "jun", text = "[INTERACT] is for talking, reading, and anything that looks like it wants pressing. That's the whole manual. I did say I only got you WALKING." },
     { who = "jun", text = "Go out and up the ramp -- the Elder's by the Ember. Maro. Talk to him before you do anything clever." },

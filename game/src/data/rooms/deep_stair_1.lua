@@ -30,9 +30,26 @@ return {
     { kind = "girder", x = 24, y = 392, w = 432, h = 13, col = "black", a = 0.5, py = 0.3, step = 30 },
     { kind = "girder", x = 24, y = 440, w = 432, h = 13, col = "black", a = 0.5, py = 0.3, step = 30 },
     { kind = "girder", x = 24, y = 488, w = 432, h = 13, col = "black", a = 0.5, py = 0.3, step = 30 },
-    -- side columns, further back again
+    -- SIDE COLUMNS, FURTHER BACK AGAIN -- and only one of them was ever
+    -- seen. The left column sits at x=26, behind the two solid tiles of
+    -- the left wall, so its `black` at 0.45 is completely occluded and
+    -- nobody ever noticed how heavy that was. The right one at x=430 is
+    -- tile 27, which is OPEN SPACE for the whole lower half of the room
+    -- and right beside door C -- so the same value drew a hard black bar
+    -- down the right-hand lane, darker than the rock in front of it.
+    --
+    -- A thing that is FURTHER AWAY loses contrast toward the haze; it
+    -- does not become the darkest object on screen. So the exposed one
+    -- is haze-coloured and faint, and now reads as a pillar standing
+    -- behind the shaft rather than as a hole punched in it. Rendered and
+    -- compared at black/0.45, black/0.18, gray/0.14, gray/0.20 and
+    -- slate/0.12 before picking.
+    --
+    -- The left one is left as it was on purpose: it is invisible either
+    -- way, and its value is a fossil worth keeping legible next to the
+    -- one that had to change.
     { kind = "column", x = 26, y = 24, w = 14, h = 496, col = "black", a = 0.45, py = 0.42, step = 26, acc = "gray" },
-    { kind = "column", x = 430, y = 24, w = 14, h = 496, col = "black", a = 0.45, py = 0.42, step = 26, acc = "gray" },
+    { kind = "column", x = 430, y = 24, w = 14, h = 496, col = "gray", a = 0.20, py = 0.42, step = 26, acc = "slate" },
     -- light falling in from the district above, dying out below
     { kind = "shaft", x = 70, y = 34, w = 66, h = 240, col = "cream", a = 0.22, py = 0.18, skew = 26, ph = 0 },
     { kind = "shaft", x = 250, y = 34, w = 54, h = 190, col = "cream", a = 0.16, py = 0.18, skew = 26, ph = 1.7 },
@@ -78,44 +95,53 @@ return {
     { x = 46, y = 452, r = 44, col = { 1.00, 0.74, 0.40 }, flicker = 7.0 },
   },
   mapPos = { x = 22, y = 2, w = 1, h = 2 },
-  gates = { H = "boss_crucible", I = "boss_prismtyrant" },
+  gates = { H = "boss_crucible", I = "boss_prismtyrant", J = "bus_deep_stair_1_1" },
+  gateStyle = { J = "shutter" },
   map = [[
-##############################
-##############################
-##..........................##
-##....A.....................##
-##....A.....................##
-##==============............##
-##..........................##
-##..........................##
-##............==============##
-##...................###....##
-##...................HE#....##
-##==============.....HE#....##
-##..................=###....##
-##..........................##
-##............==============##
-##..........................##
-##...........................C
-##==============.............C
-##.........................==#
-##..........................##
-##............==============##
-##....###...................##
-##....#FI...................##
-##====#FI=======............##
-##....###=..................##
-##..........................##
-##............==============##
-##..........................##
-##..........................##
-##==============............##
-##..........................##
-##..................#.#.....##
-######B##############D########
-######B##############D########
+###############################
+###############################
+##..........................###
+##....A.....................###
+##....A.....................###
+##==============............###
+##..........................###
+##..........................###
+##............==============###
+##...................###....###
+##...................HE#....###
+##==============.....HE#....###
+##..................=###....###
+##..........................###
+##............==============###
+##..........................###
+##............................C
+##==============..............C
+##.........................===#
+##..........................###
+##............==============###
+##....###...................###
+##....#FI...................###
+##====#FI======.............###
+##....###=....................#
+##............................#
+##............=========.......#
+##...................b.......f#
+##............................#
+##==============..............#
+##............................#
+##.d..........................#
+########......######JJJ.......#
+#########....########.#g.e....#
+##########BB#########D#########
+##########BB#########D#########
 ]],
-  key = {},
+  key = {
+    ["f"] = "mirror:b",
+    ["g"] = "node:bus_deep_stair_1_1:1",
+    ["b"] = "emitter:right:dormant:9",
+    ["d"] = "cell",
+    ["e"] = "panel:h:f:4",
+  },
   links = {
     A = { "stair_junction", "C", req = "boss_bramblemaw" },
     B = { "deep_stair_2", "A" },

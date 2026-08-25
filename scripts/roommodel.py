@@ -17,8 +17,9 @@ genprogress.py) reason about the same world the player experiences:
     without the plate and solid to LU FOREVER -- the plate is Vess's.
     They are BREAK tiles in the engine so nothing in the renderer or the
     physics changed; only World:breakTile and this model know.
-  - Magne-grapple anchors 'n' work only with the 'grapple' flag, radius
-    GRAPPLE_R (Chebyshev tiles, matching the engine's 110px rope).
+  - Magne-grapple anchors (whatever character the room's own key maps to
+    "anchor") work only with the 'grapple' flag, within the engine's
+    110px rope, fired from the jump arc because the hook is air-only.
   - Jump height is JUMP_H tiles (JUMP_H_SPARK with 'sparkjump'), gap
     clearance GAP_W tiles -- GAP_W_HOVER with 'driftvanes', because Lu's
     hover more than doubles her reach (engine measures 12.1 tiles).
@@ -112,12 +113,49 @@ RESERVED = TILES | DOORS | GATES
 JUMP_H = 3
 JUMP_H_SPARK = 4
 GAP_W = 4
-# Lu with the DRIFT VANES. The engine measures 12.1 tiles of level gap
-# (hoversim: 1.3s of hover at 26px/s fall against 112px/s run); we model
-# 10 for two tiles of margin, because a hover gap is a long commitment
-# and the player is holding a button for the whole of it.
-GAP_W_HOVER = 10
+# Lu with the DRIFT VANES.
+#
+# This was 10, and 10 was wrong -- not conservative, wrong. It came from
+# a rig that pressed JUMP on the first frame and never swept the timing,
+# and that costs every kit more than a tile. Re-measured (envelope_test,
+# rewritten Aug 2026): the vanes carry 13.30 tiles of level gap alone and
+# 14.93 with the spark jump, which is the kit Lu actually has.
+#
+# Thomas, on furn_2: "Lu can hover across the lava span ... I've done it
+# several times, there's a healthy margin there." He is right and the
+# model was calling that room impassable for her. The span is 14 tiles.
+#
+# The margin now lives where it can be reasoned about instead of in a
+# round number: ENVELOPE is floor()ed (14.93 -> 14), and it is an upper
+# bound on POSITION, not on landing -- a body cannot land where it never
+# was, but being there is not the same as sticking it. The timing window
+# is wide, which is why 14 is safe: of twelve swept jump frames, nine
+# clear the span, and the widest is the one a player falls into by
+# default -- hold the vanes and walk off, never jumping at all.
+GAP_W_HOVER = 14
 GRAPPLE_R = 6  # 110px rope / 16px tiles
+# THE MODEL IS NOW PESSIMISTIC ABOUT THE GRAPPLE, DELIBERATELY.
+#
+# It credits "reach any anchor within the rope, with line of sight" and
+# stops there. The engine no longer stops there: riding the hook in
+# LAUNCHES Vess past the anchor -- measured at 4.3 tiles of rise above
+# it, so an overhead anchor is worth about ten tiles end to end. None of
+# that is modelled.
+#
+# That is the safe direction and it stays unmodelled on purpose: a room
+# the model calls unreachable gets looked at by a human, and a room it
+# passes that nobody can cross does not. Crediting the launch would also
+# mean crediting a CHAIN of launches, which is a different search.
+#
+# The rope is now measured from where the body ACTUALLY IS when it
+# fires. The hook is air-only in the engine (JUMP, in mid-air), so
+# Nav.air_cells() walks the jump arc and the rope is tried from every
+# cell on it. That is not generosity: those are the same cells the jump
+# code already paths through to decide what it can land on, and firing
+# from the arc is the only way the engine lets you fire at all. furn_2
+# is the room that made the difference visible -- its anchor is 7.28
+# tiles from either stepping stone (outside the rope from the floor)
+# and about 4 from the arc.
 
 # VESS'S CHARGE, MID-AIR. He has no better jump -- SPARK JUMP and DRIFT
 # VANES are both Lu's -- but he can charge once per airtime, and the
@@ -127,16 +165,85 @@ GRAPPLE_R = 6  # 110px rope / 16px tiles
 # MEASURED, by driving the real Player over a real gap and widening it
 # until he stops landing (tools/dash_test.lua): the charge is worth
 # FOUR extra tiles of level gap over a plain running jump. We model
-# three, following the same convention as GAP_W_HOVER -- which models 10
-# against 12.1 measured -- because a mid-air charge is a commitment and
-# a model that assumes a perfect one will call a room passable that
-# nobody can actually pass.
+# three, because a mid-air charge is a commitment and a model that
+# assumes a perfect one will call a room passable that nobody can
+# actually pass. Left at 7 in the Aug 2026 re-measure even though the
+# rig now reads 11.81 -- see the note under ENVELOPE.
 #
 # It costs nothing to own: every run has Vess from the first room, so
 # this is baseline reach for HIM, not an ability gate. It is not Lu's --
 # the whole dash branch is inside `if self.isVess` -- so a kitted Nav
 # takes it from self.dash_gap, which is 0 for her.
 DASH_GAP = GAP_W + 3
+
+# ------------------------------------------------------------------
+# THE RISE FALLOFF, AND WHY IT HAD TO BE MEASURED
+#
+# The constants above are LEVEL gaps. moves() used to spend the whole of
+# one at every rise up to jump_h, which quietly handed a body holding
+# both of Lu's modules a 4-up / 10-across hop in a single arc -- a
+# combination the movement table never endorsed (SPARK JUMP is rise 4 /
+# gap 4, DRIFT VANES rise 3 / gap 10) and nothing had ever measured.
+#
+# tools/envelope_test.lua measures it: it runs a real Player off a real
+# lip and records how far across it is while its feet are at or above
+# each tile of rise. That is an UPPER bound on what it can land on -- it
+# cannot land where it never was. In tiles:
+#
+#     kit                   dy=0    dy=1    dy=2    dy=3    dy=4
+#     base, no charge        6.30    5.83    5.37    4.55      --
+#     Vess, best charge     11.81   11.21   10.37    8.79      --
+#     Lu, spark only         7.23    6.88    6.53    6.07    5.37
+#     Lu, vanes only        13.30   10.50    7.70    4.90      --
+#     Lu, spark + vanes     14.93   14.23   12.02    9.22    6.42
+#
+# RE-MEASURED Aug 2026, and every one of them moved. The old rig pressed
+# JUMP on frame one from a standstill and stood the body a tile and a
+# half back from the edge; the first cost every kit more than a tile of
+# reach, the second handed it back a tile of its own floor. The numbers
+# it produced were:
+#
+#     base 5.02  Vess 10.64  spark 6.07  vanes 12.25  both 13.65  (dy=0)
+#
+# The envelope is floor()ed and then the kit constant STILL CAPS IT, so
+# this can only ever make the model more pessimistic than the engine.
+# GAP_W and DASH_GAP were NOT raised with these: 4 and 7 sit well under
+# 6.30 and 11.81, they have never been the thing that flagged a real
+# room, and moving them would repaint every plain-jump verdict in the
+# game for no reported problem. Only the hover moved, because the hover
+# is what was calling rooms impassable that are crossed daily.
+#
+# Use the landing rigs (dash_test) for DELTAS only -- they say so
+# themselves; they under-measure absolutes. This rig reads position, so
+# its absolutes are trustworthy.
+# AND THEN CHECKED AGAINST A LANDING RIG, WHICH IS THE REAL QUESTION.
+#
+# The envelope measures POSITION. The model needs LANDING, and a body can
+# be somewhere it cannot stop. tools/climbgap_test.lua builds a real ledge
+# dy tiles up and widens the gap until the body stops sticking it -- the
+# stronger measurement, and now that it holds JUMP for every kit (it used
+# to hold it only for the vanes, so it was timing a TAP for everyone else
+# and reported a two-tile gap for a body that clears six) it agrees with
+# the envelope almost everywhere:
+#
+#     kit                   dy=0    dy=1    dy=2    dy=3    dy=4
+#     base                     6       5       5       4      --
+#     Vess, best charge       11      10      10       8      --
+#     Lu, spark only           7       6       6       5       5
+#     Lu, vanes only          13      10       7       4      --
+#     Lu, spark + vanes       14      14      11       9       6
+#
+# Where they disagree the LANDING number wins, because that is the thing
+# the model claims: Vess at rise 1 (10, not 11), Lu at rise 2 (11, not
+# 12), Lu's spark at rise 3 (5, not 6). The table below is the two rigs
+# taken together, worst case each cell.
+ENVELOPE = {
+    ("plain", False): (6, 5, 5, 4),
+    ("plain", True):  (7, 6, 6, 5, 5),     # the spark jump also flattens the falloff
+    ("dash",  False): (11, 10, 10, 8),     # Vess never holds the spark: it is Lu's
+    ("hover", False): (13, 10, 7, 4),
+    ("hover", True):  (14, 14, 11, 9, 6),
+}
 
 ALL_ABILITIES = frozenset({"sparkjump", "grapple", "hydroseals",
                            "heatplating", "telenet", "driftvanes"})
@@ -221,6 +328,22 @@ def _kits(path="src/entities/player.lua"):
         # would be the first Vess gate in the game gating nothing.
         kits["lu" if who == "vess" else "vess"]["denies"].add(flag)
     kits[dash]["dash"] = True
+    # NEITHER BOT OPENS A LINK BLOCK ALONE.
+    #
+    # `&` is a BREAK gated on `linkblast`, and unlike every other flag in
+    # this table that one belongs to NOBODY: the blast is fired from the
+    # midpoint of the pair and needs both of them together and charged.
+    # The ownership scan above cannot see that, because there is no
+    # `self.isVess and G.run.flags.linkblast` anywhere to find -- so
+    # without this line both kits would be credited with opening it
+    # single-handed, and checkcoop would pass a wall that neither bot can
+    # get through by itself. That is the optimistic direction, which is
+    # the one that strands a player.
+    #
+    # The MERGED model (bot=None) still opens it, which is correct: it is
+    # an upper bound and the pair together really can.
+    for k in kits.values():
+        k["denies"].add("linkblast")
     for k in kits.values():
         k["denies"] = frozenset(k["denies"])
     return kits
@@ -251,6 +374,19 @@ class Room:
         self.doors = {}
         self.spawns = {}        # entity char -> [(x, y)]
         self.updraft = {}       # (x, y) -> column base y, for every cell
+        # WHICH CHARACTER IS AN ANCHOR IS A PROPERTY OF THE ROOM'S KEY,
+        # NOT A CONVENTION.
+        #
+        # This used to be the literal 'n' in two places in moves()/is_node,
+        # because every room that had ever held an anchor spelled it 'n'.
+        # furn_2 spells it 'b' -- perfectly legal, the key says
+        # `["b"] = "anchor"` and the engine reads the key -- and the model
+        # silently saw no anchor at all there: no node, no rope, the
+        # grapple modelled NOWHERE in that room. Read it off the key.
+        self.anchors = frozenset(
+            ch for ch, spec in key.items()
+            if spec.split(":")[0].strip() == "anchor")
+        self._anchor_cells = None
         tile = RESERVED
         for y in range(self.H):
             for x in range(self.W):
@@ -259,6 +395,13 @@ class Room:
                     self.doors.setdefault(ch, []).append((x, y))
                 elif ch not in tile:
                     self.spawns.setdefault(ch, []).append((x, y))
+
+    def anchor_cells(self):
+        """Every magne-grapple anchor in the room, as (x, y)."""
+        if self._anchor_cells is None:
+            self._anchor_cells = [c for ch in sorted(self.anchors)
+                                  for c in self.spawns.get(ch, [])]
+        return self._anchor_cells
 
     def build_updrafts(self):
         """Thermal columns. The map char marks the BASE cell; the column
@@ -374,6 +517,7 @@ def parse_room(fname):
         if fm:
             room.braziergate = (fm.group(1), need)
     room.spawns = pre_spawns
+    room._anchor_cells = None   # spawns just changed under it
     room.build_updrafts()
     return room
 
@@ -398,7 +542,33 @@ class Nav:
         # straight off the module constant in moves(), which handed Lu a
         # seven-tile gap she has never been able to cross.
         self.dash_gap = DASH_GAP if (kit is None or kit["dash"]) else 0
+        self.reach_by_rise = self._reach_table()
         self.transit = set()  # cells the body passes through mid-fall/jump
+
+    def _reach_table(self):
+        """Horizontal reach at each tile of rise, 0..jump_h.
+
+        Every mode this body owns proposes `min(its level constant, the
+        measured envelope at that rise)` and the widest proposal wins.
+        A mode with no measurement at that rise proposes nothing, which
+        is why a four-tile rise never gets Vess's charge: he cannot rise
+        four tiles, so nobody has measured a charge that does.
+        """
+        spark = "sparkjump" in self.flags
+        modes = [("plain", GAP_W)]
+        if self.dash_gap:
+            modes.append(("dash", self.dash_gap))
+        if "driftvanes" in self.flags:
+            modes.append(("hover", GAP_W_HOVER))
+        out = []
+        for dy in range(0, self.jump_h + 1):
+            best = 0
+            for name, const in modes:
+                env = ENVELOPE.get((name, spark)) or ENVELOPE[(name, False)]
+                if dy < len(env):
+                    best = max(best, min(const, env[dy]))
+            out.append(best)
+        return out
 
     def riding(self, x, y):
         """Is (x, y) a thermal column cell this body can ride?"""
@@ -482,8 +652,16 @@ class Nav:
             return False
         if ch in GATES and self.gate_solid(ch):
             return False
+        # AN ANCHOR IS A PLACE ONLY IF YOU HAVE THE HOOK. It is a ring
+        # bolted to the air: a body without the grapple module cannot
+        # hang on one and cannot land on one, so it is not a node for
+        # that body. (This was wrong before in the same breath as the
+        # 'n' literal -- a kit with no grapple could JUMP onto an anchor
+        # and set off across the room from it.)
+        if ch in self.r.anchors and not self.standable(x, y):
+            return "grapple" in self.flags
         return (self.standable(x, y) or ch == "~" or ch in DOORS
-                or ch == "n" or ch in GATES or self.riding(x, y))
+                or ch in GATES or self.riding(x, y))
 
     def land(self, nx, ny):
         """Fall from (nx, ny); returns landing node or None (lava/void)."""
@@ -567,7 +745,9 @@ class Nav:
                 n = self.land(nx, y)
                 if n:
                     out.add(n)
-        reach = max(self.gap_w, self.dash_gap)
+        reach = self.reach_by_rise[0]
+        # ...and every CLIMBING jump spends the reach for ITS rise,
+        # not the level one: see ENVELOPE.
         # jump up onto ledges within jump_h, horizontal reach GAP_W.
         # BONK-HONEST arcs: the engine rises IMMEDIATELY on jump, so the
         # rise must happen in the launch column (path A) or, at most, the
@@ -580,7 +760,8 @@ class Nav:
         # jump reaches. The rise still has to happen first, which is why
         # dy is unchanged -- the charge buys distance, never height.
         for dy in range(1, self.jump_h + 1):
-            for dx in range(-reach, reach + 1):
+            rdy = self.reach_by_rise[dy]
+            for dx in range(-rdy, rdy + 1):
                 nx, ny = x + dx, y - dy
                 if not (0 <= nx < W and 0 <= ny < H and self.is_node(nx, ny)):
                     continue
@@ -634,19 +815,73 @@ class Nav:
                 out.add(n)
         # magne-grapple (needs the grapple module); the rope is 110px --
         # EUCLIDEAN 6.8 tiles, not a square -- and needs line of sight
-        if "grapple" in self.flags:
+        if "grapple" in self.flags and self.r.anchors:
             R = GRAPPLE_R
             R2 = (110.0 / 16.0) ** 2  # squared rope length in tiles
-            for dy2 in range(-R, R + 1):
-                for dx2 in range(-R, R + 1):
+            # FIRING AT AN ANCHOR. The hook is AIR-ONLY in the engine --
+            # it is on JUMP, and player.lua only throws it while
+            # `not onGround and coyote <= 0` -- so the rope is measured
+            # from the cells the body sweeps MID-JUMP, not from its feet
+            # on the floor. air_cells() walks the same bonk-honest arc
+            # shape moves() already uses to decide what a jump can land
+            # on, so this credits nothing the jump code does not.
+            #
+            # It matters: furn_2's anchor sits 7.28 tiles from the lip of
+            # either stepping stone, outside a 6.875-tile rope from a
+            # STANDING body and comfortably inside it one tile up and
+            # three across, which is where Vess actually is when he fires.
+            origins = self.air_cells(x, y)
+            origins.add((x, y))
+            for (ax, ay) in self.r.anchor_cells():
+                if (ax, ay) == (x, y):
+                    continue
+                for (ox, oy) in origins:
+                    dx2, dy2 = ax - ox, ay - oy
                     if dx2 * dx2 + dy2 * dy2 > R2:
                         continue
-                    nx, ny = x + dx2, y + dy2
-                    if 0 <= nx < W and 0 <= ny < H:
-                        if (g[ny][nx] == "n" or (g[y][x] == "n"
-                                                 and self.is_node(nx, ny))) \
+                    if self.line_clear(ox, oy, ax, ay):
+                        out.add((ax, ay))
+                        self.transit.add((ox, oy))
+                        break
+            # RIDING OFF one. Hanging on the hook, the rope reaches any
+            # node inside it; the LAUNCH that carries Vess past the
+            # anchor is still not modelled (see GRAPPLE_R).
+            if g[y][x] in self.r.anchors:
+                for dy2 in range(-R, R + 1):
+                    for dx2 in range(-R, R + 1):
+                        if dx2 * dx2 + dy2 * dy2 > R2:
+                            continue
+                        nx, ny = x + dx2, y + dy2
+                        if 0 <= nx < W and 0 <= ny < H \
+                                and self.is_node(nx, ny) \
                                 and self.line_clear(x, y, nx, ny):
                             out.add((nx, ny))
+        return out
+
+    def air_cells(self, x, y):
+        """Cells the body legitimately occupies mid-jump from (x, y).
+
+        Same shape as pathA in moves(): the rise happens in the launch
+        column, then the body travels level for at most the reach
+        measured at THAT rise, and the walk stops at the first cell the
+        body cannot occupy. Every cell here is one the jump code would
+        already have been willing to path through on the way to a
+        landing -- this just names them, because the grapple is fired
+        from them rather than landed on them.
+        """
+        out = set()
+        W = self.r.W
+        for dy in range(1, self.jump_h + 1):
+            ny = y - dy
+            if ny < 0 or not self.passable(x, ny):
+                break
+            out.add((x, ny))
+            for s in (-1, 1):
+                for i in range(1, self.reach_by_rise[dy] + 1):
+                    nx = x + i * s
+                    if not (0 <= nx < W and self.passable(nx, ny)):
+                        break
+                    out.add((nx, ny))
         return out
 
     def line_clear(self, x0, y0, x1, y1):

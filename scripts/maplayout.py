@@ -251,6 +251,11 @@ class Layout:
         self.zi = {z: i for i, z in enumerate(zn)}
         self.znames = zn
         self.zone = [self.zi[rooms[n].zone] for n in self.ids]
+        # ROOMS THE SEARCH MAY NOT MOVE. The editor pins the room you are
+        # standing in, so re-solving the atlas can never rewrite the file
+        # you have open -- which is the difference between "press this to
+        # fix it" and "press this and lose your work".
+        self.pinned = set()
         self.zrooms = [[] for _ in zn]
         for i, z in enumerate(self.zone):
             self.zrooms[z].append(i)
@@ -502,6 +507,12 @@ def anneal(L, iters=400000, seed=7, T0=8.0, T1=0.03):
             dx = rng.randint(-rad, rad); dy = rng.randint(-rad, rad)
         if dx == 0 and dy == 0:
             continue
+        # A proposal that would drag a pinned room is simply not made.
+        # Rejecting here rather than clamping keeps every other room's
+        # cost honest -- a half-applied group move would leave the
+        # cluster torn in two.
+        if L.pinned and any(i in L.pinned for i in moving):
+            continue
         L.move(moving, dx, dy)
         c = L.cost()
         if c <= cur or rng.random() < math.exp((cur - c) / T):
@@ -552,6 +563,8 @@ def seed_from_doors(L, rng):
                 placed[nb] = (cx + d[0], cy + d[1])
                 frontier.append(nb)
     for i, (x, y) in placed.items():
+        if i in L.pinned:
+            continue          # a pinned room keeps the position it came in with
         L.x[i], L.y[i] = x, y
     L.restore((L.x, L.y))
 
@@ -585,11 +598,35 @@ def longest_portals(L, k=6):
     return [(L.ids[r[2]], L.ids[r[3]], r[6]) for r in rows[:k]]
 
 
+ORIG_OFF = {}
+
+
 def write_back(L, rooms):
+    # BELT AND BRACES. The search cannot move a pinned room, so its
+    # position is unchanged and the substitution below would be a no-op --
+    # but "would be a no-op" is not the same as "does not open the file",
+    # and the whole point of pinning is that the file is not touched.
     bx0, by0, _, _ = L.zone_boxes()
     off = {z: (bx0[i], by0[i]) for i, z in enumerate(L.znames)}
+    # A PINNED ROOM'S mapPos IS ZONE-RELATIVE, so leaving its file alone
+    # is only honest while its zone's ORIGIN also stays put. If the zone
+    # moved, the unchanged line would resolve to a different absolute
+    # cell and the room would have been moved after all -- by not being
+    # written. Refuse rather than do that quietly.
+    if L.pinned:
+        for i in sorted(L.pinned):
+            z = L.znames[L.zone[i]]
+            if off[z] != (ORIG_OFF.get(z) or off[z]):
+                print("  refusing to write: %s is pinned but its zone (%s) "
+                      "moved from %s to %s, so its mapPos would no longer "
+                      "mean the same cell. Re-run without --pin, or finish "
+                      "editing that room first."
+                      % (L.ids[i], z, ORIG_OFF[z], off[z]))
+                return
     n = 0
     for i, name in enumerate(L.ids):
+        if i in L.pinned:
+            continue          # its file is not opened at all
         r = rooms[name]
         ox, oy = off[r.zone]
         line = "  mapPos = { x = %d, y = %d, w = %d, h = %d }," % (
@@ -625,14 +662,26 @@ def main():
     ap.add_argument("--save", help="write the winning positions here")
     ap.add_argument("--cool", type=float, default=None,
                     help="starting temperature for refine passes")
+    ap.add_argument("--pin", default="",
+                    help="comma-separated rooms the search may not move")
     a = ap.parse_args()
     off, rooms = load()
+    global ORIG_OFF
+    ORIG_OFF = dict(off)
     links = build_links(rooms)
     missing = [n for n, r in rooms.items() if not r.haspos]
     if missing:
         print("  NOTE %s had no mapPos and never drew on the map; it is "
               "placed now" % ", ".join(sorted(missing)))
     L = Layout(rooms, links)
+    if a.pin:
+        want = [n.strip() for n in a.pin.split(",") if n.strip()]
+        unknown = [n for n in want if n not in L.idx]
+        if unknown:
+            print("  refusing to run: no such room(s) %s" % ", ".join(unknown))
+            return 2
+        L.pinned = {L.idx[n] for n in want}
+        print("  PINNED (will not move): %s" % ", ".join(sorted(want)))
     if a.load:
         import json
         saved = json.load(open(a.load))

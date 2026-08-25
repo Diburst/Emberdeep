@@ -39,13 +39,77 @@ Enemy.ENERGY_PER_SHARD = 1   -- default mote count: matches the shard count
 Enemy.DROP_KEYS = { shards = true, energy = true, heart = true,
                     scrap = true, big = true }
 
+-- ==================================================================
+-- ZONE SCALING
+-- ==================================================================
+-- "Increase the health and damage of all minor enemies in every zone
+-- EXCEPT Moss and Sky by approximately 25%" (Thomas, Aug 2026).
+--
+-- WHY THIS IS A MULTIPLIER AND NOT TWENTY EDITED NUMBERS.
+--
+-- An enemy's stats belong to its TYPE, and three types cross the line
+-- the request draws: the cinderbat flies in the Furnace AND the
+-- Skyroot, the rollpede crawls through Mosswood AND the Scrapyard, and
+-- the sporefly is in the Skyroot AND the Undergrove. Editing `hp = 3`
+-- to `hp = 4` buffs the Skyroot cinderbat too -- exactly the zone the
+-- instruction excludes -- and there is no number you can write in that
+-- table that says "but not over there".
+--
+-- Read at SPAWN, against the room the body is standing in, and the
+-- conflict disappears: the same cinderbat is a 3hp bat in the Skyroot
+-- and a 4hp bat in the Furnace, because it is the ROOM that is meant to
+-- be harder, not the animal.
+--
+-- The exceptions are named, so a zone added later is scaled by default.
+-- That is the direction the instruction points -- "every zone except
+-- these two" -- and it is the direction a mistake is cheapest in: a new
+-- zone that comes out tuned hot gets played and reported, one that
+-- silently opts out of the difficulty curve does not.
+Enemy.ZONE_SCALE = { mosswood = 1, skyroot = 1 }
+Enemy.ZONE_SCALE_DEFAULT = 1.25
+
+-- Not every body in this file is a minor enemy. Brassa in the Reckoning
+-- is a 45hp scripted duel with its own pacing; scaling her with the
+-- trash would retune a set-piece nobody asked about.
+Enemy.SCALE_EXEMPT = { keeperbrassa = true }
+
+function Enemy.zoneScale(typeName)
+  if typeName and Enemy.SCALE_EXEMPT[typeName] then return 1 end
+  local World = require "src.world"
+  local zone = World.room and World.room.zone
+  return (zone and Enemy.ZONE_SCALE[zone]) or Enemy.ZONE_SCALE_DEFAULT
+end
+
+-- ONE DOOR FOR EVERY ROUND AN ENEMY FIRES.
+--
+-- Contact damage is one field and scales itself; a spitter's gob, a
+-- cryoturret's bolt and a stormvane's arc are fourteen separate
+-- `Proj.spawn` calls scattered through this file, and "add the
+-- multiplier to thirteen of them" is precisely the hand-written list
+-- this project keeps getting wrong. The player side already learned it
+-- -- tools/shoot_test.lua fails the build if Player:updateFire contains
+-- a bare Proj.spawn -- so enemies get the same door and the same check.
+function Enemy:shoot(World, x, y, cfg)
+  cfg.dmg = math.floor((cfg.dmg or 0) * (self.dmgMult or 1) + 0.5)
+  return Proj.spawn(World, x, y, cfg)
+end
+
 function Enemy:init(x, y, def, parts)
   Entity.init(self, x, y)
   self.kind = "enemy"
   local hpMult = ({ 0.75, 1, 1.3 })[G.run and G.run.difficulty or 2] or 1
-  self.maxhp = math.max(1, math.floor((def.hp or 3) * hpMult + 0.5))
+  -- COMPOSES with difficulty rather than replacing it: the zone says how
+  -- hard this stretch of the game is, the difficulty says how hard the
+  -- player asked for the whole of it to be, and both are true at once.
+  local zs = Enemy.zoneScale(def.typeName)
+  self.zoneScale = zs
+  self.dmgMult = zs
+  self.maxhp = math.max(1, math.floor((def.hp or 3) * hpMult * zs + 0.5))
   self.hp = self.maxhp
-  self.touchDmg = def.touchDmg or 2
+  -- floor+0.5 rather than ceil, so a body with NO contact damage (the
+  -- depthmine, the glowmite) still has none. 0 * anything is 0 and it
+  -- must round to 0.
+  self.touchDmg = math.floor((def.touchDmg or 2) * zs + 0.5)
   -- COPY before touching. `def.drops` is shared by every instance of
   -- the type, so a per-spawn override that mutated it in place would
   -- silently retune every other one of these in the game.
@@ -193,6 +257,10 @@ end
 Enemy.TYPES = {}
 
 local function reg(name, def, updateFn, drawFn)
+  -- the type needs to know its own name by the time a body is built:
+  -- Enemy:init reads it for SCALE_EXEMPT, and `parts` cannot be trusted
+  -- for it (a boss add is made with no parts at all).
+  def.typeName = name
   local C = Enemy.extend()
   C.init = function(self, x, y, parts)
     Enemy.init(self, x, y, def, parts)
@@ -338,7 +406,7 @@ reg("spitter", { hp = 5, touchDmg = 2, sprite = "en_spitter", w = 12, h = 14,
         local cx, cy = self.x + self.w / 2, self.y + 2
         local px, py = p:center()
         local dx = px - cx
-        Proj.spawn(World, cx, cy, {
+        self:shoot(World, cx, cy, {
           side = "enemy", dmg = 2, kind = "orb", size = 5,
           vx = U.clamp(dx * 1.2, -110, 110), vy = -170,
           gravity = 300, life = 2.5,
@@ -402,7 +470,7 @@ reg("bubbler", { hp = 4, touchDmg = 2, sprite = "en_bubbler", w = 12, h = 12,
       if p then
         local cx, cy = self:center()
         for i = -1, 1 do
-          Proj.spawn(World, cx, cy - 4, {
+          self:shoot(World, cx, cy - 4, {
             side = "enemy", dmg = 1, kind = "drop", size = 5,
             vx = i * 40, vy = -90, gravity = 60, life = 2.2,
           })
@@ -603,7 +671,7 @@ reg("welder", { hp = 5, touchDmg = 2, sprite = "en_welder", w = 12, h = 12,
           local cx, cy = self:center()
           local px, py = pp:center()
           local ang = math.atan2(py - cy, px - cx)
-          Proj.spawn(World, cx, cy, {
+          self:shoot(World, cx, cy, {
             side = "enemy", dmg = 2, kind = "fireball", size = 5,
             vx = math.cos(ang) * 150, vy = math.sin(ang) * 150, life = 2,
           })
@@ -691,7 +759,7 @@ reg("prismwisp", { hp = 4, touchDmg = 2, sprite = "en_prismwisp", w = 10, h = 10
         local px, py = p:center()
         local ang = math.atan2(py - cy, px - cx)
         for off = -0.25, 0.25, 0.25 do
-          Proj.spawn(World, cx, cy, {
+          self:shoot(World, cx, cy, {
             side = "enemy", dmg = 2, kind = "shard", size = 4,
             vx = math.cos(ang + off) * 130, vy = math.sin(ang + off) * 130,
             life = 1.8,
@@ -716,7 +784,7 @@ reg("cryoturret", { mass = "fixed", hp = 7, touchDmg = 2, sprite = "en_cryoturre
         local px, py = p:center()
         if PH.lineOfSight(cx, cy, px, py) then
           local ang = math.atan2(py - cy, px - cx)
-          Proj.spawn(World, cx, cy, {
+          self:shoot(World, cx, cy, {
             side = "enemy", dmg = 3, kind = "shard", size = 5,
             vx = math.cos(ang) * 210, vy = math.sin(ang) * 210, life = 1.6,
           })
@@ -747,7 +815,7 @@ reg("frostwisp", { hp = 4, touchDmg = 2, sprite = "en_frostwisp", w = 10, h = 10
         local px, py = p:center()
         if PH.lineOfSight(cx, cy, px, py) then
           local ang = math.atan2(py - cy, px - cx)
-          Proj.spawn(World, cx, cy, {
+          self:shoot(World, cx, cy, {
             side = "enemy", dmg = 2, kind = "shard", size = 4, chill = true,
             vx = math.cos(ang) * 150, vy = math.sin(ang) * 150, life = 1.8,
           })
@@ -771,7 +839,7 @@ reg("shelverbot", { mass = "heavy", hp = 8, touchDmg = 3, sprite = "en_shelverbo
         local cx, cy = self.x + self.w / 2, self.y + 2
         local px = p.x + p.w / 2
         local dx = px - cx
-        Proj.spawn(World, cx, cy, {
+        self:shoot(World, cx, cy, {
           side = "enemy", dmg = 3, kind = "orb", size = 6,
           vx = U.clamp(dx * 1.1, -120, 120), vy = -190,
           gravity = 340, life = 2.6,
@@ -830,7 +898,7 @@ reg("keeperbrassa", { mass = "heavy", hp = 45, touchDmg = 3, sprite = "npc_brass
       local World = require "src.world"
       local cx, cy = self.x + self.w / 2, self.y + 2
       local dx = p.x + p.w / 2 - cx
-      Proj.spawn(World, cx, cy, {
+      self:shoot(World, cx, cy, {
         side = "enemy", dmg = 3, kind = "orb", size = 6,
         vx = U.clamp(dx * 1.3, -140, 140), vy = -180,
         gravity = 330, life = 2.4,
@@ -858,7 +926,7 @@ reg("sporeballoon", { hp = 3, touchDmg = 1, sprite = "en_sporeballoon", w = 12, 
   onDeathExtra = function(self)
     local World = require "src.world"
     for i = -1, 1 do
-      Proj.spawn(World, self.x + 6, self.y + 6, {
+      self:shoot(World, self.x + 6, self.y + 6, {
         side = "enemy", dmg = 1, kind = "orb", size = 4,
         vx = i * 55, vy = 30, gravity = 120, life = 2,
       })
@@ -875,7 +943,7 @@ reg("sporeballoon", { hp = 3, touchDmg = 1, sprite = "en_sporeballoon", w = 12, 
       local p = playerNear(self, 90)
       if p and math.abs(p.x - self.x) < 30 and p.y > self.y then
         local World = require "src.world"
-        Proj.spawn(World, self.x + 6, self.y + self.h, {
+        self:shoot(World, self.x + 6, self.y + self.h, {
           side = "enemy", dmg = 2, kind = "orb", size = 5,
           vx = 0, vy = 40, gravity = 260, life = 2.5,
         })
@@ -1022,6 +1090,15 @@ local Roostfang = reg("roostfang", { hp = 4, touchDmg = 2, sprite = "en_roostfan
     if self.victim then
       local v = self.victim
       if v.dead or v.downed or v.pinnedT <= 0 then
+        -- LET GO PROPERLY. This dropped the reference and left the pin
+        -- itself on the victim -- the same care onDeathExtra takes when
+        -- the BAT dies was never taken for when the VICTIM goes down.
+        -- Player:goDown clears it now too, so this is belt and braces
+        -- rather than the only guard, which is what it should have been
+        -- from the start.
+        if v.pinnedT and v.pinnedT > 0 and v.pinnedBy == self then
+          v:freeFromPin(false)
+        end
         self.victim = nil
         self.roost = false
         self.recover = 0.8
@@ -1162,7 +1239,7 @@ reg("sentinel", { mass = "heavy", hp = 8, touchDmg = 3, sprite = "en_sentinel", 
       if self.shotT <= 0 then
         self.shotT = 1.7 / self:speedMult()
         local World = require "src.world"
-        Proj.spawn(World, cx, cy, {
+        self:shoot(World, cx, cy, {
           side = "enemy", dmg = 3, kind = "spark", size = 5,
           vx = math.cos(ang) * 170, vy = math.sin(ang) * 170,
           homing = 1.2, life = 2.2,
@@ -1282,7 +1359,7 @@ reg("sporefly", { hp = 3, touchDmg = 2, sprite = "en_sporefly", w = 10, h = 8,
       local p = playerNear(self, 110)
       if p then
         local cx, cy = self:center()
-        Proj.spawn(require "src.world", cx, cy, {
+        self:shoot(require "src.world", cx, cy, {
           side = "enemy", dmg = 1, kind = "orb", size = 4,
           vx = U.sign(p.x - cx) * 40, vy = -30, gravity = 140, life = 2.2,
         })
@@ -1303,7 +1380,7 @@ reg("eliteguard", { mass = "heavy", hp = 12, touchDmg = 4, sprite = "en_elitegua
       local World = require "src.world"
       local cx, cy = self.x + self.w / 2, self.y + 4
       for i = 0, 1 do
-        Proj.spawn(World, cx, cy, {
+        self:shoot(World, cx, cy, {
           side = "enemy", dmg = 3, kind = "spark", size = 5,
           vx = self.facing * (150 + i * 40), vy = -10 + i * 20, life = 1.8,
         })
@@ -1387,7 +1464,7 @@ reg("plateframe", { mass = "heavy", hp = 12, touchDmg = 3, sprite = "en_platefra
     if self.shotT <= 0 and p and self.turnT <= 0 then
       self.shotT = PLATE_SHOT / self:speedMult()
       local World = require "src.world"
-      Proj.spawn(World, self.x + self.w / 2 + self.facing * 9, self.y + 5, {
+      self:shoot(World, self.x + self.w / 2 + self.facing * 9, self.y + 5, {
         side = "enemy", dmg = 3, kind = "bolt", size = 5,
         vx = self.facing * 150, vy = 0, life = 2.2,
       })

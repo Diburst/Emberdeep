@@ -172,9 +172,23 @@ def audit_checkpoints():
     refilled HP, which quietly made every fight after it easier than it
     was designed to be. There is one of them now.
 
-    The caps are a pacing rule with teeth: more than one in a room is
-    always an accident, and more than three in a zone means dying costs
-    nothing anywhere in it."""
+    THE CAPS ARE A GUIDELINE, NOT A GATE. They used to FAIL, which put
+    a pacing opinion on the same footing as a room that will not load --
+    and the editor runs this on every save, so a deliberate second
+    checkpoint in a long room blocked the save until you argued with the
+    validator. Pacing is the designer's call and the tool does not get a
+    veto over it.
+
+    They are still worth SAYING, because both are usually accidents:
+    two checkpoints in one room normally means one was left behind, and
+    a fourth in a zone normally means dying there has stopped costing
+    anything. Said once, in the notes, where they can be read and
+    ignored.
+
+    What stays a FAIL is correctness, not taste: the retired `save`
+    spec, a leftover `hasSave`, and anything that respawns you inside a
+    boss arena. Those are not opinions about pacing -- they are rooms
+    that behave wrongly."""
     import os
     import re
     out = []
@@ -203,15 +217,17 @@ def audit_checkpoints():
         if "hasSave = true" in src:
             out.append(("FAIL", "%s still declares hasSave" % name))
         if len(cps) > 1:
-            out.append(("FAIL", "%s has %d checkpoints. One per room."
-                        % (name, len(cps))))
+            out.append(("NOTE", "%s has %d checkpoints. One per room is the "
+                        "guideline -- two is usually one left behind, but "
+                        "if you meant it, mean it." % (name, len(cps))))
         if cps:
             per_zone.setdefault(zone, []).append(name)
     for zone, names in sorted(per_zone.items()):
         if len(names) > 3:
-            out.append(("FAIL", "zone %r has %d checkpoints (%s). Three is "
-                        "the cap -- past that, dying costs nothing anywhere "
-                        "in the zone." % (zone, len(names), ", ".join(names))))
+            out.append(("NOTE", "zone %r has %d checkpoints (%s). Three is "
+                        "the guideline -- past that, dying costs little "
+                        "anywhere in the zone. Your call."
+                        % (zone, len(names), ", ".join(names))))
     return out
 
 
@@ -231,8 +247,9 @@ def main():
         print("  %-4s %s" % (sev, msg))
     fails = sum(1 for s, _ in rows if s == "FAIL")
     warns = sum(1 for s, _ in rows if s == "WARN")
-    print("%d failures, %d warnings across %d rooms (%d boss rooms checked "
-          "for saves)" % (fails, warns, n, len(boss_rooms)))
+    notes = sum(1 for s, _ in rows if s == "NOTE")
+    print("%d failures, %d warnings, %d notes across %d rooms (%d boss rooms "
+          "checked for saves)" % (fails, warns, notes, n, len(boss_rooms)))
     return 1 if fails else 0
 
 

@@ -16,7 +16,7 @@ Input.ACTIONS = { "left", "right", "up", "down", "jump", "fire", "special",
 
 Input.ACTION_LABELS = {
   left = "Move Left", right = "Move Right", up = "Aim Up", down = "Aim Down / Drop",
-  jump = "Jump", fire = "Fire", special = "Dash / Shield Dome",
+  jump = "Jump / Grapple", fire = "Fire", special = "Charge / Shield",
   util = "Weapon Swap / Repair", interact = "Interact / Revive",
   partner = "Link / Swap Bot", warp = "Warp to Partner (hold)",
   pause = "Pause", map = "Map",

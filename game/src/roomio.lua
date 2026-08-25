@@ -282,6 +282,29 @@ end
 -- so both forms are read and each key is rewritten in the form the file
 -- already used. An editor that reformats a table nobody asked it to
 -- touch is an editor whose diffs stop being readable.
+-- AN ENTRY'S VALUE, RENDERED.
+--
+-- `key`, `gates` and `gateStyle` all map a character to a STRING, and
+-- this module was written on that assumption -- `type(want) == "string"`
+-- guarded every branch, so a table value was silently treated as "leave
+-- this entry alone". `links` maps a character to a TABLE, which is why
+-- a door painted in the editor went to disk with no destination and
+-- checkdoors caught it as NOLINK.
+local function entryValue(v)
+  if type(v) == "string" then return ('"%s"'):format(v) end
+  -- a link: { "room", "B" }, optionally with a req that seals it
+  local parts = {}
+  for i = 1, #v do parts[#parts + 1] = ('"%s"'):format(tostring(v[i])) end
+  -- `req` LAST, which is where every hand-written one already sits
+  if v.req then parts[#parts + 1] = ('req = "%s"'):format(v.req) end
+  return "{ " .. table.concat(parts, ", ") .. " }"
+end
+
+-- Is this something to write, as opposed to `false` (delete) or nil?
+local function isValue(v)
+  return type(v) == "string" or type(v) == "table"
+end
+
 function RoomIO.setKeyEntries(src, entries)
   return RoomIO.setTableEntries(src, "key", entries)
 end
@@ -289,7 +312,39 @@ end
 function RoomIO.setTableEntries(src, field, entries)
   if not entries or not next(entries) then return src end
   local a, b = RoomIO.fieldSpan(src, field)
-  if not a then return nil, "no " .. field .. " table" end
+  if not a then
+    -- THE TABLE MAY NOT EXIST YET. Most rooms have no `gateStyle` at
+    -- all, and "this room has never had one" is not a reason to refuse
+    -- to give it one -- it was the reason four rooms out of five came
+    -- back as WRITE REFUSED the first time the editor tried to set a
+    -- gate's style.
+    --
+    -- Nothing to add means nothing to do; a removal on a table that is
+    -- not there is already true.
+    local add = {}
+    for ch, spec in pairs(entries) do
+      if isValue(spec) then add[#add + 1] = ch end
+    end
+    if #add == 0 then return src end
+    table.sort(add)
+    local parts = {}
+    for _, ch in ipairs(add) do
+      parts[#parts + 1] = (field == "key")
+        and ('["%s"] = %s'):format(ch, entryValue(entries[ch]))
+        or  ('%s = %s'):format(ch, entryValue(entries[ch]))
+    end
+    -- in front of the map block, which every room has
+    local at = src:find("\n%s*map%s*=%s*%[%[")
+    if not at then return nil, "no map block to put " .. field .. " before" end
+    local line
+    if field == "links" or field == "key" then
+      -- stacked, because that is how all 83 rooms write both
+      line = ("\n  %s = {\n    %s,\n  },"):format(field, table.concat(parts, ",\n    "))
+    else
+      line = ("\n  %s = { %s },"):format(field, table.concat(parts, ", "))
+    end
+    return src:sub(1, at - 1) .. line .. src:sub(at)
+  end
   if type(b) ~= "number" then return nil, tostring(b) end
 
   local origInner = src:sub(a + 1, b - 1)
@@ -331,39 +386,67 @@ function RoomIO.setTableEntries(src, field, entries)
 
   local seen, out, hadEntries, bare = {}, {}, false, false
   for _, piece in ipairs(pieces) do
-    -- A BLANK SEPARATOR LINE belongs to the piece that FOLLOWS it -- the
-    -- split is on commas, so `a = 1,\n\n  b = 2` puts the blank at the
-    -- head of b's piece, where trimming ate it. Three rooms space their
-    -- key table out that way and the round-trip found all three.
-    local lead = piece:match("^(\n*)") or ""
-    for _ = 2, #lead do out[#out + 1] = { entry = false, text = "" } end
-    -- ["G"] = "..."   or   G = "..."
-    local ch = piece:match('%["(.)"%]%s*=')
+    -- A COMMENT ABOVE AN ENTRY BELONGS TO THAT ENTRY'S PIECE.
+    --
+    -- The split is on top-level commas, so everything written above an
+    -- entry -- blank separator lines AND comment lines -- arrives at the
+    -- head of its piece. The first version only peeled BLANKS, then
+    -- tested the whole piece for an entry pattern anchored at its start,
+    -- found none because the piece began with `--`, and emitted the
+    -- comment and the entry together as unterminated text. That drops
+    -- the comma after the entry, and the file no longer parses.
+    --
+    -- `stair_junction`, `ug_secret` and `sky_boss` are all written that
+    -- way, and none of them was caught, because setTableEntries returns
+    -- early on an empty edit -- so the identity sweep that ran over
+    -- every room never entered this loop at all. The sweep now rewrites
+    -- every entry to its own current value, which does.
+    --
+    -- The first newline is the one that ENDED the previous entry, not a
+    -- blank line, so it comes off before anything is counted.
+    local body = (piece:gsub("^\n", "", 1))
+    local pre = {}
+    while true do
+      local first, rest = body:match("^([^\n]*)\n(.*)$")
+      if not first then break end
+      local t = first:match("^%s*(.-)%s*$")
+      if t == "" or t:sub(1, 2) == "--" then
+        pre[#pre + 1] = t
+        body = rest
+      else
+        break
+      end
+    end
+    -- ["G"] = "..."   or   G = "..."   -- ANCHORED, so a comment that
+    -- happens to contain `["x"] =` cannot be mistaken for an entry
+    local ch = body:match('^%s*%["(.)"%]%s*=')
     local plain = false
     if not ch then
-      ch = piece:match("^%s*(%w)%s*=")
+      ch = body:match("^%s*(%w)%s*=")
       plain = ch ~= nil
     end
     if ch then
+      for _, t in ipairs(pre) do out[#out + 1] = { entry = false, text = t } end
       hadEntries = true
       if plain then bare = true end
       local want = entries[ch]
       if want == false then
         seen[ch] = true                              -- drop it
-      elseif type(want) == "string" then
+      elseif isValue(want) then
         seen[ch] = true
         out[#out + 1] = { entry = true, text = plain
-          and ('%s = "%s"'):format(ch, want)
-          or  ('["%s"] = "%s"'):format(ch, want) }
+          and ('%s = %s'):format(ch, entryValue(want))
+          or  ('["%s"] = %s'):format(ch, entryValue(want)) }
       else
-        out[#out + 1] = { entry = true, text = piece:match("^%s*(.-)%s*$") }
+        out[#out + 1] = { entry = true, text = body:match("^%s*(.-)%s*$") }
       end
     else
+      for _, t in ipairs(pre) do out[#out + 1] = { entry = false, text = t } end
       -- A comment or a blank separator line. Kept, and kept WITHOUT a
       -- comma -- three rooms space their key table out with a blank line
       -- and the first version of this ate it, which the round-trip
       -- caught as the only difference in the whole file.
-      for line in (piece .. "\n"):gmatch("([^\n]*)\n") do
+      for line in (body .. "\n"):gmatch("([^\n]*)\n") do
         local t = line:match("^%s*(.-)%s*$")
         if t ~= "" or #out > 0 then
           out[#out + 1] = { entry = false, text = t }
@@ -377,14 +460,14 @@ function RoomIO.setTableEntries(src, field, entries)
 
   local add = {}
   for ch, spec in pairs(entries) do
-    if type(spec) == "string" and not seen[ch] then add[#add + 1] = ch end
+    if isValue(spec) and not seen[ch] then add[#add + 1] = ch end
   end
   table.sort(add)
   local barestyle = bare or (field ~= "key" and not hadEntries)
   for _, ch in ipairs(add) do
     out[#out + 1] = { entry = true, text = barestyle
-      and ('%s = "%s"'):format(ch, entries[ch])
-      or  ('["%s"] = "%s"'):format(ch, entries[ch]) }
+      and ('%s = %s'):format(ch, entryValue(entries[ch]))
+      or  ('["%s"] = %s'):format(ch, entryValue(entries[ch])) }
   end
 
   local nEntries = 0
@@ -395,7 +478,11 @@ function RoomIO.setTableEntries(src, field, entries)
     inner = origInner            -- it was `{}` and it still is
   elseif #out == 0 then
     inner = ""                   -- emptied: collapse to `{}`
-  elseif field ~= "key" and #out == nEntries then
+  elseif (field == "gates" or field == "gateStyle") and #out == nEntries then
+    -- NAMED, not "anything that is not key": `links` is stacked in all
+    -- 83 rooms, and collapsing a three-door room onto one line is a
+    -- reformat of a file the editor was only asked to add a door to.
+    --
     -- `gates` and `gateStyle` are written on ONE line in all 29 rooms
     -- that have them, and there are at most four of either. So they go
     -- back on one line, as long as nothing but entries is in there.
@@ -455,7 +542,7 @@ function RoomIO.writeMap(id, rows, opts)
 
   -- ...and so does the key table, for the same reason. A grid with a new
   -- character in it and no entry to match is a room that will not load.
-  for _, field in ipairs({ "key", "gates", "gateStyle" }) do
+  for _, field in ipairs({ "key", "gates", "gateStyle", "doorKind", "links" }) do
     if opts[field] then
       local done, ferr = RoomIO.setTableEntries(out, field, opts[field])
       if not done then return nil, ferr end
@@ -480,6 +567,131 @@ function RoomIO.writeMap(id, rows, opts)
     return nil, "cannot write " .. RoomIO.path(id) ..
       " -- start the game from its own folder, or check permissions"
   end
+  f:write(out)
+  f:close()
+  return true
+end
+
+-- ------------------------------------------------------------------
+-- MAKING A ROOM THAT DID NOT EXIST
+-- ------------------------------------------------------------------
+-- Two files, and the room is not real until BOTH are written: the room
+-- file itself, and its name in WM.ROOMS. A room absent from that list
+-- does not exist however good its file is -- which is stated in
+-- room-format.md and is exactly the kind of thing an editor is for.
+--
+-- Everything here REFUSES rather than overwrites. Creating is the one
+-- operation with no undo: writeMap backs a file up before touching it,
+-- and there is nothing to back up when the file is new.
+
+RoomIO.WORLDMAP = "src/data/worldmap.lua"
+
+function RoomIO.roomExists(id)
+  local f = io.open(RoomIO.path(id), "r")
+  if f then f:close() return true end
+  return false
+end
+
+-- The body of a new room. Deliberately plain: walls, a floor, and the
+-- one door that connects it to where you came from. Everything else --
+-- backdrop, props, enemies, geometry -- is what the editor is for, and
+-- a template that guesses at them just makes more to delete.
+function RoomIO.roomTemplate(o)
+  -- solid, then carved: two tiles of wall all round and a floor three
+  -- rows up from the bottom, which is genrooms.py's own convention and
+  -- puts the stand row at h-4.
+  local rows = {}
+  for y = 1, o.h do rows[y] = string.rep("#", o.w) end
+  for y = 3, o.h - 3 do
+    local r = {}
+    for x = 1, o.w do
+      r[x] = (x <= 2 or x > o.w - 2) and "#" or "."
+    end
+    rows[y] = table.concat(r)
+  end
+  return ("-- %s -- created in the editor.\nreturn {\n"
+    .. "  zone = %q, music = %q,\n"
+    .. "  mapPos = { x = %d, y = %d, w = 1, h = 1 },\n"
+    .. "  map = [[\n%s\n]],\n"
+    .. "  key = {},\n"
+    .. "  links = {\n    %s = { %q, %q },\n  },\n}\n")
+    :format(o.id, o.zone, o.music, o.mx, o.my,
+            table.concat(rows, "\n"), o.door, o.backRoom, o.backDoor)
+end
+
+-- Write a brand-new room file. `rows` overrides the template's grid,
+-- which is how the caller gets its door carved into the wall.
+function RoomIO.createRoom(o, rows, dryrun)
+  if RoomIO.roomExists(o.id) then
+    return nil, ("%s already exists -- refusing to overwrite it"):format(o.id)
+  end
+  local text = RoomIO.roomTemplate(o)
+  if rows then
+    local ok, err = RoomIO.checkRect(rows)
+    if not ok then return nil, "refusing to write a ragged map: " .. err end
+    local a, b = RoomIO.mapSpan(text)
+    if not a then return nil, "the template has no map block" end
+    text = text:sub(1, a - 1) .. RoomIO.rowsToGrid(rows, true) .. text:sub(b + 1)
+  end
+  local chunk, lerr = load(text, "roomio:new:" .. o.id)
+  if not chunk then return nil, "the new room would not parse: " .. tostring(lerr) end
+  if dryrun then return text end
+  local f = io.open(RoomIO.path(o.id), "w")
+  if not f then return nil, "cannot write " .. RoomIO.path(o.id) end
+  f:write(text)
+  f:close()
+  return true
+end
+
+-- Append an id to WM.ROOMS, next to the rooms it belongs with.
+--
+-- The list is grouped by zone and wrapped by hand, so the insertion goes
+-- after the LAST room sharing this one's prefix -- `moss_9` lands after
+-- `moss_secret` rather than at the bottom of the file, and the grouping
+-- survives. Failing that it goes on its own line before the closing
+-- brace, which is ugly and correct.
+function RoomIO.registerRoom(id, dryrun)
+  local path = RoomIO.root() .. RoomIO.WORLDMAP
+  local fh = io.open(path, "r")
+  if not fh then return nil, "cannot read " .. path end
+  local src = fh:read("*a")
+  fh:close()
+
+  -- "WM%.ROOMS", not "ROOMS": fieldSpan anchors on `\n%s*<name>%s*=`,
+  -- and the table is declared `WM.ROOMS = {`, so a bare name matches
+  -- nothing. It is a Lua pattern, hence the escaped dot.
+  local a, b = RoomIO.fieldSpan(src, "WM%.ROOMS")
+  if not a then return nil, "no WM.ROOMS table in worldmap.lua" end
+  if type(b) ~= "number" then return nil, tostring(b) end
+  local inner = src:sub(a + 1, b - 1)
+  if inner:find('"' .. id .. '"', 1, true) then
+    return nil, id .. " is already in WM.ROOMS"
+  end
+
+  local prefix = id:match("^(%a+)_") or id
+  -- the end of the last quoted name that shares the prefix
+  local at, last = nil, nil
+  for from, name, to in inner:gmatch('()"([%w_]+)"()') do
+    if (name:match("^(%a+)_") or name) == prefix then at, last = to, name end
+  end
+  local out
+  if at then
+    out = src:sub(1, a) .. inner:sub(1, at - 1) .. ', "' .. id .. '"'
+        .. inner:sub(at) .. src:sub(b)
+  else
+    local tail = inner:match("\n(%s*)$") or "  "
+    out = src:sub(1, a) .. inner:gsub("%s*$", "")
+        .. ',\n  "' .. id .. '",\n' .. tail .. src:sub(b)
+  end
+
+  local chunk, lerr = load(out, "roomio:worldmap")
+  if not chunk then return nil, "worldmap would not parse: " .. tostring(lerr) end
+  if dryrun then return out end
+
+  local bak = io.open(path .. ".bak", "w")
+  if bak then bak:write(src) bak:close() end
+  local f = io.open(path, "w")
+  if not f then return nil, "cannot write " .. path end
   f:write(out)
   f:close()
   return true
