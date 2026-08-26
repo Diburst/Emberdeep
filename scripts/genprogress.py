@@ -180,6 +180,17 @@ def relevant_flags(room):
     flags = {"sparkjump", "grapple", "driftvanes"}
     for f in room.gates.values():
         flags.add(f[1:] if f.startswith("!") else f)
+    # ...and the module that opens any HARD BLOCK this room actually
+    # contains. Read off world.lua's own table rather than named here, and
+    # only for the blocks the map really uses, so a room without one does
+    # not grow two pointless dimensions of combinatorics.
+    #
+    # Without this a '&' is solid in every combination the analysis tries,
+    # and anything behind one comes back as "never obtainable" -- which is
+    # what the first link-blast vault in the game did.
+    for ch, need in RM.HARD.items():
+        if any(ch in "".join(row) for row in room.g):
+            flags.add(need)
     return sorted(flags)
 
 

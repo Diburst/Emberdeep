@@ -1750,15 +1750,42 @@ Entity.register("bosscorpse", function(x, y, parts) return Bosscorpse.new(x, y, 
 -- above you" is one motion. The cost is that from up there the boss is
 -- fourteen tiles away and you are dealing it nothing.
 -- ------------------------------------------------------------------
-local POT_HP = 14
-local FILL_T = 5
+-- Doubled (Thomas, Aug 2026): a pot that dies to a stray burst is not a
+-- decision about whether to spend the shots. Written as the multiplier
+-- so the original is still readable.
+local POT_HP = 14 * 2
+-- ...and doubled again on the CLOCK, because the arena now has cover in
+-- front of the pots: "I added blocks that make it harder to shoot the
+-- pots." A fill time tuned against a clear line of fire is a different
+-- number once you have to move to get the shot.
+local FILL_T = 5 * 2
+
+-- HOW WIDE A POUR IS, in tiles either side of the spout.
+--
+-- This is the fix for "I moved the pot position but cannot modify where
+-- the lava appears on the floor". The pot always passed its own column
+-- to floodFloor and the fronts always started there -- but the SPAN they
+-- were allowed to crawl across defaulted to the whole room, so within a
+-- couple of seconds the floor was identical wherever the pot stood. The
+-- origin moved and the outcome did not.
+--
+-- Now a pour is a pool around its own spout. Move the pot, move the
+-- lava. The fronts still stop early on higher ground, which is what
+-- makes a raised floor mean something; this only bounds how far they
+-- would otherwise get on a flat one.
+local POUR_REACH = 14
 local TILT_T = 2.0        -- a slow, unmistakable commitment
 local POUR_T = 1.4        -- the stream; it runs on while the pool spreads
 local COOL_T = 6
 local BROKEN_T = 20
 
 local CruciblePot = Entity.extend()
--- cruciblepot:<side>[:auto:<period>:<x0>:<x1>]
+-- cruciblepot:<side>[:auto:<period>:<x0>:<x1>][:reach:<tiles>]
+--
+-- `reach` overrides how far the pour spreads either side of the spout
+-- (default POUR_REACH). An explicit x0/x1 still wins over both -- that
+-- is an absolute stretch of floor rather than a pool around a pot, and
+-- the teaching rooms want it.
 --
 -- With `auto` the pot runs its own cycle with no boss to drive it, and
 -- pours only the stretch of floor between x0 and x1. That is how the
@@ -1782,6 +1809,10 @@ function CruciblePot:init(x, y, parts)
   self.tilt = 0
   self.fill = 0
   self.layer = 1
+  -- `reach:<n>` may appear anywhere after the side
+  for i = 3, #parts do
+    if parts[i] == "reach" then self.reach = tonumber(parts[i + 1]) end
+  end
   if parts[3] == "auto" then
     self.auto = tonumber(parts[4]) or 14
     self.autoT = self.auto * 0.5      -- not immediately: let them arrive
@@ -1789,7 +1820,7 @@ function CruciblePot:init(x, y, parts)
     self.zx1 = tonumber(parts[6])
     -- the teaching pots run a tight cycle: the lesson wants repetition,
     -- and a pot you wait half a minute for teaches nothing
-    self.fillT = 4
+    self.fillT = 8               -- doubled with the arena's, same reason
     self.tiltT = 1.2
     self.floodT = 2                   -- a shorter dwell than the arena's 6
     self.coolT = 3
@@ -1864,8 +1895,13 @@ function CruciblePot:update(dt)
     if self.stateT <= 0 then
       self.state = "pouring"
       self.stateT = POUR_T
-      World:floodFloor(self.floodT or 6, math.floor((self.x + self.w / 2) / 16),
-        self.zx0, self.zx1)
+      -- THE POOL IS CENTRED ON THIS POT. x0/x1 authored on the spawn
+      -- still win, because a teaching room is describing a stretch of
+      -- floor rather than a pot's own reach.
+      local spout = math.floor((self.x + self.w / 2) / 16)
+      local reach = self.reach or POUR_REACH
+      World:floodFloor(self.floodT or 6, spout,
+        self.zx0 or (spout - reach), self.zx1 or (spout + reach))
       local Cam = require "src.camera"
       Cam.shake(5, 0.6)
       if G.Audio then G.Audio.sfx("quake") end

@@ -277,15 +277,29 @@ function Proj:update(dt)
         -- an un-consumed round keeps travelling, crosses the body's midline
         -- next frame, and lands as if it had come from behind.
         if e.deflects and e:deflects(self.x, self.y,
-            { owner = self.owner, link = self.link }) then
+            { owner = self.owner, link = self.link, vy = self.vy }) then
+          -- THE DEFLECTOR NAMES ITS OWN SOUND. A plated frame rings like
+          -- a plated frame; the Crucible's lattice swallows a round
+          -- rather than bouncing it, and a bright ricochet off something
+          -- that is plainly absorbing the shot reads as the wrong
+          -- object. Default unchanged for everything that has no opinion.
           World:fx("spark", cx, cy,
-            { color = "gold", angle = math.atan2(-self.vy, -self.vx), n = 5 })
-          if G.Audio then G.Audio.sfx("deflect") end
+            { color = e.deflectColor or "gold",
+              angle = math.atan2(-self.vy, -self.vx), n = 5 })
+          if G.Audio then G.Audio.sfx(e.deflectSfx or "deflect") end
           self.dead = true
           return
         end
+        -- `vy` rides along because one armour law asks which WAY the
+        -- round was going rather than where it came from: the spineshell's
+        -- plates cover everything except the belly, and "shot from
+        -- underneath" is a round still travelling upward when it lands.
+        -- Deriving that from the shooter's position instead would make
+        -- the rule a question about floor heights -- two tiles below and
+        -- it works, one tile and it does not -- which is not the rule
+        -- anybody is being taught.
         local hurt = e:hurt(self.dmg, self.x, self.y,
-          { owner = self.owner, link = self.link })
+          { owner = self.owner, link = self.link, vy = self.vy })
         if hurt ~= false then
           self.hitList[e] = true
           World:fx("spark", cx, cy, { color = "gold", angle = math.atan2(-self.vy, -self.vx) })

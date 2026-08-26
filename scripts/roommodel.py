@@ -245,8 +245,22 @@ ENVELOPE = {
     ("hover", True):  (14, 14, 11, 9, 6),
 }
 
+# EVERY ABILITY A FINISHED RUN HOLDS.
+#
+# The movement modules are listed; the HARD-BLOCK flags are READ OFF THE
+# ALPHABET, because world.lua already says which flag opens which block
+# (`HARD_CHARS = { ["*"] = "bulwark", ["&"] = "linkblast" }`) and a second
+# hand-typed copy of that is the failure this project has three of.
+#
+# They were simply missing. Nobody noticed because no room in the game
+# used a hard block -- the machinery shipped, the content never did, and
+# the first `&` placed in a room came back as "cannot be reached from any
+# door" from a validator that did not believe anyone could ever open it.
+# checkheat had already worked around it locally with its own `| {"bulwark"
+# , ...}`, which is what a missing constant looks like from downstream.
 ALL_ABILITIES = frozenset({"sparkjump", "grapple", "hydroseals",
-                           "heatplating", "telenet", "driftvanes"})
+                           "heatplating", "telenet", "driftvanes"}
+                          | set(HARD.values()))
 
 
 # ------------------------------------------------------------------
@@ -351,6 +365,14 @@ def _kits(path="src/entities/player.lua"):
 
 BOT_KITS = _kits()
 BOTS = ("vess", "lu")
+
+# Flags NO bot is allowed on its own. Derived from the kits rather than
+# listed, so a second pair ability is covered the day it is added: if
+# every kit denies it, it is something the two of them do together.
+PAIR_FLAGS = frozenset(
+    set(HARD.values())
+    - set().union(*[set(ALL_ABILITIES) - k["denies"] for k in BOT_KITS.values()])
+) if BOT_KITS else frozenset()
 
 
 class Room:
@@ -480,6 +502,52 @@ def parse_room(fname):
                         rows[y][x] = "~"
                     elif above == "L" or (left == "L" and right == "L"):
                         rows[y][x] = "L"
+    # PASS TWO, matching world.lua's second settle pass: for a cell the
+    # grid PUNCHED OUT -- an entity's spawn char -- one wet side is
+    # enough, and the look upward goes through a gate.
+    #
+    # Added because the engine gained it (Thomas, Aug 2026: "the mines I
+    # placed in the water appear as if they are in pockets of air"). A
+    # mine against a wall, or the first of three in a row, has rock or
+    # another hole on its far side and never satisfied the both-sides
+    # rule above. If this copy does not follow, the model and the engine
+    # disagree about which cells are water, and disagreeing about the
+    # tiles is disagreeing about everything downstream of them.
+    #
+    # Doors stay out of it here and only here: in this model the
+    # character grid IS the door record, so overwriting a door cell with
+    # '~' would delete the door. The engine has a separate door table and
+    # does flood them; the swim/stand helpers below already treat a door
+    # cell as passable water, so the two agree about what a player can do
+    # there without the model having to spell it.
+    def _through_gates(x, y):
+        yy = y - 1
+        while yy >= 0:
+            c = rows[yy][x]
+            if c not in GATES:
+                return c
+            yy -= 1
+        return "#"
+
+    settling = True
+    while settling:
+        settling = False
+        for y in range(H):
+            for x in range(W):
+                ch = rows[y][x]
+                if ch in tile or ch in DOORS or ch in GATES:
+                    continue
+                above = _through_gates(x, y)
+                left = rows[y][x - 1] if x > 0 else "#"
+                right = rows[y][x + 1] if x < W - 1 else "#"
+                fill = None
+                if "~" in (above, left, right):
+                    fill = "~"
+                elif "L" in (above, left, right):
+                    fill = "L"
+                if fill:
+                    rows[y][x] = fill
+                    settling = True
     g = ["".join(r) for r in rows]
 
     gates = {}
@@ -598,13 +666,29 @@ class Nav:
             return True
         if ch in GATES:
             return self.gate_solid(ch)
-        # A GATED BREAKABLE is solid until this body holds the plate that
-        # opens it. Reads self.flags, not gate_flags, and that is the
-        # point: a gate is a property of the world, but a bulwark block
-        # is a property of the BOT standing in front of it. Lu never
-        # opens one no matter what the run has collected.
+        # A GATED BREAKABLE is solid until somebody can open it, and WHO
+        # that somebody is depends on the block.
+        #
+        # A BULWARK block is a property of the BOT standing in front of
+        # it: Vess charges it down, Lu never opens one no matter what the
+        # run has collected, so it reads this body's own flags.
+        #
+        # A LINK-BLAST block is not. The link shot is fired by the PAIR --
+        # G.game:tryLinkShot needs both bots -- and what it leaves behind
+        # is a hole in the world that stays a hole for everyone. So it
+        # reads gate_flags, exactly like a gate, because that is what it
+        # is: world state, opened once, open for both.
+        #
+        # The two are told apart by ASKING THE KITS rather than by naming
+        # them here: a flag every bot is denied is by definition one no
+        # single bot can use, which is the signature of a pair action.
+        # The first '&' in the game came back from checkcoop as "granted
+        # by machinery neither bot can reach", which is true of each bot
+        # alone and false of the pair standing in front of it.
         need = HARD.get(ch)
         if need is not None:
+            if need in PAIR_FLAGS:
+                return need not in self.gate_flags
             return need not in self.flags
         return False
 
@@ -621,6 +705,22 @@ class Nav:
             return True
         ch = self.r.g[y][x] if 0 <= x < self.r.W and 0 <= y < self.r.H else "#"
         return ch in SUPPORTY
+
+    def openable(self, x, y):
+        """Can this body shoot/dash this tile out and drop through it?
+
+        The literal `"%c"` used to be written here, twice, and it went
+        stale the moment the engine gained '&' (the LINK-blast block) --
+        which is BREAK in world.lua's own table and so is stood on, but
+        was not in the two-character string, so nothing could ever drop
+        through one. A vault sealed with '&' came back from checkprops as
+        "cannot be reached from any door".
+        HARD blocks answer to solid() as well, because breaking one is a
+        thing only a body with the right module can do.
+        """
+        if not (0 <= x < self.r.W and 0 <= y < self.r.H):
+            return False
+        return self.r.g[y][x] in OPENABLE and not self.solid(x, y)
 
     def standable(self, x, y):
         # OPENABLE tiles ('%' break, 'c' crumble) are STANDABLE.
@@ -706,7 +806,7 @@ class Nav:
                             out.add((nx, ny))
             # break-and-sink: shoot out a breakable floor tile below and
             # drop through the hole
-            if y + 1 < H and g[y + 1][x] in "%c" and y + 2 < H:
+            if y + 1 < H and self.openable(x, y + 1) and y + 2 < H:
                 n = self.land(x, y + 2)
                 if n:
                     out.add(n)
@@ -809,7 +909,7 @@ class Nav:
                 out.add(n)
         # break-and-drop: a breakable/crumble tile underfoot can be shot
         # out (or crumbles) and fallen through
-        if y + 1 < H and g[y + 1][x] in "%c" and y + 2 < H:
+        if y + 1 < H and self.openable(x, y + 1) and y + 2 < H:
             n = self.land(x, y + 2)
             if n:
                 out.add(n)

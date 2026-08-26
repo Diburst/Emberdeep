@@ -9,23 +9,27 @@ return {
   -- the rock but behind the bots, foreground is in front of everything.
   -- py < 0 is nearer than the world; py > 0 is further away.
   -- ------------------------------------------------------------------
+  -- DIMMED (Thomas, Aug 2026): the golem's slam pools are the thing you
+  -- need to read on that floor now, and the furnace mouths behind the
+  -- wall were louder than they were. Every alpha back here is at 45% of
+  -- what it was; nothing moved, it just stopped competing.
   backdrop = {
     -- Furnace mouths still burning behind the wall, on a slow cycle.
     -- The Crucible made ten thousand perfect parts and the line never
     -- got the message; the light back there is the line still running.
-    { kind = "rect", x = 90, y = 60, w = 120, h = 70, col = "maroon", a = 0.85, py = 0.28 },
-    { kind = "band", x = 93, y = 63, w = 114, h = 64, col = "magma", a = 0.5, a2 = 0.12, py = 0.28 },
-    { kind = "rect", x = 420, y = 70, w = 100, h = 60, col = "maroon", a = 0.85, py = 0.28 },
-    { kind = "band", x = 423, y = 73, w = 94, h = 54, col = "magma", a = 0.5, a2 = 0.12, py = 0.28 },
+    { kind = "rect", x = 90, y = 60, w = 120, h = 70, col = "maroon", a = 0.38, py = 0.28 },
+    { kind = "band", x = 93, y = 63, w = 114, h = 64, col = "magma", a = 0.23, a2 = 0.05, py = 0.28 },
+    { kind = "rect", x = 420, y = 70, w = 100, h = 60, col = "maroon", a = 0.38, py = 0.28 },
+    { kind = "band", x = 423, y = 73, w = 94, h = 54, col = "magma", a = 0.23, a2 = 0.05, py = 0.28 },
     -- gantry behind everything
-    { kind = "girder", x = -20, y = 60, w = 680, h = 15, col = "black", a = 0.55, py = 0.34, step = 32 },
-    { kind = "girder", x = -20, y = 210, w = 680, h = 15, col = "black", a = 0.55, py = 0.34, step = 32 },
-    { kind = "column", x = 140, y = 20, w = 13, h = 232, col = "black", a = 0.5, py = 0.4, acc = "rust" },
-    { kind = "column", x = 473, y = 20, w = 13, h = 232, col = "black", a = 0.5, py = 0.4, acc = "rust" },
+    { kind = "girder", x = -20, y = 60, w = 680, h = 15, col = "black", a = 0.25, py = 0.34, step = 32 },
+    { kind = "girder", x = -20, y = 210, w = 680, h = 15, col = "black", a = 0.25, py = 0.34, step = 32 },
+    { kind = "column", x = 140, y = 20, w = 13, h = 232, col = "black", a = 0.23, py = 0.4, acc = "rust" },
+    { kind = "column", x = 473, y = 20, w = 13, h = 232, col = "black", a = 0.23, py = 0.4, acc = "rust" },
   },
   scenery = {
     -- heat haze rising off the floor
-    { kind = "band", x = 0, y = 122, w = 640, h = 150, col = "magma", a = 0, a2 = 0.13 },
+    { kind = "band", x = 0, y = 122, w = 640, h = 150, col = "magma", a = 0, a2 = 0.07 },
   },
   foreground = {
     -- chains and a near gantry: the works, passing in front
@@ -46,9 +50,9 @@ return {
 ##....................................##
 ##....................................##
 ##....................................##
-##....................................##
-##....................................##
-##....................................##
+##..a..............................a..##
+##.................a..................##
+##.....======.............=======.....##
 ##....................................##
 AA....................................BB
 AA..........t.........................BB
@@ -60,6 +64,7 @@ AA..........t.........................BB
 ]],
   key = {
     ["t"] = "boss:slaggolem",
+    ["a"] = "anchor",
   },
   links = {
     A = { "furn_3", "B" },

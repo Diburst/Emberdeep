@@ -230,7 +230,21 @@ end
 
 local function slotPath(i) return "slot" .. i .. ".sav" end
 
+-- A NIL SLOT IS AN ANSWER, NOT A CRASH.
+--
+-- `G.run.slot` is deliberately nil for a run that has no save file behind
+-- it -- the Test Chamber is the whole reason it can be nil, and autosave
+-- and writeSlot both already read it as "ephemeral, do not touch disk".
+-- readSlot and deleteSlot did not, so a nil arrived at slotPath and the
+-- concatenation took the game down: `save.lua:231, attempt to concatenate
+-- a nil value`. Reported from dying to a boss in the Test Chamber, which
+-- is exactly the path that reaches here with no slot.
+--
+-- The question "what is saved in no slot" has a correct answer, and it is
+-- "nothing". Answering it here means the next caller that forgets the
+-- guard gets a rollback that does nothing, rather than a crash on death.
 function Save.readSlot(i)
+  if not i then return nil end
   local info = love.filesystem.getInfo(slotPath(i))
   if not info then return nil end
   local raw = love.filesystem.read(slotPath(i))
@@ -256,7 +270,9 @@ function Save.writeSlot(i, data)
 end
 
 function Save.deleteSlot(i)
+  if not i then return false end
   love.filesystem.remove(slotPath(i))
+  return true
 end
 
 return Save

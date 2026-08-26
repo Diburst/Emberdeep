@@ -173,9 +173,76 @@ function Boss:setState(s, t)
   self.phaseT = 0
 end
 
+-- ---- the ceiling above a point, in the room actually being fought in
+-- Not a constant: the golem's arena has a two-tile roof, but the
+-- Crucible's does not, and a boss reused somewhere lower would drop its
+-- adds inside the rock. Walk down from the top until the world lets a
+-- body exist. On the Boss base because two of them shake things out of
+-- the roof now, and a second copy of this is a second thing to get
+-- wrong the day an arena gains a gantry.
+function Boss:roofY(World, px)
+  local tx = math.max(0, math.min(World.w - 1, math.floor(px / T)))
+  for ty = 0, World.h - 1 do
+    if not World:isSolid(tx, ty) then return ty * T + 2 end
+  end
+  return T
+end
+
 function Boss:aliveTargets()
   local World = require "src.world"
   return World:alivePlayers()
+end
+
+-- ---- THE LINK-BLAST SHIELD, DRAWN -------------------------------
+--
+-- It answers to the LINK BLAST and to nothing else, so it is drawn in
+-- exactly the palette the link-blast BLOCKS use in world.lua: violet at
+-- half alpha, orchid on the edge. Same two colours, same weights. A
+-- player who has blasted one of those blocks has already been taught
+-- what this ring wants.
+--
+-- Solid, not a ring of parts: a broken circle reads as something with
+-- gaps to shoot between, and there are none.
+--
+-- On the Boss base rather than in the Crucible, because the Bramble Maw
+-- carries the same shield now and the whole point of the colours is that
+-- the two of them are recognisably the same object. Two hand-drawn
+-- copies would be two rings that drift apart, and this project has three
+-- post-mortems about exactly that.
+function Boss:drawLinkShield(cx, cy, rx, ry)
+  local g = love.graphics
+  local pulse = 0.06 * math.sin(G.time * 4)
+  g.setColor(P.violet[1], P.violet[2], P.violet[3], 0.5 + pulse)
+  g.setLineWidth(5)
+  g.ellipse("line", cx, cy, rx, ry)
+  g.setColor(P.orchid[1], P.orchid[2], P.orchid[3], 0.85)
+  g.setLineWidth(1)
+  g.ellipse("line", cx, cy, rx + 2.5, ry + 2.5)
+  g.ellipse("line", cx, cy, rx - 2.5, ry - 2.5)
+  -- the lattice's cross-hatch, the same mark the blocks carry, turning
+  -- slowly so the ring is alive without being a gap
+  for i = 0, 3 do
+    local a = self.t * 0.9 + i * math.pi / 2
+    local ca, sa = math.cos(a), math.sin(a)
+    g.setColor(P.orchid[1], P.orchid[2], P.orchid[3], 0.55)
+    g.line(cx + ca * (rx - 4), cy + sa * (ry - 4),
+           cx + ca * (rx + 4), cy + sa * (ry + 4))
+  end
+  g.setLineWidth(1)
+  g.setColor(1, 1, 1, 1)
+end
+
+-- Three stars over a reeling machine. Same reason as the ring: the stun
+-- means the same thing on every boss that has one, so it looks the same.
+function Boss:drawStunStars(cx, y, r)
+  local g = love.graphics
+  r = r or 18
+  for i = 0, 2 do
+    local a = G.time * 3 + i * math.pi * 2 / 3
+    g.setColor(P.gold)
+    g.circle("fill", cx + math.cos(a) * r, y + math.sin(a) * (r * 0.22), 1.5)
+  end
+  g.setColor(1, 1, 1, 1)
 end
 
 function Boss:fireAt(x, y, tx, ty, speed, cfg)
@@ -200,11 +267,105 @@ local MAW_LUNGE = 165    -- px/sec during the sweep
 local MAW_SWAY = 12      -- px/sec of vine-strain wobble on top of that
 local MAW_REACH = 26     -- how close it closes before it stops shoving
 
+-- ==================================================================
+-- THE THORN LATTICE (Thomas, Aug 2026)
+-- ==================================================================
+-- The Maw grows a LINK-BLAST SHIELD, the same object the Crucible
+-- carries and drawn by the same function, in the same violet and orchid
+-- as the link-blast blocks. Nothing else opens it: rounds die on it.
+--
+-- This is fair here and it is deliberately the first place in the game
+-- it is asked. Maro switches the link on in Ember Camp and the camp's
+-- east mouth is a wall of `&` -- you cannot reach the Mosswood at all
+-- without having blasted one -- so every player arriving in this arena
+-- has already been taught the answer AND has already used it on a wall.
+-- The Maw is where they learn it is also a weapon.
+--
+-- The shield is not a wait, either. It reknits ten seconds after it
+-- breaks, so the fight has a rhythm rather than a gate: crack it, get
+-- two stunned seconds and eight open ones, crack it again.
+local MAW_STUN      = 2.0    -- helpless seconds when the lattice breaks
+local MAW_SHIELD_BACK = 10   -- ...and how long from that break to the reknit
+
+-- THE GNAT SWARM. Ten, at each quarter of its health -- 75%, 50%, 25%,
+-- and the last quarter is the kill.
+--
+-- They HUNT (Enemy:huntStep, the same close/strike/retreat the Slag
+-- Golem's bats fly), which is what makes ten of them a swarm rather than
+-- ten pieces of scenery. They are also 2hp and hit for 1: the swarm is
+-- pressure that makes the arena small, not a damage race.
+--
+-- Slower than the bats on purpose. A gnat that closes at the bat's 96
+-- arrives as fast as a body four times its weight, and ten of those at
+-- once is the unwinnable fight the golem's swarm had to be cut back from.
+-- The player runs at 112, so at 84 the swarm can always be walked out of
+-- -- which is the decision the pause is there to offer.
+local MAW_SWARM_N    = 10
+local MAW_SWARM_T    = 1.2   -- the pause itself: it stops, and it spews
+local MAW_SWARM_GAP  = 1.2   -- a hit across two thresholds sends the
+                             -- second swarm late rather than both at once
+local MAW_GNAT_CAP   = 20    -- a backstop, not a budget: see spewGnats
+local MAW_GNAT_SPEED = 84    -- closing; the player runs at 112
+local MAW_GNAT_FLEE  = 104   -- retreating, still faster than it closes
+
 local Bramblemaw = Boss.extend()
 function Bramblemaw:init(x, y)
   Boss.init(self, x, y, { id = "bramblemaw", name = "BRAMBLE MAW",
     hp = 85, touchDmg = 3, w = 40, h = 44 })
   self.mouthOpen = false
+  self.shielded = true
+  self.shieldT = 0       -- counts down to the reknit; 0 while it is up
+  self.swarms = 0
+  self.swarmT = 0
+end
+
+function Bramblemaw:gnatCount(World)
+  local n = 0
+  for _, e in ipairs(World.entities) do
+    if not e.dead and e.mawGnat then n = n + 1 end
+  end
+  return n
+end
+
+-- Spat UPWARD out of the mouth, not shaken out of the roof: they come
+-- from the boss, in a fan, and fall into their hunt. That is a different
+-- warning from the golem's ceiling drop and is meant to read as one --
+-- the thing in front of you just opened.
+function Bramblemaw:spewGnats(World, n)
+  -- The cap is a backstop against a pathological fight (three swarms
+  -- alive at once because nobody killed anything), not a budget: at ten
+  -- a swarm and twenty alive it never binds in a fight that is being
+  -- played. If it ever does bind, fewer gnats is the right failure.
+  local room = MAW_GNAT_CAP - self:gnatCount(World)
+  if room <= 0 then return 0 end
+  n = math.min(n, room)
+  local cx = self.x + self.w / 2
+  local my = self.y + 10          -- the mouth, not the middle of the body
+  for i = 1, n do
+    local g = Entity.make("gnat", cx - 5 + U.rand(-6, 6), my)
+    if g and g ~= true then
+      g.mawGnat = true
+      g.hunt = true
+      g.huntSpeed = MAW_GNAT_SPEED
+      g.retreatSpeed = MAW_GNAT_FLEE
+      -- THROWN CLEAR BEFORE THEY HUNT.
+      --
+      -- Ten hunters spawned on one tile all pick the same heading on the
+      -- same frame and leave the mouth as a single object. The fan is
+      -- expressed as a RETREAT -- huntStep's own outbound leg, which
+      -- already flies a fixed heading for a fixed time and already
+      -- handles being flung into a wall -- rather than as a velocity,
+      -- because huntStep overwrites velocity every frame and a hand-set
+      -- vx/vy would be gone before it was drawn once.
+      g.retreatA = -math.pi / 2 + (i - (n + 1) / 2) * 0.17
+      g.retreatT = 0.45
+      self:addSpawn(g)
+    end
+  end
+  World:fx("burst", cx, my, { color = "leaf", n = 14, speed = 130 })
+  if G.Audio then G.Audio.sfx("roar") end
+  if G.game then G.game:announce("The Maw coughs up a swarm!", 1.8) end
+  return n
 end
 function Bramblemaw:update(dt)
   local World = require "src.world"
@@ -234,13 +395,69 @@ function Bramblemaw:update(dt)
     if self.closing then want = U.sign(dx) end
     if want ~= 0 then self.facing = want end
   end
+  -- A PAUSE IS A PAUSE. Both the stun and the swarm are states in which
+  -- the Maw is not going anywhere, and a boss that keeps creeping and
+  -- swaying through them does not read as either one. Gravity still
+  -- applies -- it is rooted, not floating.
+  local held = (self.state == "stunned" or self.state == "swarm")
   local speed = (self.state == "sweep") and MAW_LUNGE or MAW_CREEP
-  self.vx = want * speed + math.sin(self.t * 1.1) * MAW_SWAY
+  self.vx = held and 0 or (want * speed + math.sin(self.t * 1.1) * MAW_SWAY)
   self.vy = math.min((self.vy or 0) + 700 * dt, 260)
   PH.move(self, self.vx * dt, self.vy * dt)
   cx, cy = self:center()
 
   if self.state == "intro" then
+    if self.stateT <= 0 then self:setState("volley", 2.2) end
+    return
+  end
+
+  -- THE LATTICE REKNITS ten seconds after it broke, wherever the fight
+  -- has got to -- including mid-stun, which cannot happen while the stun
+  -- is two seconds and the timer ten, but is written to be true anyway
+  -- rather than to be true by arithmetic somewhere else.
+  if not self.shielded then
+    self.shieldT = (self.shieldT or 0) - dt
+    if self.shieldT <= 0 and self.state ~= "stunned" then
+      self.shielded = true
+      World:fx("burst", cx, cy, { color = "violet", n = 10, speed = 90 })
+      if G.game then G.game:announce("The thorn lattice knits shut...", 1.6) end
+      if G.Audio then G.Audio.sfx("domeon") end
+    end
+  end
+
+  -- EACH QUARTER OF ITS HEALTH, A SWARM.
+  --
+  -- Driven off hp here rather than out of hurt(), for the golem's
+  -- reason: hp moves for reasons that are not hits, and one test run
+  -- every frame cannot be routed around by a damage source added later.
+  -- Not while stunned -- the stun is the two seconds the link buys you
+  -- and interrupting it with the boss's own set piece would take that
+  -- back. It waits, and fires the moment the stun ends.
+  self.swarmT = math.max(0, (self.swarmT or 0) - dt)
+  if self.swarms < 3 and self.swarmT <= 0 and self.state ~= "stunned"
+    and self.state ~= "swarm"
+    and self.hp <= self.maxhp * (1 - 0.25 * (self.swarms + 1)) then
+    self.swarms = self.swarms + 1
+    self.swarmT = MAW_SWARM_GAP
+    self.spewed = nil
+    self:setState("swarm", MAW_SWARM_T)
+  end
+
+  if self.state == "stunned" then
+    self.mouthOpen = true      -- slack: the one place it cannot close
+    if self.stateT <= 0 then self:setState("volley", 2.2) end
+    return
+  end
+
+  if self.state == "swarm" then
+    -- it rears, opens, and coughs -- once, a third of the way in, so the
+    -- pause has a wind-up rather than being a spawn with a delay after it
+    self.mouthOpen = true
+    if not self.spewed and self.phaseT >= MAW_SWARM_T * 0.35 then
+      self.spewed = true
+      self:spewGnats(World, MAW_SWARM_N)
+      Cam.shake(3, 0.3)
+    end
     if self.stateT <= 0 then self:setState("volley", 2.2) end
     return
   end
@@ -296,10 +513,41 @@ function Bramblemaw:update(dt)
     end
   end
 end
+-- THE LATTICE STOPS THE ROUND, it does not merely refuse the damage.
+-- Returning false from hurt() declines the hit and lets the projectile
+-- sail on into the body to try again next frame; Proj asks `deflects`
+-- first, so the round ends on the shield with the same low `deny` blip
+-- the Crucible's does. Same shield, same answer, same sound.
+Bramblemaw.deflectSfx = "deny"
+Bramblemaw.deflectColor = "violet"
+function Bramblemaw:deflects(srcx, srcy, opts)
+  if opts and opts.link then return false end     -- the link always lands
+  return self.shielded and self.state ~= "stunned"
+end
+
 function Bramblemaw:hurt(dmg, srcx, srcy, opts)
+  local World = require "src.world"
+  if self.shielded and self.state ~= "stunned" then
+    if opts and opts.link then
+      self.shielded = false
+      self.shieldT = MAW_SHIELD_BACK
+      self:setState("stunned", MAW_STUN)
+      World:fx("burst", self.x + self.w / 2, self.y + self.h / 2,
+        { color = "orchid", n = 16, speed = 130 })
+      Cam.shake(4, 0.4)
+      if G.game then G.game:announce("THE LATTICE SHATTERS -- it reels!", 2) end
+      if G.Audio then G.Audio.sfx("break") end
+      return Entity.hurt(self, dmg, srcx, srcy, opts)
+    end
+    World:fx("spark", self.x + self.w / 2, self.y + self.h / 2,
+      { color = "violet", n = 3 })
+    return false
+  end
+  -- Shield down: the fight it always was. The mouth is the tempo -- a
+  -- closed maw is armoured and eats two thirds of the round -- and the
+  -- ten open seconds are when that tempo is worth reading.
   if not self.mouthOpen then
     dmg = math.max(1, math.floor(dmg / 3))
-    local World = require "src.world"
     World:fx("spark", self.x + 6, self.y + 10, { color = "fern", n = 3 })
   end
   return Entity.hurt(self, dmg, srcx, srcy, opts)
@@ -323,6 +571,13 @@ function Bramblemaw:draw()
     local pulse = 0.6 + math.sin(G.time * 8) * 0.3
     g.setColor(P.gold[1], P.gold[2], P.gold[3], pulse)
     g.circle("line", cx - 4, self.y + 12, 10 + pulse * 3)
+  end
+  -- the same ring the Crucible wears, in the same two colours as the
+  -- link-blast blocks, sized to a body that is taller than it is wide
+  if self.shielded then
+    self:drawLinkShield(cx, self.y + self.h / 2 + bob, 28, 30)
+  elseif self.state == "stunned" then
+    self:drawStunStars(cx, self.y - 16, 20)
   end
   g.setColor(1, 1, 1, 1)
 end
@@ -571,24 +826,21 @@ function Rustwarden:update(dt)
   elseif self.state == "charge" then
     self.vx = self.facing * WARDEN_CHARGE
     PH.move(self, self.vx * dt, self.vy * dt)
-    -- Lu's dome interrupts the charge and stuns the Warden
-    local interrupted = false
-    for _, pl in ipairs(World.players) do
-      if pl.domeActive and not pl.dead and not pl.downed and not pl.idle then
-        local dcx, dcy = pl.x + pl.w / 2, pl.y + pl.h / 2 - 4
-        local bcx, bcy = self:center()
-        local dx, dy = bcx - dcx, bcy - dcy
-        local r = pl.domeRadius + self.w / 2
-        if dx * dx + dy * dy < r * r then
-          interrupted = true
-          pl:domeAbsorb(2)
-          -- bounce off the dome
-          self.x = self.x - self.facing * 8
-          World:fx("spark", bcx - self.facing * self.w / 2, bcy,
-            { color = "cyan", n = 10 })
-          break
-        end
-      end
+    -- Lu's dome interrupts the charge and stuns the Warden.
+    --
+    -- The overlap test itself now lives on World:domeCovering, because
+    -- the spineshell in the Flooded Works is taught to players as a
+    -- practice Warden and has to answer to the dome by the SAME rule.
+    -- Two copies of it would be two rules within a month.
+    local bcx, bcy = self:center()
+    local domer = World:domeCovering(bcx, bcy, self.w / 2)
+    local interrupted = domer ~= nil
+    if domer then
+      domer:domeAbsorb(2)
+      -- bounce off the dome
+      self.x = self.x - self.facing * 8
+      World:fx("spark", bcx - self.facing * self.w / 2, bcy,
+        { color = "cyan", n = 10 })
     end
     if interrupted then
       Cam.shake(4, 0.35)
@@ -1115,7 +1367,11 @@ local function golemDmg(n) return math.floor(n * GOLEM_DMG + 0.5) end
 -- cap a long fight tiles the whole floor and the fight stops being a
 -- fight -- there is nowhere to stand and no decision left to make. Ten
 -- patches at 26px is 260px of a 640px arena, so there is always floor.
-local GOLEM_PATCH_CAP  = 10
+-- Four (Thomas, Aug 2026, after losing to it): ten pools of the room's
+-- own lava is not a floor with hazards on it, it is a hazard with floor
+-- on it. Four leaves somewhere to stand while still making the arena
+-- worse every slam, which was the point.
+local GOLEM_PATCH_CAP  = 4
 local GOLEM_PATCH_W    = 26
 local GOLEM_PATCH_H    = 7
 local GOLEM_PATCH_FADE = 0.45   -- seconds a retired patch takes to cool
@@ -1124,8 +1380,13 @@ local GOLEM_PATCH_FADE = 0.45   -- seconds a retired patch takes to cool
 -- (75%, 50%, 25%) -- the fourth quarter is the kill. The concurrent cap
 -- is the Crucible's lesson: a wall of adds between you and the boss is
 -- not difficulty, it is a wall.
-local GOLEM_SWARM     = 6
-local GOLEM_BAT_CAP   = 12
+--
+-- Cut from six/twelve to four/eight once the bats started actually
+-- hunting. The count was tuned against a swarm that hung at the ceiling
+-- and never arrived; twelve bats that all come for you at once is a
+-- different fight, and it turned out to be an unwinnable one.
+local GOLEM_SWARM     = 4
+local GOLEM_BAT_CAP   = 8
 local GOLEM_SWARM_GAP = 1.2     -- a burst big enough to cross two
                                 -- thresholds sends the second swarm late,
                                 -- rather than both in the same frame
@@ -1137,18 +1398,6 @@ function Slaggolem:init(x, y)
   self.patches = {}      -- oldest first; see retirePatch
   self.swarms = 0
   self.swarmT = 0
-end
-
--- ---- the ceiling above a point, in the room actually being fought in
--- Not a constant: the golem's arena has a two-tile roof, but a miniboss
--- that ever gets reused somewhere lower would drop its bats inside the
--- rock. Walk down from the top until the world lets a body exist.
-function Slaggolem:roofY(World, px)
-  local tx = math.max(0, math.min(World.w - 1, math.floor(px / T)))
-  for ty = 0, World.h - 1 do
-    if not World:isSolid(tx, ty) then return ty * T + 2 end
-  end
-  return T
 end
 
 function Slaggolem:batCount(World)
@@ -1174,6 +1423,10 @@ function Slaggolem:swarm(World)
     local bat = Entity.make("cinderbat", px, self:roofY(World, px))
     bat.golemBat = true
     local p = targets[1 + (i - 1) % math.max(1, #targets)]
+    -- HUNT, do not roost. A cinderbat's default is to bob until someone
+    -- comes within 120px of it, which in a ten-tile arena is never -- so
+    -- the swarm spawned correctly and then decorated the ceiling.
+    bat.hunt = true
     bat.swooping = true
     bat.swoopT = 0
     bat.facing = p and U.sign((p.x + p.w / 2) - px) or 1
@@ -1398,15 +1651,31 @@ Bosses.slaggolem = Slaggolem
 --
 -- The interlocks in armPots() are load-bearing, not polish: no pot may
 -- COMMIT while the boss is on the ground, because those five grounded
--- seconds are the link window, and the link window is the entire reason
--- this fight exists. Flooding the floor during it would leave a boss
--- that checkprogress still calls completable and a player who cannot
--- read what the fight wants.
+-- seconds are the punish window. The LINK itself is no longer gated on
+-- them -- the shield breaks whenever a link shot lands -- but the slam
+-- is still where the damage is, and flooding the floor through it would
+-- take back the one moment the fight offers.
 -- ==================================================================
+-- REBALANCED (Thomas, Aug 2026). Health by half, and the slam now shakes
+-- a handful of gold mites out of the roof on top of the slag it already
+-- spews. Written as the multiplier rather than folded into a literal so
+-- the next pass can see that 232 is 155 raised by half.
+local CRUC_HP = math.floor(155 * 1.5)      -- 232
+
+-- THE ROOF SWARM. Four a slam, capped at eight alive.
+--
+-- The cap is this fight's oldest lesson, quoted from its own header: "a
+-- wall of slaglings between you and the ladder is not a fight, it is a
+-- wall." A slam already puts eight slaglings on the floor; four mites on
+-- top of that is a second thing to read, not a second wall, and eight is
+-- where it stops being either.
+local MITE_PER_SLAM = 4
+local MITE_CAP = 8
+
 local Crucible = Boss.extend()
 function Crucible:init(x, y)
   Boss.init(self, x, y, { id = "crucible", name = "THE CRUCIBLE",
-    hp = 155, touchDmg = 5, w = 36, h = 36, reward = "module:corekey1" })
+    hp = CRUC_HP, touchDmg = 5, w = 36, h = 36, reward = "module:corekey1" })
   self.shielded = true
   self.ventsOpen = false
   self.ventT = 9          -- hover time until the next vent slam
@@ -1543,7 +1812,7 @@ function Crucible:update(dt)
     if self.shieldHintT <= 0 then
       self.shieldHintT = 20
       if G.game then
-        G.game:announce("The lattice shrugs off small arms. Wait for the slam.", 3)
+        G.game:announce("The lattice shrugs off small arms -- LINK it.", 3)
       end
     end
     if self.ventT <= 0 then
@@ -1649,9 +1918,10 @@ function Crucible:update(dt)
         })
       end
       self:spewSlag(World, SLAG_PER_SLAM)
+      self:shakeMites(World, MITE_PER_SLAM)
       self.ventsOpen = true
       self:setState("venting", 5)
-      if G.game then G.game:announce("It slams down, venting -- NOW is the link window!", 2.5) end
+      if G.game then G.game:announce("It slams down, venting -- punish it!", 2.5) end
       if G.Audio then G.Audio.sfx("domeoff") end
     end
   elseif self.state == "venting" then
@@ -1689,6 +1959,40 @@ function Crucible:randomTarget(World)
   return live[love.math.random(1, #live)]
 end
 
+-- Shaken out of the ROOF, not spat out of the body: they arrive above
+-- you and fall, which is a different warning from the slag boiling out
+-- of the floor and is meant to be read as one.
+function Crucible:miteCount(World)
+  local n = 0
+  for _, e in ipairs(World.entities) do
+    if not e.dead and e.goldMite then n = n + 1 end
+  end
+  return n
+end
+
+function Crucible:shakeMites(World, n)
+  local room = MITE_CAP - self:miteCount(World)
+  if room <= 0 then return 0 end
+  n = math.min(n, room)
+  local targets = self:aliveTargets()
+  for i = 1, n do
+    -- over the bots where possible, so they land in the fight rather
+    -- than in a corner of the arena nobody is standing in
+    local p = targets[1 + (i - 1) % math.max(1, #targets)]
+    local px = (p and (p.x + p.w / 2) or (self.x + self.w / 2))
+      + U.rand(-70, 70)
+    px = math.max(3 * T, math.min((World.w - 3) * T, px))
+    local m = Entity.make("goldmite", px, self:roofY(World, px))
+    m.goldMite = true
+    m.vx = U.rand(-20, 20)
+    self:addSpawn(m)
+    World:fx("burst", px, self:roofY(World, px),
+      { color = "gold", n = 4, speed = 70 })
+  end
+  if G.Audio then G.Audio.sfx("shard") end
+  return n
+end
+
 function Crucible:spewSlag(World, n)
   local room = SLAG_CAP - self:slagCount(World)
   if room <= 0 then return end
@@ -1706,16 +2010,44 @@ function Crucible:spewSlag(World, n)
   if G.Audio then G.Audio.sfx("roar") end
 end
 
+-- THE LATTICE STOPS THE ROUND, it does not merely refuse the damage.
+--
+-- Returning false from hurt() declines the hit and lets the projectile
+-- sail on into the body to try again next frame -- the exact bug the
+-- directional shields were taught in enemies.lua ("a blocked shot must
+-- DIE"). Proj asks `deflects` first, so the shield gets asked here and
+-- the round ends on it.
+--
+-- It names its own sound: `deny`, the low blip the game already uses for
+-- a hard block refusing the wrong tool. A bright ricochet off something
+-- that is visibly swallowing the shot reads as the wrong object.
+Crucible.deflectSfx = "deny"
+Crucible.deflectColor = "violet"
+function Crucible:deflects(srcx, srcy, opts)
+  if opts and opts.link then return false end     -- the link always lands
+  return self.shielded and self.state ~= "stunned"
+end
+
 function Crucible:hurt(dmg, srcx, srcy, opts)
   if self.state == "stunned" then
     return Entity.hurt(self, dmg, srcx, srcy, opts)
   end
   if self.shielded then
-    -- ONLY a link shot, ONLY during the grounded vent, shatters it
-    if opts and opts.link and self.ventsOpen then
+    -- A LINK SHOT BREAKS IT, WHENEVER YOU LAND ONE.
+    --
+    -- It used to require the grounded vent as well, which made the whole
+    -- fight a wait: the answer was known from the first minute and the
+    -- only question was whether the boss was standing still yet. The
+    -- slam is still the moment worth taking -- it is five grounded
+    -- seconds with a stunned machine at the end of them -- but that is
+    -- now a reward for good timing rather than a gate on the only tool
+    -- that works.
+    if opts and opts.link then
       self.shielded = false
       self.ventsOpen = false
-      self:setState("stunned", 5)
+      -- broken on the ground is worth more than broken in the air: the
+      -- stagger is longer when you caught it committed
+      self:setState("stunned", self:grounded() and 5 or 3)
       Cam.shake(4, 0.4)
       if G.game then G.game:announce("SHIELD SHATTERED -- it reels, stunned!", 2) end
       if G.Audio then G.Audio.sfx("break") end
@@ -1723,13 +2055,7 @@ function Crucible:hurt(dmg, srcx, srcy, opts)
     end
     local World = require "src.world"
     World:fx("spark", self.x + self.w / 2, self.y + self.h / 2,
-      { color = "magma", n = 3 })
-    if opts and opts.link and not self.linkHintT then
-      self.linkHintT = true
-      if G.game then
-        G.game:announce("The lattice held... link it while it VENTS on the ground!", 2.2)
-      end
-    end
+      { color = "violet", n = 3 })
     return false
   end
   return Entity.hurt(self, dmg, srcx, srcy, opts)
@@ -1759,17 +2085,21 @@ function Crucible:draw()
   end
   G.drawSprite("boss_crucible", math.floor(self.t * 3) % 2 + 1, cx, self.y + self.h,
     { sx = 2.0, sy = 1.7, white = math.max(0, (self.white or 0) * 6) })
-  -- rotating shield ring
+  -- THE SHIELD IS A LATTICE, AND IT IS THE COLOUR OF A LATTICE.
+  --
+  -- It used to be six hotcore diamonds rotating -- which read as "hot",
+  -- like everything else in the Furnace, and told the player nothing
+  -- about the one thing that opens it. It answers to the LINK BLAST and
+  -- to nothing else (see Crucible:hurt), so it is now drawn in exactly
+  -- the palette the link-blast BLOCKS use in world.lua: violet at half
+  -- alpha, orchid on the edge. Same two colours, same weights. A player
+  -- who has blasted one of those blocks has already been taught what
+  -- this ring wants.
+  --
+  -- Solid, not a ring of parts: a broken circle reads as something with
+  -- gaps to shoot between, and there are none.
   if self.shielded then
-    for i = 0, 5 do
-      local a = self.t * 2 + i * math.pi / 3
-      local sx = cx + math.cos(a) * 30
-      local sy = cy + math.sin(a) * 26
-      g.setColor(P.hotcore)
-      g.polygon("fill", sx, sy - 5, sx + 4, sy, sx, sy + 5, sx - 4, sy)
-      g.setColor(P.magma)
-      g.polygon("line", sx, sy - 5, sx + 4, sy, sx, sy + 5, sx - 4, sy)
-    end
+    self:drawLinkShield(cx, cy, 30, 26)
     if self.ventsOpen then
       local vp = 0.6 + math.sin(G.time * 12) * 0.4
       for side = -1, 1, 2 do
@@ -1788,14 +2118,7 @@ function Crucible:draw()
     local pulse = 0.5 + math.sin(G.time * 9) * 0.35
     g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3], pulse)
     g.circle("line", cx, cy, 26 + pulse * 4)
-    -- stun stars
-    if self.state == "stunned" then
-      for i = 0, 2 do
-        local a = G.time * 3 + i * math.pi * 2 / 3
-        g.setColor(P.gold)
-        g.circle("fill", cx + math.cos(a) * 18, self.y - 6 + math.sin(a) * 4, 1.5)
-      end
-    end
+    if self.state == "stunned" then self:drawStunStars(cx, self.y - 6) end
   end
   g.setColor(1, 1, 1, 1)
 end

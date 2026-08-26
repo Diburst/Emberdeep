@@ -259,11 +259,43 @@ return function(Test, scenarios)
     Test.log("boss=" .. tostring(boss and boss.bossName))
     Test.shot("boss_bramble")
     if boss then
+      -- THE THORN LATTICE. Rounds die on it and the link opens it --
+      -- the same law the Crucible's shield follows, in the first arena
+      -- of the game. Asserted here because this loop used to kill the
+      -- Maw with bare hurt() calls, which the lattice now refuses: a
+      -- `while not boss.dead` around a hit that can never land is an
+      -- infinite scenario, not a failing one.
+      local before = boss.hp
+      boss:hurt(6, boss.x - 10, boss.y)
+      Test.log("shielded hit dmg=" .. (before - boss.hp) .. " (want 0)")
+      boss:hurt(6, boss.x - 10, boss.y, { link = true })
+      Test.log("after link: shielded=" .. tostring(boss.shielded)
+        .. " state=" .. tostring(boss.state)
+        .. " stateT=" .. string.format("%.2f", boss.stateT or -1)
+        .. " dmg=" .. (before - boss.hp) .. " (want false/stunned/2.00/6)")
       -- closed-mouth damage should be reduced but nonzero
+      boss.shielded = false
+      boss.state = "volley"
+      boss.mouthOpen = false
       local hpBefore = boss.hp
       boss:hurt(6, boss.x - 10, boss.y)
       Test.log("armored dmg taken=" .. (hpBefore - boss.hp))
+      -- and a swarm at each quarter of its health, hunting rather than
+      -- drifting: the gnat's room behaviour would have them wander the
+      -- arena instead of arriving
+      boss:hurt(math.ceil(boss.maxhp * 0.3), boss.x - 10, boss.y, { link = true })
+      wait(90)
+      local gnats, hunting = 0, 0
+      for _, e in ipairs(World.entities) do
+        if e.mawGnat and not e.dead then
+          gnats = gnats + 1
+          if e.hunt then hunting = hunting + 1 end
+        end
+      end
+      Test.log("gnats after the first quarter=" .. gnats
+        .. " hunting=" .. hunting .. " (want 10/10)")
       while not boss.dead do
+        boss.shielded = false
         boss:hurt(10, boss.x - 10, boss.y)
         wait(2)
       end
@@ -2445,8 +2477,8 @@ return function(Test, scenarios)
     -- exists to prove was never tested on any of them.
     -- ----------------------------------------------------------------
     local FACTS = {
-      bramblemaw    = { gate = "none",   summons = "random",
-                        note = "gnat on chance(0.5) per volley (285)" },
+      bramblemaw    = { gate = "link",   summons = "hurt",
+                        note = "thorn lattice needs opts.link, and reknits 10s after it breaks; ten hunting gnats at each health quarter, plus the old chance(0.5) gnat per sweep" },
       rustwarden    = { gate = "link",   summons = false,
                         note = "deflects() yields to opts.link (656); no addSpawn" },
       tideengine    = { gate = "valves", summons = "always",

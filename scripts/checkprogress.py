@@ -127,14 +127,31 @@ def main():
     for rm, info in sorted(graph.items()):
         room = info["room"]
 
+        # WHO the gate matters to is part of the question.
+        #
+        # This used to ask the merged model only -- one body holding every
+        # module in the game -- and a gate that body can bypass looked
+        # decorative. That is structurally blind to the best kind of gate
+        # this game has: furn_3's G is a CO-OP gate, and Thomas built it
+        # on purpose. Vess grapples over it and opens it from the far
+        # side; Lu cannot follow and walks through once he has. Merged,
+        # the gate changes nothing (107 cells either way). For Lu it is
+        # the difference between 24 cells and 101.
+        #
+        # So the signature is taken per body as well as merged, and a
+        # gate is a bypass only if it changes nothing for ANY of them.
+        # A gate that matters to one bot is a gate.
+        BODIES = (None,) + RM.BOTS
+
         def sig(fl):
-            nav = RM.Nav(room, fl)
             out = set()
-            for dch in sorted(room.doors):
-                reach = nav.reach_from_door(dch)
-                for tkey, target in info["targets"].items():
-                    if nav.touches(reach, target[0]):
-                        out.add((dch, tkey))
+            for bot in BODIES:
+                nav = RM.Nav(room, fl, bot=bot)
+                for dch in sorted(room.doors):
+                    reach = nav.reach_from_door(dch)
+                    for tkey, target in info["targets"].items():
+                        if nav.touches(reach, target[0]):
+                            out.add((bot, dch, tkey))
             return out
 
         gate_flags = sorted({f[1:] if f.startswith("!") else f

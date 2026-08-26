@@ -100,4 +100,30 @@ function U.formatTime(seconds)
   return string.format("%d:%02d", m, s)
 end
 
+-- IS THIS POINT INSIDE THAT PLAYER'S DOME?
+--
+-- The geometry only, with no opinion about what to do next: World's
+-- domeCovering walks the players and calls this, the Rusted Warden's
+-- charge and the spineshell's charge both ask World, and the headless
+-- harness's world stub calls it directly. Four callers, one answer.
+--
+-- Every clause here has been load-bearing at some point and none of it
+-- is obvious, which is exactly why it must not be typed twice:
+--
+--   * the bubble's centre sits 4px ABOVE the body's middle, where Lu's
+--     dome is actually drawn -- not on her feet and not on her middle
+--   * an `idle` bot -- the uncontrolled one in a solo run -- keeps its
+--     dome flag but does not get to hold a wall with it
+--   * `pad` is the incoming body's own reach: a charging thing meets the
+--     bubble with its nose, not with its centre
+--   * squared distance, because a square root here runs per charging
+--     body per frame and buys nothing
+function U.domeCovers(pl, cx, cy, pad)
+  if not pl.domeActive or pl.dead or pl.downed or pl.idle then return false end
+  local dcx, dcy = pl.x + pl.w / 2, pl.y + pl.h / 2 - 4
+  local dx, dy = cx - dcx, cy - dcy
+  local r = (pl.domeRadius or 0) + (pad or 0)
+  return dx * dx + dy * dy < r * r
+end
+
 return U

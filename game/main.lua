@@ -199,10 +199,9 @@ function love.update(dt)
   acc = acc + dt
 
   Input.poll()
-  local presses, raws, menus = Input.drain()
-  for _, ev in ipairs(raws) do State.event("raw", ev) end
-  for _, ev in ipairs(menus) do State.event("menu", ev.action, ev) end
-  for _, ev in ipairs(presses) do State.event("pressed", ev.player, ev.action) end
+  -- One press, one state: State.dispatch stops at a push or a pop, so a
+  -- key that closes a screen cannot also be read by the screen beneath.
+  State.dispatch(Input.drain())
 
   local steps = 0
   while acc >= STEP and steps < 4 do

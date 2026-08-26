@@ -79,7 +79,7 @@ return {
 ##.##....................................................a##
 ###................................#.....................###
 AA..............b..................#.....b...............###
-AA............................R...###...............R...##..
+AA...................k........R...###...............R...##..
 ######%#######~~~~~~~#################~~~~~~~###...#########
 ####.....#####~~~~~~~#################~~~~~~~###############
 ####..8..#####~~~~~~~#################~~~x~~~###############
@@ -87,10 +87,26 @@ AA............................R...###...............R...##..
 ############################################################
 ]],
   key = {
+    -- TWELVE CLEAR TILES INTO A WALL -- the best run in the zone, and the
+    -- last thing between you and the Tide Engine.
+    ["k"] = "spineshell",
     ["a"] = "cell",
     ["8"] = "chest:chest_flood5b:scrap:20",
 
-    ["4"] = "tank:tank_flood",
+    -- ITS OWN FLAG, and that is the whole bug.
+    --
+    -- This tank and the one in flood_2 both read "tank:tank_flood", and a
+    -- tank IS its flag: Entity.register("tank") returns nothing at all
+    -- when G.run.flags[flag] is already set. So taking the flood_2 cell
+    -- deleted this one -- it never spawned, in a room that still showed
+    -- it on the map, and the run was quietly one energy tier poorer for
+    -- the rest of the game (the forge gates tier N behind N+1 tanks).
+    --
+    -- Named for the room, like chest_flood5b above it, because "the
+    -- Flooded tank" is already taken and this is the second one. Nothing
+    -- else in the game shares a pickup flag -- these two were the only
+    -- pair, out of seven tank flags and ten capsule flags.
+    ["4"] = "tank:tank_flood5",
     ["b"] = "bubbler",
     ["R"] = "crab",
     ["x"] = "plate:plate_f5:latch",

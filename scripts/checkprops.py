@@ -44,6 +44,8 @@ are the hand-placed ones, held to the same standard.
 Run from game/ with PYTHONPATH=../scripts.
 """
 import glob
+import os
+import re
 import sys
 import roommodel as RM
 
@@ -136,6 +138,36 @@ def arenas():
         if re.search(r'"boss:\w+', src) or re.search(r'"brazier:\w+:kept:\w+"', src):
             out.add(os.path.basename(fname)[:-4])
     return out
+
+
+def audit_boss_present(fname, boss_rooms):
+    """A room named for a boss must contain one.
+
+    checkprops finds arenas by looking for a `boss:` spec in the source,
+    so a room that LOSES its boss silently stops being an arena and every
+    check about arenas stops applying to it. That is exactly what
+    happened to furn_boss: the spawn tile got painted over during a
+    layout pass, the editor's key table healed itself to match the grid,
+    and the only symptom anywhere in the suite was checkprogress calling
+    four Core rooms unreachable -- four steps downstream, in a different
+    zone, with no mention of the Crucible.
+
+    The name is the intent. If a room is called <something>_boss and has
+    no boss in it, say so in those words.
+    """
+    name = os.path.basename(fname)[:-4]
+    if not name.endswith("_boss"):
+        return []
+    # ASK arenas(), do not re-answer it. A room can arm its boss without a
+    # `boss:` spawn -- cold_boss wakes the Archivist off a kept brazier --
+    # and a second hand-written copy of "what counts as arming a boss" is
+    # the exact failure this project has three of. It flagged cold_boss
+    # the moment it was written.
+    if name in boss_rooms:
+        return []
+    return [("FAIL", "%s is a boss arena with nothing that arms a boss -- "
+             "no reward, so everything gated behind it is unreachable"
+             % name)]
 
 
 def audit_arena(fname, boss_rooms):
@@ -231,16 +263,75 @@ def audit_checkpoints():
     return out
 
 
+def audit_pickup_flags():
+    """A PICKUP IS ITS FLAG, so two of them cannot share one.
+
+    Entity.register("tank") and ("capsule") both open with
+
+        if G.run and G.run.flags[flag] then return true end
+
+    -- "already taken, do not spawn". That is right, and it is why a
+    duplicated flag deletes an item rather than duplicating it: taking
+    either one makes the other stop existing, in a room that still shows
+    it on the map. Reported exactly that way -- "I'm in flood_5 and
+    there's no tank_flood, even though it's on the map."
+
+    It is not cosmetic. The forge gates energy tier N behind N+1 tanks
+    (states/forge.lua), so a swallowed tank is one tier the player can
+    never buy, for the rest of the run, with nothing on screen to say
+    so. checkprogress cannot see it either: two rooms granting the same
+    flag look to it like two routes to one thing, which is a shape the
+    game legitimately uses elsewhere.
+
+    Chests are held to the same rule for the same reason.
+
+    flood_2 and flood_5 both said `tank:tank_flood`. They were the only
+    pair in the game -- seven tank flags, ten capsule flags, one
+    collision -- which is exactly the kind of thing that survives for
+    months because everything around it looks fine."""
+    seen = {}
+    for fname in sorted(glob.glob("src/data/rooms/*.lua")):
+        if fname.endswith("test_arena.lua"):
+            continue
+        name = os.path.basename(fname)[:-4]
+        src = open(fname).read()
+        km = re.search(r"key = \{(.*?)\n  \}", src, re.S)
+        if not km:
+            continue
+        for ch, spec in re.findall(r'\["(.)"\]\s*=\s*"([^"]+)"', km.group(1)):
+            parts = spec.split(":")
+            kind = parts[0]
+            if kind not in ("tank", "capsule", "chest"):
+                continue
+            # `tank:<flag>`, `capsule:<flag>`, `chest:<flag>:<loot>...`
+            flag = parts[1] if len(parts) > 1 else ""
+            if not flag:
+                # an unnamed one derives its flag from its coordinates,
+                # so it cannot collide with anything but itself
+                continue
+            seen.setdefault((kind, flag), []).append("%s '%s'" % (name, ch))
+    out = []
+    for (kind, flag), where in sorted(seen.items()):
+        if len(where) > 1:
+            out.append(("FAIL", "%d %ss share the flag %r (%s). Taking one "
+                        "deletes the others -- a pickup IS its flag. Give "
+                        "each its own." % (len(where), kind, flag,
+                                           ", ".join(where))))
+    return out
+
+
 def main():
     rows, n = [], 0
     boss_rooms = arenas()
     rows += audit_checkpoints()
+    rows += audit_pickup_flags()
     for fname in sorted(glob.glob("src/data/rooms/*.lua")):
         if fname.endswith("test_arena.lua"):
             continue
         n += 1
         rows += audit(fname)
         rows += audit_arena(fname, boss_rooms)
+        rows += audit_boss_present(fname, boss_rooms)
     order = {"FAIL": 0, "WARN": 1, "NOTE": 2}
     rows.sort(key=lambda r: order[r[0]])
     for sev, msg in rows:

@@ -454,6 +454,42 @@ function S:keyEdits()
   return edits
 end
 
+-- WHICH DELETIONS ARE WORTH ASKING ABOUT.
+--
+-- keyEdits heals from the grid, and it should: paint over the last
+-- rollpede and its key line goes with it. But the same rule painted over
+-- furn_boss's Crucible during a layout pass -- one cell out of about a
+-- hundred and thirty changed in that save -- and took the room's boss
+-- with it. The room still loaded. The only symptom anywhere was
+-- checkprogress calling four Core rooms unreachable, because the
+-- Crucible's reward is what opens the Core door.
+--
+-- An enemy is scenery; these are not. Each of them is either a flag
+-- somebody needs or a service a room provides, and losing one is a
+-- decision rather than a side effect of drawing a wall.
+local CONSEQUENTIAL = {
+  boss = true, chest = true, capsule = true, tank = true, linkcore = true,
+  teleporter = true, save = true, checkpoint = true, npc = true,
+  reward = true, seat = true, sign = true,
+}
+
+function S:gravedigger(edits)
+  local def = World.getRoomDef and World.getRoomDef(self.id)
+  local orig = (def and def.key) or {}
+  local lost = {}
+  for c, v in pairs(edits or {}) do
+    if v == false then
+      local spec = orig[c]
+      local head = spec and spec:match("^(%a+)")
+      if head and CONSEQUENTIAL[head] then
+        lost[#lost + 1] = ("'%s' (%s)"):format(c, spec)
+      end
+    end
+  end
+  table.sort(lost)
+  return lost
+end
+
 -- Same shape as keyEdits, and derived from the GRID for the same reason:
 -- paint out the last cell of gate H and its flag goes with it.
 function S:gateEdits()
@@ -1612,6 +1648,21 @@ function S:save(deep, exitAfter)
   local shift = { dx = (self.pendDX or 0) * T, dy = (self.pendDY or 0) * T }
   local edits, kerr = self:keyEdits()
   if not edits then self.status = "SAVE REFUSED: " .. tostring(kerr) return end
+  -- ...and if this save would take something load-bearing off the map,
+  -- say what, and make the second press the confirmation. Refusing
+  -- outright would be wrong -- deleting a chest is a legitimate edit --
+  -- but doing it silently is how a boss goes missing for a day.
+  local lost = self:gravedigger(edits)
+  if #lost > 0 then
+    local sig = table.concat(lost, "|")
+    if self.confirmWipe ~= sig then
+      self.confirmWipe = sig
+      self.status = ("SAVE HELD: this removes %s from the room. Save again "
+        .. "to confirm."):format(table.concat(lost, ", "))
+      return
+    end
+  end
+  self.confirmWipe = nil
   local gEdits, sEdits = self:gateEdits()
   local ok, err = RoomIO.writeMap(self.id, self.rows,
     { shift = shift, key = edits, gates = gEdits, gateStyle = sEdits,

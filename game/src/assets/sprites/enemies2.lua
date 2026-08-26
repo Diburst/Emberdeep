@@ -793,4 +793,75 @@ out.en_rammer = {
   },
 }
 
+-- THE DRAGGER. A salvage claw still running its last order: it hangs off
+-- a rail, drops on whatever walks under it, and hauls the catch back to
+-- where the scrap goes. Frame 1 is open and waiting, frame 2 is shut on
+-- something. The two red pixels are the only part of it that ever looked
+-- like a face, and that was an accident of the housing.
+out.en_dragger = {
+  pal = { k = "black", d = "slate", s = "shadow", r = "blood",
+    w = "silver", e = "rust" },
+  frames = {
+    {
+      "......kk......",
+      "......kk......",
+      "...kkkkkkkk...",
+      "..kdeeeeeedk..",
+      "..ksskrrkssk..",
+      "..kkkkkkkkkk..",
+      "..kdk....kdk..",
+      ".kwk......kwk.",
+      ".kdk......kdk.",
+      ".kk........kk.",
+    },
+    {
+      "......kk......",
+      "......kk......",
+      "...kkkkkkkk...",
+      "..kdeeeeeedk..",
+      "..kssrrrrssk..",
+      "..kkkkkkkkkk..",
+      "...kdk..kdk...",
+      "...kwk..kwk...",
+      "....kdkkdk....",
+      ".....kkkk.....",
+    },
+  },
+}
+
+-- THE GOLD MITE. Whatever the Crucible was pouring, this is what grew in
+-- it: a bright, brittle little thing that drops out of the roof when the
+-- machine slams and comes straight for you along the floor. Gold because
+-- it is the only bright thing in that room, and you should be able to
+-- pick four of them out of a floor full of slag at a glance.
+out.en_goldmite = {
+  pal = { k = "black", g = "gold", a = "ember", w = "cream", d = "rust" },
+  frames = {
+    {
+      "..............",
+      "....kkkkkk....",
+      "...kggggggk...",
+      "..kgwggggwgk..",
+      "..kgggaagggk..",
+      "..kdggggggdk..",
+      "...kkdggdkk...",
+      "..k..kkkk..k..",
+      "..............",
+      "..............",
+    },
+    {
+      "..............",
+      "....kkkkkk....",
+      "...kggggggk...",
+      "..kgwggggwgk..",
+      "..kgggaagggk..",
+      "..kdggggggdk..",
+      "...kkdggdkk...",
+      ".k...kkkk...k.",
+      "..............",
+      "..............",
+    },
+  },
+}
+
 return out

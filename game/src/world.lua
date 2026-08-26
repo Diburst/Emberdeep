@@ -318,7 +318,17 @@ end
 -- grate the lava sits on and drains back through.
 -- ------------------------------------------------------------------
 local FLOOD_DRAIN = 1.3
-local FLOOD_SPREAD = 0.25    -- seconds per tile; lava is a tide, not a switch
+-- Seconds per tile. Halved (Thomas, Aug 2026) -- the tide was slow enough
+-- that a pour on the far side of the arena was somebody else's problem.
+-- At 0.125 a fourteen-tile reach arrives in 1.75s, which is about as long
+-- as it takes to decide where to stand.
+local FLOOD_SPREAD = 0.125
+-- ...and it is SIMULATED a tile at a time but DRAWN continuously. The
+-- physics has to stay on tile boundaries -- everything that asks whether
+-- a cell is lava asks the tile grid -- but a hard 16px jump eight times a
+-- second is the clunk. The leading edge is drawn creeping into the next
+-- cell as the timer charges, so the eye sees a tide and the collision
+-- still sees tiles.
 
 -- Lava does not appear, it ARRIVES. A pour opens two fronts at the spout
 -- and each crawls one tile every FLOOD_SPREAD seconds until it runs into
@@ -409,6 +419,7 @@ function World:updateFlood(dt)
 
   if f.state == "grow" then
     f.growT = f.growT - dt
+    f.creep = 1 - math.max(0, math.min(1, f.growT / FLOOD_SPREAD))
     if f.growT <= 0 then
       f.growT = FLOOD_SPREAD
       local moving = false
@@ -479,7 +490,35 @@ end
 -- are already AIR again
 function World:drawFlood(g)
   local f = self.flood
-  if not f or f.state ~= "drain" then return end
+  if not f then return end
+
+  -- GROWING: the tiles behind the front are real lava and the tile
+  -- renderer has already drawn them. What is drawn here is the tongue
+  -- creeping into the cell the front has not reached yet -- the
+  -- difference between a tide and a row of lights coming on.
+  if f.state == "grow" then
+    local creep = f.creep or 0
+    for _, fr in ipairs(f.fronts) do
+      if not fr.done then
+        local nx = fr.x + fr.dir
+        if nx >= f.x0 and nx <= f.x1 and not f.blocked[nx]
+          and self.tiles[f.row] and self.tiles[f.row][nx] == AIR then
+          local w = T * creep
+          -- it enters from the side the front is coming from
+          local px = (fr.dir > 0) and (nx * T) or ((nx + 1) * T - w)
+          local py = f.row * T
+          g.setColor(P.magma[1], P.magma[2], P.magma[3], 0.55 + creep * 0.4)
+          g.rectangle("fill", px, py + 3, w, T - 3)
+          g.setColor(P.hotcore[1], P.hotcore[2], P.hotcore[3], 0.5 + creep * 0.5)
+          g.rectangle("fill", px, py + 3, w, 2)
+        end
+      end
+    end
+    g.setColor(1, 1, 1, 1)
+    return
+  end
+
+  if f.state ~= "drain" then return end
   local h = T * f.level
   for _, tx in ipairs(f.cells) do
     local px, py = tx * T, (f.row + 1) * T - h
@@ -991,6 +1030,10 @@ function World:parseGrid(lines, def, roomId)
   self.iceSet = {}
   self.hardSet = {}
   local spawnsByChar = {}
+  -- every cell the grid forced to AIR because something was written
+  -- in it: an entity's spawn char, or a doorway. Nothing else is
+  -- allowed to settle -- a cell the author DREW as air stays air.
+  local settleCells = {}
   for ty = 0, self.h - 1 do
     self.tiles[ty] = {}
     local line = lines[ty + 1]
@@ -1007,6 +1050,10 @@ function World:parseGrid(lines, def, roomId)
         if HARD_CHARS[ch] then self.hardSet[idx(tx, ty)] = HARD_CHARS[ch] end
       elseif DOOR_CHARS[ch] then
         self.tiles[ty][tx] = AIR
+        -- A DOORWAY IS A HOLE IN THE ROCK, and a hole in the rock at the
+        -- bottom of a lake is full of water. It settles like a spawn
+        -- cell for exactly that reason -- see below.
+        settleCells[#settleCells + 1] = { tx = tx, ty = ty }
         local d = self.doors[ch]
         if not d then
           d = { x0 = tx, y0 = ty, x1 = tx, y1 = ty }
@@ -1030,18 +1077,66 @@ function World:parseGrid(lines, def, roomId)
       else
         -- entity spawn char
         self.tiles[ty][tx] = AIR
+        settleCells[#settleCells + 1] = { tx = tx, ty = ty }
         spawnsByChar[#spawnsByChar + 1] = { ch = ch, tx = tx, ty = ty }
       end
     end
   end
 
-  -- water/lava settle: entity-spawn cells inside a liquid body become
-  -- liquid (no floating air bubbles where a fish or chest was placed)
+  -- ------------------------------------------------------------------
+  -- WATER AND LAVA SETTLE INTO THE HOLES THE GRID PUNCHED IN THEM.
+  --
+  -- A depth mine written into a lake is an `m`, and an `m` is not a tile
+  -- -- the cell under it becomes AIR so the body has somewhere to be. So
+  -- does a doorway. Left alone, both read as a pocket of dry air with a
+  -- mine hanging in it, which is what was reported: "the mines I placed
+  -- in the water appear as if they are in pockets of air underwater",
+  -- and "the door at the bottom of the level also behaves like air".
+  --
+  -- Three rules, and the first two are why the old pass missed them:
+  --
+  --   ONE WET SIDE IS ENOUGH. It used to want water on BOTH sides (or
+  --   directly above), so a mine against a wall, or the first of three
+  --   mines in a row, never filled -- their other side was rock, or was
+  --   another mine's hole. Water does not need permission from both
+  --   directions.
+  --
+  --   A GATE IS NOT A DAM. It is a mechanism standing in the water, so
+  --   the search upward looks straight through one: the doorway at the
+  --   bottom of flood_2 has a gate over it and the lake above that.
+  --
+  --   NEVER UPWARD FROM BELOW ALONE. Water does not climb above its own
+  --   surface, so a cell whose only wet neighbour is underneath it stays
+  --   dry -- that cell IS the surface.
+  --
+  -- It runs as TWO passes, and that split is the whole safety of it.
+  -- The original rule is left exactly as it was and still applies to
+  -- every air cell, authored '.' included -- it is what has shaped every
+  -- shoreline in the game, roommodel.py keeps a copy of it, and
+  -- checkrooms fails a room where water floats over a '.'. The eager
+  -- rule is additive and reaches only the punched-out cells. Nothing
+  -- that was water becomes air.
+  -- ------------------------------------------------------------------
+  local function throughGates(tx, ty)
+    local y = ty - 1
+    while y >= 0 do
+      local t = self.tiles[y][tx]
+      if t ~= GATE then return t end
+      y = y - 1
+    end
+    return SOLID
+  end
+  -- PASS ONE, unchanged and deliberately conservative: any air cell with
+  -- liquid directly overhead, or liquid hard against BOTH sides. This is
+  -- what has shaped every shoreline in the game since the first flooded
+  -- room and it applies to plain authored air too -- roommodel.py copies
+  -- it, and checkrooms reads water floating over a '.' as a broken room.
+  -- Nothing here narrows it.
   for _ = 1, 3 do
     for ty = 0, self.h - 1 do
       for tx = 0, self.w - 1 do
         if self.tiles[ty][tx] == AIR then
-          local above = ty > 0 and self.tiles[ty - 1][tx] or SOLID
+          local above = self.tiles[ty - 1] and self.tiles[ty - 1][tx] or SOLID
           local left = tx > 0 and self.tiles[ty][tx - 1] or SOLID
           local right = tx < self.w - 1 and self.tiles[ty][tx + 1] or SOLID
           if above == WATER or (left == WATER and right == WATER) then
@@ -1049,6 +1144,35 @@ function World:parseGrid(lines, def, roomId)
           elseif above == LAVA or (left == LAVA and right == LAVA) then
             self.tiles[ty][tx] = LAVA
           end
+        end
+      end
+    end
+  end
+  -- PASS TWO, and only for the holes the grid punched: ONE wet side is
+  -- enough, and the look upward goes through a gate.
+  --
+  -- Restricted to those cells because it is the strictly more eager
+  -- rule, and a shoreline the author drew is a decision. A cell that
+  -- exists only because a mine or a doorway was written into it is not a
+  -- decision about water at all -- it is a hole, and a hole in the floor
+  -- of a lake is full.
+  local settling = true
+  while settling do
+    settling = false
+    for _, c in ipairs(settleCells) do
+      if self.tiles[c.ty][c.tx] == AIR then
+        local above = throughGates(c.tx, c.ty)
+        local left = c.tx > 0 and self.tiles[c.ty][c.tx - 1] or SOLID
+        local right = c.tx < self.w - 1 and self.tiles[c.ty][c.tx + 1] or SOLID
+        local fill
+        if above == WATER or left == WATER or right == WATER then
+          fill = WATER
+        elseif above == LAVA or left == LAVA or right == LAVA then
+          fill = LAVA
+        end
+        if fill then
+          self.tiles[c.ty][c.tx] = fill
+          settling = true
         end
       end
     end
@@ -1081,6 +1205,10 @@ function World:parseGrid(lines, def, roomId)
   end
 
   -- water depth per tile (for depth-shaded rendering)
+  -- A GATE standing in the column does not restart the count: the water
+  -- under the sluice at the bottom of flood_2 is the bottom of the same
+  -- lake, and shading it as if it were a fresh puddle is how you get a
+  -- bright patch behind a dark one.
   self.waterDepth = {}
   for tx = 0, self.w - 1 do
     local depth = 0
@@ -1088,7 +1216,7 @@ function World:parseGrid(lines, def, roomId)
       if self.tiles[ty][tx] == WATER then
         depth = depth + 1
         self.waterDepth[idx(tx, ty)] = depth
-      else
+      elseif self.tiles[ty][tx] ~= GATE then
         depth = 0
       end
     end
@@ -1206,6 +1334,19 @@ function World:load(roomId, doorChar, keepPlayers)
   self.pendingTransition = nil
   self.bossActive = nil
   self.depthMap = nil          -- rebuilt per room by World:solidDepth
+  -- A FRESHLY LOADED ROOM OWNS NONE OF THE LAST ONE'S WEATHER.
+  --
+  -- The flood, the water line and the frost are all set by bosses onto
+  -- the WORLD rather than onto themselves, and none of them was in this
+  -- list. Dying to the Crucible reloads the room through here -- and the
+  -- lava it had poured on the floor was still poured. You respawned
+  -- standing in it and died again, which is exactly how it was reported.
+  --
+  -- Boss:onDeath already clears all three, which is why this never
+  -- showed up on a WIN. It only ever went wrong on a loss.
+  self.flood = nil
+  self.waterLine = nil
+  self.frost = nil
 
   local lines = {}
   for line in def.map:gmatch("[^\n]+") do
@@ -1744,6 +1885,35 @@ function World:alivePlayers()
     if not p.dead and not p.downed then out[#out + 1] = p end
   end
   return out
+end
+
+-- WHOSE DOME IS THIS BODY INSIDE?
+--
+-- Returns the player holding the dome that covers (cx, cy), or nil. `pad`
+-- is the body's own reach into the bubble -- callers pass half their
+-- width, because a charging thing meets the dome with its nose and not
+-- with its centre.
+--
+-- Published here because it is a RULE, not a piece of one boss. The
+-- Rusted Warden's charge has been interrupted by the dome since it
+-- shipped, and every word of that test -- the dome's centre sitting 4px
+-- above the player's middle, `idle` bots not counting, the radius
+-- comparison in squared space -- was about to be typed a second time for
+-- the spineshell, which teaches the Warden's lesson and therefore has to
+-- follow the Warden's rule EXACTLY. Two copies of a rule that must be
+-- identical is the failure this project has three post-mortems about.
+--
+-- It does not charge energy. That is the caller's business: the Warden
+-- pays 2, the Tide Engine's surge pays 5, and a spineshell braining
+-- itself on the bubble pays what its own section says it pays.
+-- The geometry itself is U.domeCovers, so the headless harness's world
+-- stub can answer the same question the same way. What lives here is
+-- only "which of the players".
+function World:domeCovering(cx, cy, pad)
+  for _, pl in ipairs(self.players) do
+    if U.domeCovers(pl, cx, cy, pad) then return pl end
+  end
+  return nil
 end
 
 -- ------------------------------------------------------------------
@@ -2656,7 +2826,11 @@ function World:drawWater(g, tx0, ty0, tx1, ty1)
     for tx = tx0, tx1 do
       if self.tiles[ty][tx] == WATER then
         local px, py = tx * T, ty * T
-        local isTop = self:tileAt(tx, ty - 1) ~= WATER
+        -- THE SURFACE IS WHERE THE AIR IS. A gate overhead is a
+        -- mechanism in the water, not the sky, so the cell under it does
+        -- not get a foam crest and a sparkle drawn across it.
+        local up = self:tileAt(tx, ty - 1)
+        local isTop = up ~= WATER and up ~= GATE
         local depth = self.waterDepth[idx(tx, ty)] or 1
         local a = math.min(0.62, 0.34 + depth * 0.035)
         g.setColor(P.water[1] * 0.9, P.water[2] * 0.9, P.water[3], a)

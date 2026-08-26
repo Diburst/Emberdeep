@@ -354,7 +354,12 @@ function S:respawnAtCheckpoint()
   self.respawning = true
   self.fadeDir = 1
   self.fadeCb = function()
-    local disk = G.run and G.Save.readSlot(G.run.slot)
+    -- guarded on the SLOT, not just on the run. A Test Chamber run has a
+    -- G.run and no slot, and dying in one used to take the game down in
+    -- save.lua rather than rewinding to a checkpoint it never had. Every
+    -- other caller in the game already reads it this way; this one did
+    -- not, and it is the one that runs when you die.
+    local disk = G.run and G.run.slot and G.Save.readSlot(G.run.slot)
     if disk and disk.checkpoint and not G.Save.sealed() then
       local slot, coop = G.run.slot, G.run.coop
       G.run = disk

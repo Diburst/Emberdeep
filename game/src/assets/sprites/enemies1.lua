@@ -258,4 +258,44 @@ out.en_depthmine = {
   },
 }
 
+out.en_spineshell = {
+  -- The shell is the enemy: navy plate, water-blue dome, ice spines, and
+  -- a pale belly that is drawn because it is the answer. Everything but
+  -- that strip of `l` stops a round (enemies.lua, shellBlocked).
+  pal = { k = "black", b = "navy", w = "deepsea", s = "water",
+          i = "ice", l = "vesslite", r = "rust" },
+  frames = {
+    {
+      "......k.k.k.....",
+      ".....kikikik....",
+      "....kkkkkkkkkk..",
+      "...kbbbbbbbbbbk.",
+      "..kbwwwwwwwwwwbk",
+      "..kbwswswswswbkr",
+      ".kbbwwwwwwwwwbkr",
+      ".kbbbbbbbbbbbbk.",
+      "..kkkkkkkkkkkk..",
+      "..klllllllllk...",
+      "..kk......kk....",
+      ".kk........kk...",
+      "................",
+    },
+    {
+      "......k.k.k.....",
+      ".....kikikik....",
+      "....kkkkkkkkkk..",
+      "...kbbbbbbbbbbk.",
+      "..kbwwwwwwwwwwbk",
+      "..kbwswswswswbkr",
+      ".kbbwwwwwwwwwbkr",
+      ".kbbbbbbbbbbbbk.",
+      "..kkkkkkkkkkkk..",
+      "..klllllllllk...",
+      "...kk......kk...",
+      "..kk........kk..",
+      "................",
+    },
+  },
+}
+
 return out

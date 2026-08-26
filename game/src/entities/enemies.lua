@@ -39,6 +39,22 @@ Enemy.ENERGY_PER_SHARD = 1   -- default mote count: matches the shard count
 Enemy.DROP_KEYS = { shards = true, energy = true, heart = true,
                     scrap = true, big = true }
 
+-- PER-SPAWN PROPERTIES OF THE BODY, as opposed to of its drops. Same
+-- `key=number` grammar and the same hard error on a typo, because the
+-- reason that error exists -- "silently ignoring a spec you meant to
+-- matter is this project's single most expensive bug class" -- is
+-- exactly as true here.
+--
+--     ["c"] = "dragger:rail=-1"     -- its rail runs left
+--     ["C"] = "dragger:rail=1"      -- ...and this one runs right
+Enemy.SPAWN_KEYS = { rail = true }
+function Enemy.spawnKeyList()
+  local out = {}
+  for k in pairs(Enemy.SPAWN_KEYS) do out[#out + 1] = k end
+  table.sort(out)
+  return out
+end
+
 -- ==================================================================
 -- ZONE SCALING
 -- ==================================================================
@@ -121,12 +137,19 @@ function Enemy:init(x, y, def, parts)
   end
   for i = 2, #(parts or {}) do
     local key, val = tostring(parts[i]):match("^(%a+)=(%-?[%d%.]+)$")
-    if not key or not Enemy.DROP_KEYS[key] then
-      error(("enemy spawn '%s': bad drop override %q -- expected one of "
-        .. "shards, energy, heart, scrap, big (as key=number)")
-        :format(tostring(parts[1]), tostring(parts[i])))
+    if key and Enemy.SPAWN_KEYS[key] then
+      -- not a drop: a per-spawn property of the body itself, in the same
+      -- key=number grammar so a typo is still an error rather than a shrug
+      self[key] = tonumber(val)
+    elseif not key or not Enemy.DROP_KEYS[key] then
+      error(("enemy spawn '%s': bad override %q -- expected a drop "
+        .. "(shards, energy, heart, scrap, big) or a spawn property "
+        .. "(%s), as key=number")
+        :format(tostring(parts[1]), tostring(parts[i]),
+          table.concat(Enemy.spawnKeyList(), ", ")))
+    else
+      d[key] = tonumber(val)
     end
-    d[key] = tonumber(val)
   end
   self.drops = d
   self.sprite = def.sprite
@@ -249,6 +272,88 @@ function Enemy:speedMult()
   return self.buffed > 0 and 1.5 or 1
 end
 
+-- ==================================================================
+-- HUNTING: CLOSE, CONNECT, GET OUT
+-- ==================================================================
+-- The behaviour a boss's swarm has, as opposed to the behaviour a body
+-- hung in a room has. A roosting flier bobs in place until something
+-- walks within 120px of it and then swoops; in a ten-tile arena that
+-- 120px never happens and the swarm decorates the ceiling. A HUNTER
+-- comes for you.
+--
+-- Three parts, and all three are load-bearing:
+--
+--   CLOSE   straight at the nearest player, with the wobble on the
+--           HEADING rather than on the velocity. A sine added to vy
+--           cancels itself over a second and the body never descends,
+--           which is the shape of the original bug.
+--   STRIKE  it watches for the overlap ITSELF. Contact damage is applied
+--           by the player walking its own list of overlapping bodies, so
+--           nothing tells the hunter it connected. A pass eaten by
+--           i-frames still counts: it touched, it should get out, and a
+--           body sitting inside an invulnerable player waiting for the
+--           frames to lapse is exactly the grinder this prevents.
+--   RETREAT away -- randomly away, never back through the body it just
+--           hit -- for one to two seconds, faster than it closes. This
+--           is what turns a swarm into a rhythm of passes.
+--
+-- It lives HERE, on Enemy, because two different swarms want it now: the
+-- Slag Golem's cinderbats and the Bramble Maw's gnats. Written twice it
+-- would be tuned once, and this project has three post-mortems about a
+-- second hand-written copy of something that was already published.
+--
+-- Speeds are per-body (`huntSpeed`, `retreatSpeed`) so a gnat can be a
+-- gnat, and the defaults are the bat's -- the numbers this was tuned to.
+Enemy.HUNT_SPEED   = 96
+Enemy.HUNT_RETREAT = 118      -- faster than it closes: it flees
+Enemy.HUNT_SPRAY   = 0.9      -- radians of slop either side of "away"
+Enemy.HUNT_BACK_MIN = 1.0
+Enemy.HUNT_BACK_MAX = 2.0
+Enemy.HUNT_WOBBLE  = 0.35     -- radians of weave on the approach heading
+
+-- Returns true if it handled the frame -- i.e. the caller should stop.
+function Enemy:huntStep(dt)
+  local World = require "src.world"
+  if (self.retreatT or 0) > 0 then
+    self.retreatT = self.retreatT - dt
+    local sp = (self.retreatSpeed or Enemy.HUNT_RETREAT) * self:speedMult()
+    self.vx = math.cos(self.retreatA) * sp
+    self.vy = math.sin(self.retreatA) * sp
+    self.facing = self.vx > 0 and 1 or -1
+    PH.move(self, self.vx * dt, self.vy * dt)
+    -- a corner would otherwise hold it there for the whole retreat
+    if self.hitWall or self.hitCeil or self.onGround then
+      self.retreatA = self.retreatA + math.pi * 0.5
+    end
+    return true
+  end
+  local p = World:nearestPlayer(self:center())
+  if p then
+    local cx, cy = self:center()
+    local px, py = p:center()
+    local ang = math.atan2(py - cy, px - cx)
+    local sp = (self.huntSpeed or Enemy.HUNT_SPEED) * self:speedMult()
+    local wob = math.sin(self.t * 5) * Enemy.HUNT_WOBBLE
+    self.vx = math.cos(ang + wob) * sp
+    self.vy = math.sin(ang + wob) * sp
+    self.facing = self.vx > 0 and 1 or -1
+  end
+  PH.move(self, (self.vx or 0) * dt, (self.vy or 0) * dt)
+  if self.hitWall then self.facing = -self.hitWall end
+  for _, q in ipairs(World:alivePlayers()) do
+    if not q.idle and not q.downed
+      and U.aabb(self.x, self.y, self.w, self.h, q.x, q.y, q.w, q.h) then
+      local cx, cy = self:center()
+      local qx, qy = q:center()
+      local away = math.atan2(cy - qy, cx - qx)
+      self.retreatA = away + U.rand(-Enemy.HUNT_SPRAY, Enemy.HUNT_SPRAY)
+      self.retreatT = U.rand(Enemy.HUNT_BACK_MIN, Enemy.HUNT_BACK_MAX)
+      break
+    end
+  end
+  return true
+end
+
 -- EVERY ENEMY TYPE, IN DECLARATION ORDER. The room editor needs a list
 -- of what it may place, and the alternative was for it to keep its own
 -- -- which is the copied-constant failure this project has three
@@ -335,6 +440,31 @@ local function frontBlocked(self, srcx, srcy, opts)
   return true
 end
 
+-- THE SHELL. Plated everywhere except the belly.
+--
+-- Where frontBlocked asks where a shot came FROM, this asks which way it
+-- was GOING. "Shot from underneath" is a round still travelling upward
+-- when it lands -- which is exactly the motion the player makes when
+-- they stand under the thing and aim up, and is true whether the ledge
+-- above them is one tile high or four. Deriving it from the shooter's
+-- position instead turns the rule into a question about floor heights
+-- that nothing on screen answers.
+--
+-- Melee and anything else with no round behind it falls back to
+-- geometry: the attacker's head has to be below the belly line. And an
+-- unattributed hit -- a script, a harness, something new -- always
+-- lands, the same defensive default frontBlocked takes. An enemy that
+-- is invulnerable because a caller forgot an argument is worse than one
+-- that is too easy.
+local SHELL_UP = -20      -- px/s of upward travel that counts as "from below"
+local function shellBlocked(self, srcx, srcy, opts)
+  if opts and opts.link then return false end     -- the link always lands
+  if opts and opts.vy then return opts.vy > SHELL_UP end
+  local ay = opts and opts.owner and opts.owner.y or srcy
+  if not ay then return false end
+  return ay < self.y + self.h
+end
+
 local function shieldSpark(self)
   local World = require "src.world"
   World:fx("spark", self.x + self.w / 2 + self.facing * 10, self.y + 6,
@@ -355,6 +485,14 @@ end
 reg("gnat", { hp = 2, touchDmg = 1, sprite = "en_gnat", w = 10, h = 8,
   drops = { shards = 1, heart = 0.1 }, deathColor = "leaf", animRate = 12 },
   function(self, dt)
+    -- A GNAT OFF THE MAW IS NOT A GNAT IN A ROOM.
+    --
+    -- The default below is the Mosswood ambient: drift on a sine, and
+    -- close only if somebody wanders within 90px. That is right for a
+    -- body hung in a corridor and useless for a swarm spat into a boss
+    -- arena, which has to arrive. Same flag, same behaviour, same
+    -- constants as the golem's bats -- see Enemy:huntStep.
+    if self.hunt then return self:huntStep(dt) end
     -- lazy sine drift; chases when player near
     local p = playerNear(self, 90)
     local sp = 42 * self:speedMult()
@@ -554,11 +692,247 @@ reg("depthmine", { mass = "fixed", hp = 3, touchDmg = 0, sprite = "en_depthmine"
   end)
 
 -- ==================================================================
+-- THE SPINESHELL -- the Rusted Warden, in miniature, three rooms early
+-- ==================================================================
+-- Asked for (Thomas, Aug 2026): "a spiky turtle-like enemy that is immune
+-- to small fire (unless shot from underneath) and has a charge attack. If
+-- the charge hits a wall or Lu's shield, the enemy is stunned and
+-- vulnerable for 5s. This teaches the player the same mechanics used to
+-- defeat Rusted Warden, so place this enemy a few times before and after
+-- Rusted Warden."
+--
+-- The last sentence is the design, and it is why every number here is
+-- shaped by the Warden's and not chosen fresh:
+--
+--   THE WARDEN                          THE SPINESHELL
+--   shield stops rounds from the front  plates stop rounds everywhere but the belly
+--   charges, and commits to it          charges, and commits to it
+--   the dome interrupts the charge      the dome interrupts the charge
+--   ...and stuns it for 3s              ...and stuns it for 5s
+--   a wall ends the charge (recover)    a wall ends the charge (stunned, 5s)
+--   the LINK always lands               the LINK always lands
+--
+-- The two differences are deliberate. The stun is LONGER than the boss's
+-- because this is where the lesson is learned and a lesson wants room;
+-- and a wall stuns it outright, where the Warden merely recovers,
+-- because "bait it into the scenery" has to work before it is worth
+-- attempting on something with a health bar. A player who has taken four
+-- of these apart walks into the pump hall already knowing the answer.
+--
+-- It is not the rammer with a shell. The rammer's plate covers its front
+-- only WHILE it charges, so its lesson is timing; the spineshell is
+-- always armoured, so its lesson is angle -- which is the Warden's.
+local SHELL_WALK   = 26     -- px/s patrolling. The player runs at 112.
+local SHELL_SEE    = 150    -- px it notices you across
+local SHELL_LEVEL  = 26     -- ...and how far above/below it will still commit
+local SHELL_TELL   = 0.7    -- seconds of tuck-and-rattle before it goes
+local SHELL_CHARGE = 168    -- px/s once it does
+local SHELL_RUN    = 1.7    -- seconds the charge lasts if it hits nothing
+local SHELL_STUN   = 5.0    -- the reward for making it hit something
+local SHELL_REST   = 1.1    -- breath between attempts
+local SHELL_DOME_COST = 2   -- energy the bubble pays to stop one, as the
+                            -- Warden's charge costs (bosses.lua, "charge")
+reg("spineshell", { mass = "heavy", hp = 10, touchDmg = 3,
+  sprite = "en_spineshell", w = 16, h = 13,
+  drops = { shards = 4, scrap = 0.15 }, deathColor = "deepsea", animRate = 3,
+  init = function(self)
+    self.sstate = "walk"
+    self.st = U.rand(0.6, 1.4)
+  end },
+  function(self, dt)
+    local World = require "src.world"
+    self.vy = math.min((self.vy or 0) + 830 * dt, 300)
+    self.st = (self.st or 0) - dt
+
+    if self.sstate == "stunned" then
+      -- OPEN. Everything lands, from anywhere -- see the deflects hook
+      -- below, which asks this state first.
+      self.vx = U.approach(self.vx or 0, 0, 500 * dt)
+      PH.move(self, self.vx * dt, self.vy * dt)
+      if self.st <= 0 then
+        self.sstate = "walk"
+        self.st = SHELL_REST
+      end
+      return
+    end
+
+    if self.sstate == "walk" then
+      -- A PATROL, not a chase: it is a wall that happens to be walking.
+      -- The turn at a ledge is what keeps it on the shelf you have to
+      -- get under.
+      self:patrol(dt, SHELL_WALK * self:speedMult())
+      local p = playerNear(self, SHELL_SEE)
+      if p and self.st <= 0 then
+        local cx, cy = self:center()
+        local px, py = p:center()
+        -- only at something it could actually reach by running at it:
+        -- a charge at a player two storeys up is a charge into a wall
+        -- for no reason, which reads as the thing being broken
+        if math.abs(py - cy) <= SHELL_LEVEL then
+          local s = U.sign(px - cx)
+          if s ~= 0 then self.facing = s end
+          self.sstate = "tuck"
+          self.st = SHELL_TELL
+          self.vx = 0
+        end
+      end
+      return
+    end
+
+    if self.sstate == "tuck" then
+      -- THE TELL. It stops dead and rattles: every charge in this game
+      -- is announced before it commits, and this one is announced for
+      -- longer than the Warden's because it is the first one you meet.
+      self.vx = U.approach(self.vx or 0, 0, 700 * dt)
+      PH.move(self, self.vx * dt, self.vy * dt)
+      if self.st <= 0 then
+        self.sstate = "charge"
+        self.st = SHELL_RUN
+        if G.Audio then G.Audio.sfx("ram") end
+      end
+      return
+    end
+
+    -- charging
+    self.vx = self.facing * SHELL_CHARGE * self:speedMult()
+    World:fx("trail", self.x + self.w / 2, self.y + self.h / 2,
+      { color = "deepsea", r = 2.5, t = 0.16 })
+
+    -- LU'S BUBBLE IS A WALL. Same test the Warden's charge answers to
+    -- (World:domeCovering), so a player who learns it here has learned it
+    -- there -- that is the entire point of this enemy.
+    local cx, cy = self:center()
+    local domer = World:domeCovering(cx, cy, self.w / 2)
+    if domer then
+      domer:domeAbsorb(SHELL_DOME_COST)
+      self.x = self.x - self.facing * 8
+      World:fx("spark", cx - self.facing * self.w / 2, cy,
+        { color = "cyan", n = 10 })
+      self:shellStun(World, "dome")
+      return
+    end
+
+    PH.move(self, self.vx * dt, self.vy * dt)
+    if self.hitWall then
+      self:shellStun(World, "wall")
+      self.vx = -self.hitWall * 90
+      self.vy = -70
+      return
+    end
+    if self.st <= 0 then
+      -- ran out of charge without hitting anything: no reward, and it
+      -- goes back to being a wall
+      self.sstate = "walk"
+      self.st = SHELL_REST
+    end
+  end,
+  function(self)
+    self:drawSprite()
+    local g = love.graphics
+    local cx, cy = self:center()
+    if self.sstate == "tuck" then
+      -- the rattle: spines flare and a chevron builds on the side it is
+      -- about to leave from
+      local ig = 1 - math.max(0, self.st) / SHELL_TELL
+      g.push() g.translate(cx + U.rand(-1, 1), cy) g.scale(self.facing, 1)
+      g.setColor(P.spark[1], P.spark[2], P.spark[3], 0.3 + ig * 0.6)
+      g.setLineWidth(1.5)
+      g.line(5, -5, 9, 0, 5, 5)
+      g.setLineWidth(1)
+      g.pop()
+    elseif self.sstate == "charge" then
+      g.push() g.translate(cx, cy) g.scale(self.facing, 1)
+      g.setColor(P.deepsea[1], P.deepsea[2], P.deepsea[3], 0.55)
+      g.polygon("fill", 3, -6, 9, -4, 9, 4, 3, 6)
+      g.pop()
+    elseif self.sstate == "stunned" then
+      -- THE SHELL IS OFF. Drawn as the absence of the thing that was
+      -- stopping your shots, not merely as stars: the belly is showing.
+      g.setColor(P.vesslite[1], P.vesslite[2], P.vesslite[3],
+        0.35 + 0.2 * math.sin(G.time * 9))
+      g.ellipse("fill", cx, cy + 2, self.w / 2 - 1, self.h / 2 - 2)
+      Enemy.drawStun(self)
+    end
+    g.setColor(1, 1, 1, 1)
+  end)
+do
+  -- THE PLATES, AND WHAT TAKES THEM OFF.
+  --
+  -- Wired the way plateframe and rammer are: deflects() is asked by Proj
+  -- BEFORE the damage pass, so a stopped round is destroyed at the shell
+  -- rather than declining the damage and sailing on to try again from
+  -- the other side next frame.
+  local made = Entity.registry["spineshell"]
+  Entity.registry["spineshell"] = function(x, y, parts)
+    local c = made(x, y, parts)
+    -- One door in and out of the open state, because there are three
+    -- ways in (a wall, the dome, the Cinder Ram) and every one of them
+    -- has to leave the state machine somewhere it can leave again.
+    c.shellStun = function(self, World, how)
+      self.sstate = "stunned"
+      self.st = SHELL_STUN
+      self.vx = 0
+      local cx, cy = self:center()
+      World = World or require "src.world"
+      World:fx("burst", cx, cy, { color = "silver", n = 12, speed = 130 })
+      Cam.shake(how == "wall" and 2 or 3, 0.2)
+      if G.Audio then G.Audio.sfx(how == "dome" and "domehit" or "impact") end
+      return true
+    end
+    -- The Cinder Ram shatters a raised guard outright, everywhere else
+    -- in the game. It does here too, and it is worth the same five
+    -- seconds -- a guard break IS the payload, so the dash deals no
+    -- damage on the hit that lands it.
+    c.guardBreak = function(self, dur)
+      if self.sstate == "stunned" then return false end
+      return self:shellStun(nil, "ram")
+    end
+    -- A concussion (Vess's plain dash on a light body, Lu's stun shot)
+    -- must not leave it mid-charge: it would resume a charge it never
+    -- finished, from wherever it was pushed to.
+    c.onStunned = function(self)
+      self.sstate = "walk"
+      self.st = SHELL_REST
+      self.vx = 0
+    end
+    c.deflects = function(self, srcx, srcy, opts)
+      if self.sstate == "stunned" then return false end
+      return shellBlocked(self, srcx, srcy, opts)
+    end
+    local baseHurt = Entity.hurt
+    c.hurt = function(self, dmg, srcx, srcy, opts)
+      if self:deflects(srcx, srcy, opts) then
+        shieldSpark(self)
+        return false
+      end
+      return baseHurt(self, dmg, srcx, srcy, opts)
+    end
+    return c
+  end
+end
+
+-- ==================================================================
 -- FURNACE
 -- ==================================================================
+-- The close/strike/retreat the golem's swarm flies on now lives on
+-- Enemy:huntStep -- see the block above speedMult. The bat's numbers are
+-- the defaults there, because they are the numbers it was tuned to.
 reg("cinderbat", { hp = 3, touchDmg = 2, sprite = "en_cinderbat", w = 12, h = 10,
   deathColor = "magma", animRate = 10 },
   function(self, dt)
+    -- HUNTING: it does not hang, it comes for you.
+    --
+    -- The default below is a ROOST -- bob in place until something walks
+    -- within 120px, swoop for 1.2s, go back to bobbing. In a room that
+    -- is ten tiles tall and a bat that spawned against the ceiling, that
+    -- 120px never happens and the swarm simply decorates the roof.
+    -- Reported exactly that way: "the bats spawn successfully but stay
+    -- near the ceiling."
+    --
+    -- Set by whatever spawned it (the Slag Golem's roof swarm), so an
+    -- ordinary cinderbat hung in a room is unchanged -- the roost is
+    -- correct there, and it is the reason those rooms read as caves.
+    if self.hunt then return self:huntStep(dt) end
     -- hangs, then swoops in an arc at players
     if not self.swooping then
       self.vx = math.cos(self.t * 2) * 12
@@ -641,6 +1015,60 @@ reg("slagling", { hp = 2, touchDmg = 2, sprite = "en_slagling", w = 8, h = 7,
       end
     end
     PH.move(self, (self.vx or 0) * dt, self.vy * dt)
+    if self.hitWall then self.facing = -self.hitWall end
+  end)
+
+-- THE GOLD MITE. The Crucible shakes them out of the roof when it slams:
+-- they drop, they land, and they run at you along the floor. No ranged
+-- attack and almost no health -- the threat is that there are four more
+-- of them and you are trying to read a vent window.
+--
+-- It falls rather than flies, deliberately. A flier would join the
+-- slaglings as one more thing in the air above a fight whose whole
+-- question is "am I on the ground with the boss"; a runner crosses the
+-- floor you are standing on.
+-- FULL SIZE, AND SLOWER THAN YOU (Thomas, Aug 2026). The threat is that
+-- there are four of them between you and where you want to stand -- not
+-- that they can run you down. A body you cannot outrun is a body you
+-- have to fight, and this one is meant to be a body you can leave.
+--
+-- The ceiling is read off the PLAYER rather than written here, so it
+-- stays true if the run speed is ever retuned -- and it is a ceiling on
+-- the FINAL speed, after speedMult, because a buffed mite at 1.5x an
+-- absolute constant is exactly how "slower than the player" quietly
+-- stops being true.
+local MITE_RUN = 74
+local MITE_HOP = -180
+local MITE_TOP = 0.8            -- of the player's run, absolute ceiling
+local BASE_RUN                  -- resolved lazily; player.lua is heavy
+local function playerRun()
+  if not BASE_RUN then
+    BASE_RUN = (require "src.entities.player").BASE.runSpeed
+  end
+  return BASE_RUN
+end
+reg("goldmite", { hp = 3, touchDmg = 2, sprite = "en_goldmite", w = 14, h = 10,
+  drops = { shards = 2, scrap = 0.1 }, deathColor = "gold", animRate = 12 },
+  function(self, dt)
+    local World = require "src.world"
+    self.vy = math.min((self.vy or 0) + 830 * dt, 320)
+    if not self.onGround then
+      -- still falling out of the roof: no steering, it is a dropped thing
+      PH.move(self, (self.vx or 0) * dt, self.vy * dt)
+      return
+    end
+    local p = World:nearestPlayer(self:center())
+    if p then
+      local s = U.sign((p.x + p.w / 2) - (self.x + self.w / 2))
+      if s ~= 0 then self.facing = s end
+      -- a little hop when the mark is above it, so a ledge is not a wall
+      if p.y + p.h < self.y - 4 and U.chance(dt * 1.6) then
+        self.vy = MITE_HOP
+      end
+    end
+    local sp = math.min(MITE_RUN * self:speedMult(), playerRun() * MITE_TOP)
+    self.vx = self.facing * sp
+    PH.move(self, self.vx * dt, self.vy * dt)
     if self.hitWall then self.facing = -self.hitWall end
   end)
 
@@ -1166,18 +1594,16 @@ local Roostfang = reg("roostfang", { hp = 4, touchDmg = 2, sprite = "en_roostfan
     if self.hitWall then self.facing = -self.hitWall end
 
     -- contact: a dome turns it away, bare skin gets bitten
-    for _, q in ipairs(World:alivePlayers()) do
-      if q.domeActive and not q.idle then
-        local cx, cy = self:center()
-        local dx, dy = cx - (q.x + q.w / 2), cy - (q.y + q.h / 2 - 4)
-        if dx * dx + dy * dy < (q.domeRadius + self.w / 2) ^ 2 then
-          q:domeAbsorb(2)
-          self.recover = 0.8
-          self.vx, self.vy = -self.vx, -math.abs(self.vy) - 40
-          World:fx("spark", cx, cy, { color = "cyan", n = 8 })
-          if G.Audio then G.Audio.sfx("domehit") end
-          return
-        end
+    do
+      local cx, cy = self:center()
+      local domer = World:domeCovering(cx, cy, self.w / 2)
+      if domer then
+        domer:domeAbsorb(2)
+        self.recover = 0.8
+        self.vx, self.vy = -self.vx, -math.abs(self.vy) - 40
+        World:fx("spark", cx, cy, { color = "cyan", n = 8 })
+        if G.Audio then G.Audio.sfx("domehit") end
+        return
       end
     end
     for _, q in ipairs(World:alivePlayers()) do
@@ -1392,9 +1818,10 @@ reg("eliteguard", { mass = "heavy", hp = 12, touchDmg = 4, sprite = "en_elitegua
 -- ==================================================================
 -- THE SCRAPYARD
 -- ==================================================================
--- Three enemies, in teaching order. The husk sets the tone, the plateframe
--- teaches that a directional shield has a back, and the rammer teaches the
--- bounce read you will need against EIGHT.
+-- Four enemies, in teaching order. The husk sets the tone, the plateframe
+-- teaches that a directional shield has a back, the rammer teaches the
+-- bounce read you will need against EIGHT, and the dragger teaches that
+-- the worst thing that can happen to you here is not damage.
 
 -- A caretaker frame with no legs, dragging itself by one arm. Its job is
 -- tone, not threat: you should feel bad shooting the first one.
@@ -1641,6 +2068,257 @@ do
       return baseHurt(self, dmg, srcx, srcy, opts)
     end
     return c
+  end
+end
+
+-- ==================================================================
+-- THE DRAGGER  (COOP-PLAN 5)
+-- ==================================================================
+-- "A dragger extends the pin from HOLD to MOVE: it hauls you somewhere --
+-- toward a spike sump, or simply away from your partner, straight into
+-- the camera budget."
+--
+-- THE RULE THAT SHAPES ALL OF IT. From the design docs, and it is not
+-- negotiable: *a rescue that needs a partner is a death sentence rather
+-- than a mechanic.* So the grip is ALWAYS breakable alone, by mashing,
+-- in the time it holds you. What the partner buys is SPEED -- every shot
+-- into the claw is worth presses you did not have to make -- and that is
+-- the difference between a co-op mechanic and a co-op requirement.
+--
+-- WHAT IT ACTUALLY THREATENS. Not damage: it does none while it has you.
+-- It threatens PLACE. It hauls you back along its rail, and the level is
+-- what makes that cost something -- a spike bed under the rail, a gap it
+-- drags you over, a lane your partner cannot follow you down. A claw in
+-- an empty corridor is a two-second inconvenience, and it should be.
+--
+-- THE HAUL IS BOUNDED, and by the same number the camera is: §13.5 says
+-- a pin that hauls further than the wall allows would fight the camera,
+-- so the rail runs out at 0.75 of a screen and the claw lets go. That is
+-- also why it is a rail and not a rope -- something has to explain the
+-- limit in the fiction, and "it reached the end of its track" does.
+-- WHICH WAY THE RAIL RUNS IS THE ROOM'S DECISION, not the claw's.
+--
+-- The first version hauled the catch back to the point it dropped from,
+-- which reads fine and is worth nothing: the grab window is six tiles
+-- wide, so the longest haul it could ever manage was six tiles back to
+-- where it started, and the camera budget it is supposed to be bounded
+-- by was never within reach of binding. A claw that returns you to where
+-- you were standing is not a threat, it is a pause.
+--
+-- So the rail has a direction, authored per spawn like the vents:
+--
+--     ["c"] = "dragger:rail=-1"    -- the rail runs left
+--     ["C"] = "dragger:rail=1"     -- ...and this one runs right
+--
+-- That is what lets the level aim it: over the spike bed, out along the
+-- lane the partner cannot follow, off the lip of the gap. The claw is
+-- the verb; the room is the sentence.
+local DRAG_WAKE   = 96     -- px: how far along the floor it watches
+local DRAG_DROP   = 320    -- px/s it falls when it commits
+local DRAG_HAUL   = 54     -- px/s it drags a body at -- slow enough to fight
+local DRAG_HOLD   = 3.2    -- s: the grip lets go on its own after this
+local DRAG_RETURN = 70     -- px/s climbing back to its rail afterwards
+local DRAG_HIT    = 3      -- presses' worth of credit per partner hit
+local DRAG_COOL   = 1.1    -- s of recovery after it lets go
+-- 0.75 of a 480px screen, the same budget checkcoop measures separation
+-- against. Read as pixels here because the claw moves in pixels.
+local DRAG_BUDGET = 0.75 * 480
+
+local Dragger = reg("dragger", { mass = "fixed", hp = 9, touchDmg = 2, sprite = "en_dragger",
+  w = 12, h = 10, drops = { shards = 4, scrap = 0.2, big = 0.15 },
+  deathColor = "rust", animRate = 3,
+  -- FIXED mass: it is bolted to a rail. Vess's plated charge bounces off
+  -- it exactly like a wall rather than concussing it, which is the right
+  -- read -- you cannot shoulder-barge a gantry.
+  init = function(self)
+    self.dstate = "hang"
+    self.homeX, self.homeY = self.x, self.y
+    self.sway = U.rand(0, 6)
+    -- `rail=` reaches self through Enemy.SPAWN_KEYS before init runs
+    self.railDir = (self.rail and self.rail > 0) and 1 or -1
+  end,
+  -- reg() consumes onDeathExtra at REGISTRATION -- it wraps Enemy.onDeath
+  -- once, there and then. Hanging it on the class afterwards looks
+  -- identical and does nothing at all.
+  onDeathExtra = function(self)
+    if self.victim then self:letGo(true) end
+  end },
+  function(self, dt)
+    local World = require "src.world"
+    if not self.homeX then self.homeX, self.homeY = self.x, self.y end
+
+    -- ---- holding: haul the catch back along the rail ---------------
+    if self.dstate == "haul" then
+      local v = self.victim
+      -- the safety net: anything that ends the pin from the other side
+      -- (a revive, a room change, the victim going down) drops the grip
+      if not v or v.dead or v.pinnedT <= 0 then
+        self:letGo(false)
+        return
+      end
+      self.holdT = (self.holdT or DRAG_HOLD) - dt
+      v.pinnedT = math.max(v.pinnedT, math.min(self.holdT, DRAG_HOLD))
+
+      -- MOVE THE BODY, not just itself. Player:update returns early while
+      -- pinned and zeroes its own velocity, so the haul has to go through
+      -- the physics on the victim's behalf -- which is also what makes it
+      -- stop at a wall instead of posting the body through one.
+      if (self.hauled or 0) < DRAG_BUDGET then
+        local step = (self.railDir or -1) * DRAG_HAUL * dt
+        local x0 = v.x
+        PH.move(v, step, 0)
+        local got = math.abs(v.x - x0)
+        self.hauled = (self.hauled or 0) + got
+        -- IT STOPS WHEN THE BODY STOPS. Hauling into a wall used to burn
+        -- the whole grip with nothing moving, which reads as a bug even
+        -- though it is physically right -- the rail has run out as far as
+        -- this catch is concerned, so let go and let them get on with it.
+        if got < 0.05 then self:letGo(false) return end
+        -- it lifts as it pulls: a claw on a rail carries, it does not plough
+        PH.move(v, 0, -math.min(18, math.abs(step) * 6))
+      end
+      -- ride the victim so the cable reads right
+      self.x = v.x + v.w / 2 - self.w / 2
+      self.y = v.y - self.h + 2
+      if self.holdT <= 0 or (self.hauled or 0) >= DRAG_BUDGET then
+        self:letGo(false)
+      end
+      return
+    end
+
+    -- ---- recovering, then climbing home ---------------------------
+    if self.dstate == "cool" then
+      self.coolT = (self.coolT or DRAG_COOL) - dt
+      if self.coolT <= 0 then self.dstate = "home" end
+      return
+    end
+    if self.dstate == "home" then
+      local dx = self.homeX - self.x
+      local dy = self.homeY - self.y
+      if math.abs(dx) < 1.5 and math.abs(dy) < 1.5 then
+        self.x, self.y = self.homeX, self.homeY
+        self.dstate = "hang"
+        self.hauled = 0
+        return
+      end
+      local n = math.max(1, math.sqrt(dx * dx + dy * dy))
+      self.x = self.x + (dx / n) * DRAG_RETURN * dt
+      self.y = self.y + (dy / n) * DRAG_RETURN * dt
+      return
+    end
+
+    -- ---- hanging: watch the floor under the rail ------------------
+    if self.dstate == "hang" then
+      self.x = self.homeX
+      self.y = self.homeY + math.sin(self.t * 1.6 + self.sway) * 1.5
+      local best, bd
+      for _, p in ipairs(World:alivePlayers()) do
+        if not p.idle and not p.downed and p.pinnedT <= 0 then
+          local dx = math.abs((p.x + p.w / 2) - (self.homeX + self.w / 2))
+          local below = (p.y + p.h) > self.homeY
+          if below and dx < DRAG_WAKE and (not bd or dx < bd) then
+            best, bd = p, dx
+          end
+        end
+      end
+      if best then
+        self.dstate = "drop"
+        self.markX = best.x + best.w / 2
+        if G.Audio then G.Audio.sfx("switch") end
+      end
+      return
+    end
+
+    -- ---- dropping: straight down the cable ------------------------
+    if self.dstate == "drop" then
+      -- it tracks a little on the way down, so a standing body is caught
+      -- and a running one is usually not. That is the whole read.
+      self.x = U.approach(self.x, self.markX - self.w / 2, 40 * dt)
+      PH.move(self, 0, DRAG_DROP * dt)
+      do
+        -- A RAISED DOME TURNS IT AWAY. Lu can shield her partner out of a
+        -- claw, which is the co-op answer to it and costs her the energy.
+        local cx, cy = self:center()
+        local domer = World:domeCovering(cx, cy, self.w / 2)
+        if domer then
+          domer:domeAbsorb(2)
+          World:fx("spark", cx, cy, { color = "cyan", n = 8 })
+          if G.Audio then G.Audio.sfx("domehit") end
+          self:letGo(false)
+          return
+        end
+      end
+      for _, q in ipairs(World:alivePlayers()) do
+        if not q.idle and not q.downed and q.pinnedT <= 0 and q.invuln <= 0
+          and U.aabb(self.x, self.y, self.w, self.h, q.x, q.y, q.w, q.h) then
+          if q:pin(self, DRAG_HOLD) then
+            self.victim = q
+            self.dstate = "haul"
+            self.holdT = DRAG_HOLD
+            self.hauled = 0
+            if G.Audio then G.Audio.sfx("quake") end
+            if G.game then G.game:announce("A claw has you -- MASH!", 1.4) end
+          end
+          return
+        end
+      end
+      -- missed, or hit the floor
+      if self.onGround or self.hitCeil then self:letGo(false) end
+      return
+    end
+  end,
+  function(self)
+    -- the cable back to the rail, drawn first so the claw sits on it
+    local g = love.graphics
+    local cx = self.x + self.w / 2
+    if self.homeY and self.y > self.homeY then
+      g.setColor(P.slate[1], P.slate[2], P.slate[3], 0.85)
+      g.setLineWidth(1)
+      g.line(self.homeX + self.w / 2, self.homeY - 4, cx, self.y + 2)
+    end
+    g.setColor(1, 1, 1, 1)
+    G.drawSprite(self.sprite, self.victim and 2 or 1, cx, self.y + self.h + 0.5,
+      { white = math.max(0, (self.white or 0) * 6) })
+  end)
+
+-- LETTING GO IS ONE FUNCTION, because there are five ways it happens --
+-- the timer, the rail running out, a dome, being shot off, and the
+-- victim tearing loose. The roostfang has four slightly different copies
+-- of this and they do not agree with each other.
+Dragger.letGo = function(self, struggled)
+  local v = self.victim
+  self.victim = nil
+  if v and v.pinnedT and v.pinnedT > 0 then v:freeFromPin(struggled) end
+  self.dstate = "cool"
+  self.coolT = DRAG_COOL
+  self.hauled = 0
+  if G.Audio then G.Audio.sfx("deflect") end
+end
+
+-- THE PARTNER BUYS PRESSES, NOT THE RESCUE.
+--
+-- Shooting the claw does not open it -- that would make the grip
+-- partner-dependent from the other direction, where a solo player simply
+-- has no answer worth having. Each hit is worth DRAG_HIT presses of the
+-- mash the victim would otherwise have made themselves, so help is a
+-- speed-up and never a permission.
+Dragger.onHurt = function(self, dmg, srcx)
+  Enemy.onHurt(self, dmg, srcx)
+  local v = self.victim
+  if v and (v.pinnedT or 0) > 0 then
+    v.pinnedMash = (v.pinnedMash or 0) + DRAG_HIT
+    local World = require "src.world"
+    World:fx("spark", v.x + v.w / 2, v.y + 2, { color = "gold", n = 4 })
+  end
+end
+
+-- The victim tore loose on their own: Player:freeFromPin routes here.
+Dragger.onPinReleased = function(self, p, struggled)
+  if self.victim == p then
+    self.victim = nil
+    self.dstate = "cool"
+    self.coolT = DRAG_COOL
+    self.hauled = 0
   end
 end
 

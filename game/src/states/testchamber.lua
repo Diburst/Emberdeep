@@ -156,7 +156,7 @@ function S:enter()
       function(d) cfg.energyTier = U.clamp(cfg.energyTier + d, 0, Up.MAX.energy) end),
     optRow("LINK BLAST", function() return LINK_STATES[cfg.link].name end,
       function(d) cfg.link = cycle(cfg.link, 1, #LINK_STATES, d) end,
-      "The Crucible's lattice opens to nothing else"),
+      "The Crucible's and the Bramble Maw's lattices open to nothing else"),
     optRow("MODULE PRESET", function() return PRESETS[cfg.preset].name end,
       function(d)
         applyPreset(cycle(cfg.preset, 1, #PRESETS, d))

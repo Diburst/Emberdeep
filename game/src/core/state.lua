@@ -80,4 +80,38 @@ function State.event(name, ...)
   if top and top[name] then top[name](top, ...) end
 end
 
+-- ONE PHYSICAL PRESS, ONE STATE.
+--
+-- main.lua drains a frame's input into three lists and hands them to the
+-- stack. The lists are built BEFORE any of them is delivered, so a state
+-- that pushes or pops partway through used to hand the REST of that
+-- frame's events to whatever was underneath it -- and `consumeInput`
+-- above cannot help, because those events have already left the queue.
+--
+-- That is how the map screen broke. TAB is bound to the `map` action AND
+-- to the menu action `backbtn`; J is the FIRE key AND the menu action
+-- `cancel`. Pressing J with the map up fired `cancel` at the map, which
+-- popped it, and the same frame's held FIRE then reached the game
+-- underneath -- reported exactly as "if I hit J the bot shoots, which
+-- closes the map".
+--
+-- So dispatch stops at a transition. The remaining events were addressed
+-- to a state that is no longer there.
+function State.dispatch(presses, raws, menus)
+  local top = State.top()
+  local function changed() return State.top() ~= top end
+  for _, ev in ipairs(raws or {}) do
+    if changed() then return end
+    State.event("raw", ev)
+  end
+  for _, ev in ipairs(menus or {}) do
+    if changed() then return end
+    State.event("menu", ev.action, ev)
+  end
+  for _, ev in ipairs(presses or {}) do
+    if changed() then return end
+    State.event("pressed", ev.player, ev.action)
+  end
+end
+
 return State
